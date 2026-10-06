@@ -1,6 +1,16 @@
 // Prisma: generated client, types and enums (import from here, never from bare @prisma/client)
 export { Prisma, PrismaClient } from './generated/prisma/client.js';
-export type { Farm, Telemetry, Turbine } from './generated/prisma/client.js';
+export type {
+  AlertConfig,
+  Farm,
+  Telemetry,
+  Turbine,
+} from './generated/prisma/client.js';
+export {
+  AlertComparison,
+  AlertLevel,
+  MeasurementMetric,
+} from './generated/prisma/enums.js';
 export { PrismaModule } from './prisma/prisma.module.js';
 export { PrismaService } from './prisma/prisma.service.js';
 
