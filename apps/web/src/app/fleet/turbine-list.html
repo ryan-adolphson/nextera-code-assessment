@@ -1,5 +1,7 @@
 <h1 class="text-3xl font-bold">Turbines</h1>
-<p class="mt-1 text-sm text-muted">Every turbine in the fleet with its latest reading, live.</p>
+<p class="mt-1 text-sm text-muted">
+  Every turbine in the fleet with its latest reading and the alert rules it triggers, live.
+</p>
 
 @if (store.turbines().length === 0) {
   <p class="mt-6 text-muted" data-testid="no-turbines">No turbines are registered yet.</p>
@@ -29,12 +31,45 @@
         }
       </select>
     </label>
+    <label class="grid gap-1 text-sm">
+      <span class="text-muted">Commissioned</span>
+      <select
+        class="rounded-md border border-line bg-page px-3 py-1.5 text-ink"
+        data-testid="commissioned-filter"
+        (change)="onCommissionedFilter($event)"
+      >
+        @for (f of commissionedFilters; track f.value) {
+          <option [value]="f.value" [selected]="commissionedFilter() === f.value">
+            {{ f.label }}
+          </option>
+        }
+      </select>
+    </label>
+    <label class="grid gap-1 text-sm">
+      <span class="text-muted">Alert</span>
+      <select
+        class="rounded-md border border-line bg-page px-3 py-1.5 text-ink"
+        data-testid="alert-filter"
+        (change)="onAlertFilter($event)"
+      >
+        @for (f of alertFilters; track f.value) {
+          <option [value]="f.value" [selected]="alertFilter() === f.value">{{ f.label }}</option>
+        }
+      </select>
+    </label>
     <p class="pb-1.5 text-sm text-muted" role="status" data-testid="turbine-count">
       {{ rows().length }} of {{ store.turbines().length }} turbines
     </p>
   </div>
 
-  <div class="mt-4 overflow-x-auto">
+  @if (rulesStore.failed()) {
+    <p class="mt-4 text-sm text-muted" role="status" data-testid="alert-rules-unavailable">
+      Alert rules could not be loaded, so the Alert column is unavailable.
+    </p>
+  }
+
+  <!-- relative: contains the cells' absolutely positioned sr-only text (no page overflow) -->
+  <div class="relative mt-4 overflow-x-auto">
     <table class="data-table" data-testid="turbines">
       <thead>
         <tr>
@@ -75,6 +110,51 @@
               <span class="text-muted"> {{ t.farmId }}</span>
             </td>
             <td><app-staleness-badge [staleness]="t.staleness" /></td>
+            <td
+              data-testid="commissioned-cell"
+              [attr.data-commissioned]="t.commissioned"
+              [class.text-muted]="!t.commissioned"
+            >
+              {{ t.commissioned ? 'Yes' : 'No' }}
+            </td>
+            @let alert = alerts().get(t.id)!;
+            <td
+              data-testid="alert-cell"
+              [attr.data-alert]="alert.state === 'triggered' ? alert.level : alert.state"
+            >
+              @switch (alert.state) {
+                @case ('triggered') {
+                  <span class="inline-flex items-center gap-2">
+                    <app-alert-level-badge [level]="alert.level!" />
+                    <span data-testid="alert-summary">{{ alert.summary }}</span>
+                  </span>
+                  @if (alert.more.length) {
+                    <details class="mt-1 text-sm" data-testid="alert-more">
+                      <summary class="cursor-pointer text-accent">
+                        +{{ alert.more.length }} more
+                      </summary>
+                      <ul class="mt-1 grid gap-0.5">
+                        @for (m of alert.more; track $index) {
+                          <li>{{ m }}</li>
+                        }
+                      </ul>
+                    </details>
+                  }
+                }
+                @case ('none') {
+                  <span class="text-muted">None</span>
+                }
+                @case ('no-reading') {
+                  <span class="text-muted">—</span>
+                }
+                @default {
+                  <span class="text-muted" aria-hidden="true">—</span>
+                  <span class="sr-only">{{
+                    alert.state === 'loading' ? 'Loading alert rules' : 'Alert rules unavailable'
+                  }}</span>
+                }
+              }
+            </td>
             @if (t.latest; as r) {
               <td class="text-right! tabular-nums">{{ r.powerOutputKw | number: '1.0-0' }}</td>
               <td class="text-right! tabular-nums">{{ r.windSpeedMs | number: '1.1-1' }}</td>
@@ -89,7 +169,7 @@
           </tr>
         } @empty {
           <tr>
-            <td colspan="7" class="text-muted" data-testid="no-matches">
+            <td colspan="9" class="text-muted" data-testid="no-matches">
               No turbines match the filters.
             </td>
           </tr>

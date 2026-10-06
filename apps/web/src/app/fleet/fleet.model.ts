@@ -41,10 +41,13 @@ export interface TelemetryStats {
 
 /** Mirrors FarmOverview / TurbineOverview from GET /api/farms. */
 export interface TurbineOverview {
+  /** The turbine's business key ("TURB001"); the API never exposes its internal UUID. */
   id: string;
   farmId: string;
   latitude: number;
   longitude: number;
+  /** Whether the turbine has been commissioned (handed over to operations). */
+  commissioned: boolean;
   latest: Telemetry | null;
 }
 

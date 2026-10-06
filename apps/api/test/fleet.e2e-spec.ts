@@ -34,8 +34,9 @@ describe('Fleet API (e2e, CSV seed data)', () => {
         longitude: -96.53,
         turbines: [
           {
-            id: 'TURB001',
+            id: 'TURB001', // the business key, not the internal UUID
             farmId: 'FARM01',
+            commissioned: false, // turbines.csv has no commissioned column
             latest: {
               turbineId: 'TURB001',
               farmId: 'FARM01',
@@ -56,6 +57,51 @@ describe('Fleet API (e2e, CSV seed data)', () => {
         name: 'Coastal Breeze',
         turbines: [],
       });
+    });
+
+    it('exposes commissioned, never the internal UUID, and keeps both across re-seeding', async () => {
+      const before = await t.prisma.turbine.findMany({
+        orderBy: { turbineId: 'asc' },
+      });
+      expect(before.map((b) => b.id)).toEqual([
+        expect.stringMatching(/^[0-9a-f-]{36}$/),
+        expect.stringMatching(/^[0-9a-f-]{36}$/),
+      ]);
+      await t.prisma.turbine.update({
+        where: { turbineId: 'TURB002' },
+        data: { commissioned: true },
+      });
+
+      try {
+        // Idempotent: upserts by turbine_id, so the UUIDs and the flag survive a re-seed.
+        await seedFromCsv(t.prisma, SEED_DATA_DIR);
+        const after = await t.prisma.turbine.findMany({
+          orderBy: { turbineId: 'asc' },
+        });
+        expect(after.map((a) => [a.turbineId, a.id, a.commissioned])).toEqual([
+          ['TURB001', before[0].id, false],
+          ['TURB002', before[1].id, true],
+        ]);
+
+        const farms = await (await get('/farms')).json();
+        const turbine = farms.find((f: { id: string }) => f.id === 'FARM02')
+          .turbines[0];
+        expect(Object.keys(turbine).sort()).toEqual([
+          'commissioned',
+          'farmId',
+          'id',
+          'latest',
+          'latitude',
+          'longitude',
+        ]);
+        expect(turbine).toMatchObject({ id: 'TURB002', commissioned: true });
+        expect(JSON.stringify(farms)).not.toContain(before[1].id);
+      } finally {
+        await t.prisma.turbine.update({
+          where: { turbineId: 'TURB002' },
+          data: { commissioned: false },
+        });
+      }
     });
 
     it('picks the latest reading by measurement time, not arrival time (late data)', async () => {

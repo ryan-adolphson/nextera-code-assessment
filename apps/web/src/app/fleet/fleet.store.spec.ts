@@ -34,10 +34,25 @@ describe('FleetStore', () => {
   it('subscribes to live readings before loading the fleet', () => {
     const { api, sse } = setup();
 
-    expect(sse.connect).toHaveBeenCalledWith('http://api/events', ['telemetry.received']);
+    expect(sse.connect).toHaveBeenCalledWith('http://api/events', [
+      'telemetry.received',
+      'alert-config.changed',
+    ]);
     expect(sse.connect.mock.invocationCallOrder[0]).toBeLessThan(
       api.farms.mock.invocationCallOrder[0],
     );
+  });
+
+  it('counts alert-config.changed events on the same connection, leaving readings alone', () => {
+    const { store, sse } = setup();
+    const latestBefore = store.turbines().map((t) => t.latest);
+
+    sse.pushEvent('alert-config.changed', { action: 'created', id: 'r1' });
+    sse.pushEvent('alert-config.changed', { action: 'deleted', id: 'r1' });
+
+    expect(store.alertConfigVersion()).toBe(2);
+    expect(store.turbines().map((t) => t.latest)).toEqual(latestBefore);
+    expect(sse.connect).toHaveBeenCalledTimes(1);
   });
 
   it('summarises the fleet and each farm from the latest readings', () => {
@@ -149,6 +164,7 @@ describe('FleetStore', () => {
         farmId: 'FARM01',
         latitude: 0,
         longitude: 0,
+        commissioned: true,
         latest: timestamp ? reading({ id: `${id}-latest`, turbineId: id, timestamp }) : null,
       });
       const { store } = setup([

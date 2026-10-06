@@ -49,6 +49,7 @@ describe('FleetShell navigation', () => {
     ['/farms/FARM01/turbines/TURB001', 'nav-farms'],
     ['/turbines', 'nav-turbines'],
     ['/alerting', 'nav-alerting'],
+    ['/alerting/rules', 'nav-alerting'],
     ['/reporting', 'nav-reporting'],
   ])('marks only the current section on %s', async (path, active) => {
     await open(path);

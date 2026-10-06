@@ -289,6 +289,16 @@ describe('Fleet routes', () => {
       expect(text('[data-testid=status]')).toContain('Latest reading Jan 2, 23:55 UTC');
     });
 
+    it('adds nothing for a commissioned turbine and a quiet pill for one that is not', async () => {
+      await start('/farms/FARM01/turbines/TURB001', history);
+      expect(el().querySelector('[data-testid=not-commissioned]')).toBeNull();
+      harness.fixture.destroy();
+      TestBed.resetTestingModule();
+
+      await start('/farms/FARM02/turbines/TURB002'); // not commissioned in the fixture
+      expect(text('[data-testid=status] [data-testid=not-commissioned]')).toBe('Not commissioned');
+    });
+
     it('flags a turbine that has not reported for over an hour in red', async () => {
       clockNow = CLOCK + 56 * MINUTE; // 61 min after the latest reading
       await start('/farms/FARM01/turbines/TURB001', history);

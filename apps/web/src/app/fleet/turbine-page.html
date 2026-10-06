@@ -13,6 +13,14 @@
     </h1>
     <p class="mt-1.5 flex flex-wrap items-center gap-2 text-sm" data-testid="status">
       <app-staleness-badge [staleness]="turbine.staleness" />
+      @if (!turbine.commissioned) {
+        <!-- Quiet and neutral: only the exception is shown, nothing for commissioned turbines. -->
+        <span
+          class="inline-flex items-center rounded-full border border-line px-2 py-0.5 text-xs font-medium whitespace-nowrap text-ink"
+          data-testid="not-commissioned"
+          >Not commissioned</span
+        >
+      }
       @if (turbine.latest) {
         <span class="text-muted"
           >Latest reading {{ turbine.latest.timestamp | date: 'MMM d, HH:mm' : 'UTC' }} UTC, arrived

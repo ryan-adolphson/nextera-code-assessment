@@ -129,10 +129,10 @@ export class TelemetryIngestionService {
   private async checkTurbines(rows: TelemetryCsvRow[]): Promise<RowError[]> {
     const ids = [...new Set(rows.map((r) => r.reading.turbine_id))];
     const turbines = await this.prisma.turbine.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, farmId: true },
+      where: { turbineId: { in: ids } },
+      select: { turbineId: true, farmId: true },
     });
-    const farmOf = new Map(turbines.map((t) => [t.id, t.farmId]));
+    const farmOf = new Map(turbines.map((t) => [t.turbineId, t.farmId]));
 
     return rows.flatMap(({ line, reading: r }) => {
       const farmId = farmOf.get(r.turbine_id);

@@ -78,7 +78,7 @@ export class FleetService {
     const [farms, latestRows] = await Promise.all([
       this.prisma.farm.findMany({
         orderBy: { id: 'asc' },
-        include: { turbines: { orderBy: { id: 'asc' } } },
+        include: { turbines: { orderBy: { turbineId: 'asc' } } },
       }),
       // One index lookup per turbine on (turbine_id, timestamp). Prisma's nested `take: 1` would
       // load every reading into memory, which doesn't scale with history size.
@@ -87,7 +87,7 @@ export class FleetService {
         FROM turbines t
         CROSS JOIN LATERAL (
           SELECT * FROM telemetry r
-          WHERE r.turbine_id = t.id
+          WHERE r.turbine_id = t.turbine_id
           ORDER BY r.timestamp DESC
           LIMIT 1
         ) latest`,
@@ -103,7 +103,7 @@ export class FleetService {
       ...toFarmResponse(farm),
       turbines: farm.turbines.map((turbine) => ({
         ...toTurbineResponse(turbine),
-        latest: latestByTurbine.get(turbine.id) ?? null,
+        latest: latestByTurbine.get(turbine.turbineId) ?? null,
       })),
     }));
   }
@@ -163,8 +163,8 @@ export class FleetService {
 
   private async assertTurbineExists(turbineId: string): Promise<void> {
     const turbine = await this.prisma.turbine.findUnique({
-      where: { id: turbineId },
-      select: { id: true },
+      where: { turbineId },
+      select: { turbineId: true },
     });
     if (!turbine) throw new NotFoundException(`Turbine ${turbineId} not found`);
   }

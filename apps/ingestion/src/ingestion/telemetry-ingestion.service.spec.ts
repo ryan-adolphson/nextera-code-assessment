@@ -42,7 +42,7 @@ describe('TelemetryIngestionService', () => {
   beforeEach(async () => {
     prisma = mockDeep<PrismaService>();
     prisma.turbine.findMany.mockResolvedValue([
-      { id: 'TURB001', farmId: 'FARM01' },
+      { turbineId: 'TURB001', farmId: 'FARM01' },
     ] as never);
     prisma.telemetry.createManyAndReturn.mockResolvedValue([stored]);
     events.publish.mockReset();
@@ -86,6 +86,15 @@ describe('TelemetryIngestionService', () => {
         timestamp: '2026-01-01T00:00:00.000Z',
       }),
     );
+  });
+
+  it('looks turbines up by their business key (turbine_id), not the UUID id', async () => {
+    await service.ingest(dto);
+
+    expect(prisma.turbine.findMany).toHaveBeenCalledWith({
+      where: { turbineId: { in: ['TURB001'] } },
+      select: { turbineId: true, farmId: true },
+    });
   });
 
   it('prefers received_at from the payload (backfills) over the publish time', async () => {
@@ -153,8 +162,8 @@ describe('TelemetryIngestionService', () => {
 
     beforeEach(() => {
       prisma.turbine.findMany.mockResolvedValue([
-        { id: 'TURB001', farmId: 'FARM01' },
-        { id: 'TURB002', farmId: 'FARM02' },
+        { turbineId: 'TURB001', farmId: 'FARM01' },
+        { turbineId: 'TURB002', farmId: 'FARM02' },
       ] as never);
       prisma.$transaction.mockImplementation((fn: unknown) =>
         (fn as (tx: PrismaService) => Promise<unknown>)(prisma),

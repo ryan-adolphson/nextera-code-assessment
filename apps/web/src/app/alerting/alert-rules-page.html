@@ -1,0 +1,258 @@
+<div class="flex flex-wrap items-start justify-between gap-3">
+  <div>
+    <h1 class="text-3xl font-bold">Alerting</h1>
+    <p class="mt-1 text-sm text-muted">
+      Thresholds on turbine readings. Rules are stored now; evaluating readings against them comes
+      next.
+    </p>
+  </div>
+  <div class="flex flex-wrap items-center gap-2">
+    <button
+      type="button"
+      class="cursor-pointer rounded-md bg-accent px-3 py-1.5 font-medium text-on-accent hover:opacity-90"
+      data-testid="add-rule"
+      (click)="openAdd()"
+    >
+      Add rule
+    </button>
+  </div>
+</div>
+
+<app-alerting-tabs />
+
+<p class="mt-4 min-h-5 text-sm text-muted" role="status" data-testid="rules-notice">
+  {{ notice() }}
+</p>
+
+@if (store.failed()) {
+  <div
+    class="mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-danger-bg px-4 py-3 text-danger"
+    role="alert"
+    data-testid="rules-load-error"
+  >
+    Could not load the alert rules.
+    <button
+      type="button"
+      class="cursor-pointer rounded-md border border-line bg-page px-3 py-1 text-sm text-ink"
+      (click)="reload()"
+    >
+      Retry
+    </button>
+  </div>
+}
+
+@if (store.loading()) {
+  <p class="mt-2 text-muted" data-testid="rules-loading">Loading alert rules…</p>
+} @else if (store.rules().length === 0 && !store.failed()) {
+  <div class="mt-2 rounded-lg border border-line bg-surface px-4 py-6" data-testid="no-rules">
+    <p class="font-medium">No alert rules yet.</p>
+    <p class="mt-1 text-sm text-muted">
+      Add one, for example “Gearbox temperature above 120 °C → Error”.
+    </p>
+  </div>
+} @else if (store.rules().length) {
+  <h2 class="mt-2 mb-3 text-lg font-semibold">
+    {{ store.rules().length }} {{ store.rules().length === 1 ? 'rule' : 'rules' }}
+  </h2>
+  <!-- relative: contains the buttons' absolutely positioned sr-only text, which would otherwise
+       widen the page on phones when the table scrolls -->
+  <div class="relative overflow-x-auto">
+    <table class="data-table" data-testid="rules">
+      <thead>
+        <tr>
+          <th scope="col">Metric</th>
+          <th scope="col">Condition</th>
+          <th scope="col" class="text-right!">Threshold</th>
+          <th scope="col">Level</th>
+          <th scope="col"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (rule of store.rules(); track rule.id) {
+          @let metric = metricOf(rule.measurementMetric);
+          <tr data-testid="rule" [attr.data-rule-id]="rule.id" [attr.data-level]="rule.alertLevel">
+            <td>
+              {{ metric.label }} <span class="text-muted">({{ metric.unit }})</span>
+            </td>
+            <td>{{ rule.comparison }}</td>
+            <td class="text-right! tabular-nums">
+              {{ formatThreshold(rule.valueMetric, metric.unit) }}
+            </td>
+            <td>
+              <app-alert-level-badge testId="rule-level" [level]="rule.alertLevel" />
+            </td>
+            <td class="text-right!">
+              <div class="inline-flex gap-1">
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-md px-2 py-1 text-sm text-accent hover:bg-surface"
+                  data-testid="edit-rule"
+                  (click)="openEdit(rule)"
+                >
+                  Edit<span class="sr-only"> rule: {{ describeRule(rule) }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-md px-2 py-1 text-sm text-danger hover:bg-surface"
+                  data-testid="delete-rule"
+                  (click)="confirmDelete(rule)"
+                >
+                  Delete<span class="sr-only"> rule: {{ describeRule(rule) }}</span>
+                </button>
+              </div>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+}
+
+<!-- Add / edit -->
+<app-modal-dialog
+  testId="rule-dialog"
+  [open]="editorOpen()"
+  [title]="editing() ? 'Edit alert rule' : 'Add alert rule'"
+  (closed)="closeEditor()"
+>
+  <form class="grid gap-4" novalidate (submit)="$event.preventDefault(); save()">
+    <label class="grid gap-1 text-sm">
+      <span class="font-medium">Metric</span>
+      <select
+        class="rounded-md border border-line bg-page px-3 py-2 text-ink"
+        data-testid="rule-metric"
+        autofocus
+        (change)="metric.set($any($event.target).value)"
+      >
+        @for (m of metrics; track m.value) {
+          <option [value]="m.value" [selected]="metric() === m.value">
+            {{ m.label }} ({{ m.unit }})
+          </option>
+        }
+      </select>
+    </label>
+
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <label class="grid gap-1 text-sm">
+        <span class="font-medium">Condition</span>
+        <select
+          class="rounded-md border border-line bg-page px-3 py-2 text-ink"
+          data-testid="rule-comparison"
+          (change)="comparison.set($any($event.target).value)"
+        >
+          @for (c of comparisons; track c.value) {
+            <option [value]="c.value" [selected]="comparison() === c.value">{{ c.label }}</option>
+          }
+        </select>
+      </label>
+
+      <div class="grid gap-1 text-sm">
+        <label class="font-medium" for="rule-value">Threshold</label>
+        <div class="flex items-center gap-2">
+          <input
+            id="rule-value"
+            type="number"
+            step="any"
+            inputmode="decimal"
+            class="w-full min-w-0 rounded-md border border-line bg-page px-3 py-2 text-ink aria-invalid:border-danger"
+            data-testid="rule-value"
+            aria-describedby="rule-value-unit rule-value-error"
+            [attr.aria-invalid]="submitted() && valueError() ? 'true' : null"
+            [value]="value()"
+            (input)="value.set($any($event.target).value)"
+          />
+          <span class="text-muted" id="rule-value-unit">{{ unit() }}</span>
+        </div>
+        <p class="text-danger" id="rule-value-error" data-testid="rule-value-error">
+          @if (submitted() && valueError(); as message) {
+            {{ message }}
+          }
+        </p>
+      </div>
+    </div>
+
+    <label class="grid gap-1 text-sm">
+      <span class="font-medium">Level</span>
+      <select
+        class="rounded-md border border-line bg-page px-3 py-2 text-ink"
+        data-testid="rule-level-select"
+        (change)="level.set($any($event.target).value)"
+      >
+        @for (l of levels; track l.value) {
+          <option [value]="l.value" [selected]="level() === l.value">{{ l.label }}</option>
+        }
+      </select>
+    </label>
+
+    @if (editorError(); as error) {
+      <p
+        class="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger"
+        role="alert"
+        data-testid="rule-error"
+      >
+        {{ error }}
+      </p>
+    }
+
+    <div class="flex justify-end gap-2">
+      <button
+        type="button"
+        class="cursor-pointer rounded-md border border-line px-3 py-1.5 hover:bg-surface"
+        (click)="closeEditor()"
+      >
+        Cancel
+      </button>
+      <button
+        type="submit"
+        class="cursor-pointer rounded-md bg-accent px-3 py-1.5 font-medium text-on-accent hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
+        data-testid="rule-save"
+        [disabled]="saving()"
+      >
+        {{ saving() ? 'Saving…' : editing() ? 'Save changes' : 'Add rule' }}
+      </button>
+    </div>
+  </form>
+</app-modal-dialog>
+
+<!-- Delete confirmation -->
+<app-modal-dialog
+  testId="delete-dialog"
+  title="Delete alert rule?"
+  [open]="!!deleting()"
+  (closed)="cancelDelete()"
+>
+  @if (deleting(); as rule) {
+    <p>
+      <strong>{{ describeRule(rule) }}</strong> ({{ levelLabel(rule.alertLevel) }}) will be removed.
+      This can’t be undone.
+    </p>
+    @if (deleteError(); as error) {
+      <p
+        class="mt-3 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger"
+        role="alert"
+        data-testid="delete-error"
+      >
+        {{ error }}
+      </p>
+    }
+    <div class="mt-4 flex justify-end gap-2">
+      <button
+        type="button"
+        class="cursor-pointer rounded-md border border-line px-3 py-1.5 hover:bg-surface"
+        autofocus
+        (click)="cancelDelete()"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="cursor-pointer rounded-md bg-danger px-3 py-1.5 font-medium text-on-danger hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
+        data-testid="confirm-delete"
+        [disabled]="deleteBusy()"
+        (click)="delete()"
+      >
+        {{ deleteBusy() ? 'Deleting…' : 'Delete rule' }}
+      </button>
+    </div>
+  }
+</app-modal-dialog>

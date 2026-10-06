@@ -12,6 +12,8 @@
   --surface: #f2f2f4;
   --border: #e3e3e8;
   --accent: #3b5bdb;
+  /* Text on a solid --accent fill (primary buttons): 5.7:1 light, 6.2:1 dark. */
+  --on-accent: #ffffff;
   --highlight: #fff3bf;
   --ok: #2b8a3e;
   /*
@@ -37,6 +39,7 @@
     --surface: #222228;
     --border: #2e2e35;
     --accent: #748ffc;
+    --on-accent: #141417;
     --highlight: #5c4b00;
     --ok: #51cf66;
     --caution: #ffe066;
@@ -61,6 +64,7 @@
   --color-surface: var(--surface);
   --color-line: var(--border);
   --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
   --color-highlight: var(--highlight);
   --color-ok: var(--ok);
   --color-caution: var(--caution);

@@ -37,6 +37,17 @@ describe('AlertsPage (/alerting)', () => {
     expect(app.text(app.root().querySelector('h2'))).toBe('5 turbines need attention');
   });
 
+  it('shows the Active and Rules tabs, with Active current', async () => {
+    await open();
+    const tabs = [...app.root().querySelectorAll('nav[aria-label=Alerting] a')];
+    expect(
+      tabs.map((a) => [app.text(a), a.getAttribute('href'), a.getAttribute('aria-current')]),
+    ).toEqual([
+      ['Active', '/alerting', 'page'],
+      ['Rules', '/alerting/rules', null],
+    ]);
+  });
+
   it('links each alert to its turbine page and farm', async () => {
     await open();
     expect([...rows()[0].querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual([

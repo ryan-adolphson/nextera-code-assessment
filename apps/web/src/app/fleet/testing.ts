@@ -1,12 +1,18 @@
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { Observable, Subject, of } from 'rxjs';
 import { routes } from '../app.routes';
+import { API_BASE_URL } from '../core/api-base-url';
 import { NOW } from '../core/clock';
 import { SseEvent, SseService } from '../core/sse.service';
 import { FleetApi } from './fleet-api.service';
 import { FarmOverview, MetricStats, Telemetry, TelemetryStats } from './fleet.model';
+
+/** API base URL in route tests (HttpTestingController requests go here). */
+export const TEST_API_BASE_URL = 'http://api.test/api';
 
 export const reading = (overrides: Partial<Telemetry> = {}): Telemetry => ({
   id: crypto.randomUUID(),
@@ -54,6 +60,7 @@ export const farmsFixture = (): FarmOverview[] => [
         farmId: 'FARM01',
         latitude: 41.263,
         longitude: -96.518,
+        commissioned: true,
         latest: reading({ id: 't1-latest', powerOutputKw: 1960.5, windSpeedMs: 6.7 }),
       },
     ],
@@ -69,6 +76,7 @@ export const farmsFixture = (): FarmOverview[] => [
         farmId: 'FARM02',
         latitude: 39.741,
         longitude: -101.207,
+        commissioned: false,
         latest: reading({
           id: 't2-latest',
           turbineId: 'TURB002',
@@ -85,17 +93,20 @@ export const farmsFixture = (): FarmOverview[] => [
 /**
  * A larger fleet for the Turbines and Alerting pages, at client time 2026-01-03T00:00Z: two
  * reporting turbines, one per stale level (two at 60 min) and one that never reported.
+ * TURB004 and TURB007 are not commissioned; the others are.
  */
 export const mixedFleetFixture = (): FarmOverview[] => {
   const turbine = (
     id: string,
     farmId: string,
     latest: Partial<Telemetry> | null,
+    commissioned = true,
   ): FarmOverview['turbines'][number] => ({
     id,
     farmId,
     latitude: 40,
     longitude: -100,
+    commissioned,
     latest: latest && reading({ id: `${id}-latest`, turbineId: id, farmId, ...latest }),
   });
   return [
@@ -127,19 +138,24 @@ export const mixedFleetFixture = (): FarmOverview[] => {
       longitude: -101.22,
       turbines: [
         turbine('TURB002', 'FARM02', { powerOutputKw: 2259.3, windSpeedMs: 8.5 }),
-        turbine('TURB004', 'FARM02', null), // never reported
+        turbine('TURB004', 'FARM02', null, false), // never reported
         turbine('TURB006', 'FARM02', {
           timestamp: '2026-01-02T23:20:00.000Z', // 40 min: stale-30
           powerOutputKw: 300,
           windSpeedMs: 4,
           gearboxTempC: 126.5,
         }),
-        turbine('TURB007', 'FARM02', {
-          timestamp: '2026-01-02T21:30:00.000Z', // 2 h 30 min: stale-60
-          powerOutputKw: 1000,
-          windSpeedMs: 5,
-          gearboxTempC: 70,
-        }),
+        turbine(
+          'TURB007',
+          'FARM02',
+          {
+            timestamp: '2026-01-02T21:30:00.000Z', // 2 h 30 min: stale-60
+            powerOutputKw: 1000,
+            windSpeedMs: 5,
+            gearboxTempC: 70,
+          },
+          false,
+        ),
       ],
     },
     { id: 'FARM03', name: 'Red Canyon', latitude: 35.12, longitude: -106.55, turbines: [] },
@@ -148,7 +164,7 @@ export const mixedFleetFixture = (): FarmOverview[] => {
 
 /** Test doubles for FleetApi and SseService: push SSE events with `sse.push(...)`. */
 export function fakes(farms: FarmOverview[] = farmsFixture()) {
-  const events = new Subject<SseEvent<Telemetry>>();
+  const events = new Subject<SseEvent<unknown>>();
   const api = {
     eventsUrl: 'http://api/events',
     farms: vi.fn((): Observable<FarmOverview[]> => of(farms)),
@@ -161,6 +177,9 @@ export function fakes(farms: FarmOverview[] = farmsFixture()) {
     connect: vi.fn(() => events.asObservable()),
     push: (data: Telemetry) =>
       events.next({ kind: 'message', id: '1-0', type: 'telemetry.received', data }),
+    /** Any named event, e.g. `alert-config.changed`. */
+    pushEvent: (type: string, data: unknown) =>
+      events.next({ kind: 'message', id: '2-0', type, data }),
     status: (status: 'connecting' | 'open' | 'reconnecting') =>
       events.next({ kind: 'status', status }),
     fail: () => events.error(new Error('closed')),
@@ -177,6 +196,10 @@ export async function openFleet(url: string, clock: () => number, farms?: FarmOv
   TestBed.configureTestingModule({
     providers: [
       provideRouter(routes, withComponentInputBinding()),
+      // Pages that talk to the API through HttpClient (alert rules): flush with `http`.
+      provideHttpClient(),
+      provideHttpClientTesting(),
+      { provide: API_BASE_URL, useValue: TEST_API_BASE_URL },
       { provide: FleetApi, useValue: api },
       { provide: SseService, useValue: sse },
       { provide: NOW, useValue: clock },
@@ -186,5 +209,6 @@ export async function openFleet(url: string, clock: () => number, farms?: FarmOv
   const root = () => harness.fixture.nativeElement as HTMLElement;
   const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s+/g, ' ').trim();
   const stable = () => harness.fixture.whenStable();
-  return { harness, api, sse, root, text, stable };
+  const http = TestBed.inject(HttpTestingController);
+  return { harness, api, sse, http, root, text, stable };
 }

@@ -11,6 +11,7 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
+import { AlertRulesStore } from '../alerting/alert-rules.store';
 import { FleetStore, LiveStatus } from './fleet.store';
 
 const LIVE_LABELS: Record<LiveStatus, string> = {
@@ -29,8 +30,8 @@ export const NAV_ITEMS = [
 ] as const;
 
 /**
- * Parent of every page: the side navigation and the page region. Owns the FleetStore (provided
- * here, so all pages share it): the fleet is loaded and the SSE connection opened once, and
+ * Parent of every page: the side navigation and the page region. Owns the FleetStore and the
+ * AlertRulesStore (provided here, so all pages share them): the fleet is loaded and the SSE connection opened once, and
  * navigating between pages neither reloads nor reconnects.
  *
  * Desktop (md and up): a sticky left column with the app name, the live badge and the nav.
@@ -39,7 +40,7 @@ export const NAV_ITEMS = [
 @Component({
   selector: 'app-fleet-shell',
   imports: [RouterLink, RouterLinkActive, RouterOutlet],
-  providers: [FleetStore],
+  providers: [FleetStore, AlertRulesStore],
   templateUrl: './fleet-shell.html',
   host: { '(document:keydown.escape)': 'closeMenu()' },
   changeDetection: ChangeDetectionStrategy.OnPush,

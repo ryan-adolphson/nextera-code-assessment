@@ -1,19 +1,20 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { AlertingTabs } from '../alerting/alerting-tabs';
 import { StatTile } from '../ui/stat-tile';
 import { ALERT_LABELS, ALERT_LEVELS, alertCounts, formatAge } from './alerts';
 import { FleetStore } from './fleet.store';
 import { StalenessBadge } from './staleness-badge';
 
 /**
- * /alerting: the turbines needing attention now, by the existing staleness rules only. Counts per
+ * /alerting (the "Active" tab; "Rules" is /alerting/rules): the turbines needing attention now, by the existing staleness rules only. Counts per
  * level, then one list worst first (60 → 30 → 15 min → never reported), each linking to its
  * turbine page. Moves with the store's minute clock and live readings.
  */
 @Component({
   selector: 'app-alerts-page',
-  imports: [DatePipe, RouterLink, StalenessBadge, StatTile],
+  imports: [AlertingTabs, DatePipe, RouterLink, StalenessBadge, StatTile],
   templateUrl: './alerts-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

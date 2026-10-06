@@ -16,6 +16,10 @@ import {
   TelemetryStats,
 } from './fleet.model';
 import { alertsOf } from './alerts';
+import { ALERT_CONFIG_CHANGED } from '../alerting/alert-config.model';
+
+/** Every SSE event type the shell's one connection listens for. */
+const LIVE_EVENTS = [...TELEMETRY_EVENTS, ALERT_CONFIG_CHANGED];
 import { Staleness, freshestStaleness, stalenessOf } from './staleness';
 
 export type LiveStatus = SseStatus | 'offline';
@@ -69,6 +73,11 @@ export class FleetStore {
   readonly now = signal(this.clock());
 
   readonly liveStatus = signal<LiveStatus>('connecting');
+  /**
+   * Bumped on every `alert-config.changed` event (an alert rule was created, edited or deleted,
+   * here or in another browser): pages showing rules reload when it changes.
+   */
+  readonly alertConfigVersion = signal(0);
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
   readonly recentlyUpdated = signal<string | null>(null);
@@ -184,12 +193,14 @@ export class FleetStore {
     this.now.set(this.clock());
     this.startTicking();
     this.sse
-      .connect<Telemetry>(this.api.eventsUrl, TELEMETRY_EVENTS)
+      .connect<unknown>(this.api.eventsUrl, LIVE_EVENTS)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (event) => {
           if (event.kind === 'status') this.liveStatus.set(event.status);
-          else this.receive(event.data);
+          else if (event.type === ALERT_CONFIG_CHANGED)
+            this.alertConfigVersion.update((v) => v + 1);
+          else this.receive(event.data as Telemetry);
         },
         error: () => this.liveStatus.set('offline'),
       });

@@ -46,6 +46,16 @@ export type {
   TurbineResponse,
 } from './wind/responses.js';
 
+// Alert thresholds (alerts_config): response shape, mapper and change event
+export {
+  ALERT_CONFIG_CHANGED,
+  toAlertConfigResponse,
+} from './wind/alert-config.js';
+export type {
+  AlertConfigChangedEvent,
+  AlertConfigResponse,
+} from './wind/alert-config.js';
+
 // Seed data loader (prisma/seed.ts and e2e tests)
 export {
   TELEMETRY_CSV_COLUMNS,

@@ -55,7 +55,13 @@ describe('farmMarkers', () => {
 });
 
 describe('turbineMarkers', () => {
-  const turbine = { id: 'TURB001', farmId: 'FARM01', latitude: 41.263, longitude: -96.518 };
+  const turbine = {
+    id: 'TURB001',
+    farmId: 'FARM01',
+    latitude: 41.263,
+    longitude: -96.518,
+    commissioned: true,
+  };
 
   it('places turbines at their own coordinates with their latest reading', () => {
     expect(

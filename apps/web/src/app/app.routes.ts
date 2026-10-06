@@ -35,6 +35,11 @@ export const routes: Routes = [
         loadComponent: () => import('./fleet/alerts-page').then((m) => m.AlertsPage),
       },
       {
+        path: 'alerting/rules',
+        title: 'Alert rules · Nextera',
+        loadComponent: () => import('./alerting/alert-rules-page').then((m) => m.AlertRulesPage),
+      },
+      {
         path: 'reporting',
         title: 'Reporting · Nextera',
         loadComponent: () => import('./reporting/reporting-page').then((m) => m.ReportingPage),

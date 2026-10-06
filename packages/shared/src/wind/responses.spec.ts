@@ -1,4 +1,32 @@
-import { toTelemetryStatsResponse } from './responses.js';
+import { Prisma } from '../generated/prisma/client.js';
+import { toTelemetryStatsResponse, toTurbineResponse } from './responses.js';
+
+describe('toTurbineResponse', () => {
+  const turbine = {
+    id: '3f1c9a4e-7b2d-4c5e-9f10-2a3b4c5d6e7f',
+    turbineId: 'TURB001',
+    farmId: 'FARM01',
+    latitude: new Prisma.Decimal('41.251234'),
+    longitude: new Prisma.Decimal('-96.531'),
+    commissioned: false,
+  };
+
+  it('exposes the business key as id (never the internal UUID), numbers and the commissioned flag', () => {
+    expect(toTurbineResponse(turbine)).toEqual({
+      id: 'TURB001',
+      farmId: 'FARM01',
+      latitude: 41.251234,
+      longitude: -96.531,
+      commissioned: false,
+    });
+  });
+
+  it('maps commissioned turbines', () => {
+    expect(
+      toTurbineResponse({ ...turbine, commissioned: true }).commissioned,
+    ).toBe(true);
+  });
+});
 
 // The SQL that produces these rows runs against a real Postgres in apps/api/test/fleet.e2e-spec.ts.
 describe('toTelemetryStatsResponse', () => {

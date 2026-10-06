@@ -4,6 +4,9 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter.js';
 
+export const CORS_METHODS = ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'];
+export const CORS_ALLOWED_HEADERS = ['Content-Type', 'Last-Event-ID'];
+
 /** Global app setup, shared by main.ts and the e2e tests so both behave identically. */
 export function configureApp(
   app: NestExpressApplication,
@@ -13,7 +16,10 @@ export function configureApp(
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.enableCors({
     origin: corsOrigins(app.get(ConfigService).get<string>('CORS_ORIGINS', '')),
-    methods: ['GET'], // read-only API; telemetry arrives through the ingestion worker
+    // Writes: alert configs (JSON bodies, so preflighted for Content-Type). Last-Event-ID:
+    // EventSource reconnects. Telemetry itself arrives through the ingestion worker.
+    methods: CORS_METHODS,
+    allowedHeaders: CORS_ALLOWED_HEADERS,
     maxAge: 3600, // cache preflights for an hour
   });
   app.setGlobalPrefix('api');

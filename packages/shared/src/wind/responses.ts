@@ -12,10 +12,13 @@ export interface FarmResponse {
 }
 
 export interface TurbineResponse {
+  /** The business key (turbines.turbine_id, e.g. "TURB001"), used in URLs and SSE payloads. */
   id: string;
   farmId: string;
   latitude: number;
   longitude: number;
+  /** Whether the turbine has been commissioned. */
+  commissioned: boolean;
 }
 
 export interface TelemetryResponse {
@@ -125,12 +128,17 @@ export function toFarmResponse(farm: Farm): FarmResponse {
   };
 }
 
+/**
+ * `id` is the business key (turbine_id, e.g. "TURB001"), which telemetry, URLs and SSE events use.
+ * The internal UUID primary key (turbines.id) is deliberately not exposed.
+ */
 export function toTurbineResponse(turbine: Turbine): TurbineResponse {
   return {
-    id: turbine.id,
+    id: turbine.turbineId,
     farmId: turbine.farmId,
     latitude: turbine.latitude.toNumber(),
     longitude: turbine.longitude.toNumber(),
+    commissioned: turbine.commissioned,
   };
 }
 

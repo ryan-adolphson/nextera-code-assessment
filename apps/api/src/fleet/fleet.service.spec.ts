@@ -9,11 +9,13 @@ const farm = (id: string, turbineIds: string[]) => ({
   name: `Farm ${id}`,
   latitude: new Prisma.Decimal('41.25'),
   longitude: new Prisma.Decimal('-96.53'),
-  turbines: turbineIds.map((tid) => ({
-    id: tid,
+  turbines: turbineIds.map((tid, i) => ({
+    id: `00000000-0000-4000-8000-00000000000${i}`, // internal UUID, never exposed
+    turbineId: tid,
     farmId: id,
     latitude: new Prisma.Decimal('41.263'),
     longitude: new Prisma.Decimal('-96.518'),
+    commissioned: i === 0,
   })),
 });
 
@@ -64,6 +66,7 @@ describe('FleetService', () => {
               farmId: 'FARM01',
               latitude: 41.263,
               longitude: -96.518,
+              commissioned: true,
               latest: {
                 id: 'r1',
                 turbineId: 'TURB001',
@@ -77,11 +80,33 @@ describe('FleetService', () => {
                 gearboxTempC: 79.3,
               },
             },
-            expect.objectContaining({ id: 'TURB003', latest: null }),
+            expect.objectContaining({
+              id: 'TURB003',
+              commissioned: false,
+              latest: null,
+            }),
           ],
         },
         expect.objectContaining({ id: 'FARM03', turbines: [] }),
       ]);
+    });
+
+    it('orders turbines and joins their latest reading by the business key turbine_id', async () => {
+      prisma.farm.findMany.mockResolvedValue([]);
+      prisma.$queryRaw.mockResolvedValue([]);
+
+      await service.overview();
+
+      expect(prisma.farm.findMany).toHaveBeenCalledWith({
+        orderBy: { id: 'asc' },
+        include: { turbines: { orderBy: { turbineId: 'asc' } } },
+      });
+      const [strings] = prisma.$queryRaw.mock.calls[0] as unknown as [
+        TemplateStringsArray,
+      ];
+      expect(strings.join('?').replace(/\s+/g, ' ')).toContain(
+        'WHERE r.turbine_id = t.turbine_id',
+      );
     });
   });
 
@@ -92,11 +117,17 @@ describe('FleetService', () => {
       await expect(
         service.telemetry('TURB999', { limit: 288 }),
       ).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.turbine.findUnique).toHaveBeenCalledWith({
+        where: { turbineId: 'TURB999' },
+        select: { turbineId: true },
+      });
       expect(prisma.telemetry.findMany).not.toHaveBeenCalled();
     });
 
     it('queries [from, to) newest first with the limit', async () => {
-      prisma.turbine.findUnique.mockResolvedValue({ id: 'TURB001' } as never);
+      prisma.turbine.findUnique.mockResolvedValue({
+        turbineId: 'TURB001',
+      } as never);
       prisma.telemetry.findMany.mockResolvedValue([]);
 
       await service.telemetry('TURB001', {
@@ -119,7 +150,9 @@ describe('FleetService', () => {
     });
 
     it('omits time bounds that are not given', async () => {
-      prisma.turbine.findUnique.mockResolvedValue({ id: 'TURB001' } as never);
+      prisma.turbine.findUnique.mockResolvedValue({
+        turbineId: 'TURB001',
+      } as never);
       prisma.telemetry.findMany.mockResolvedValue([]);
 
       await service.telemetry('TURB001', { limit: 288 });
@@ -151,7 +184,9 @@ describe('FleetService', () => {
     });
 
     it('aggregates the newest `limit` readings in [from, to) in one query', async () => {
-      prisma.turbine.findUnique.mockResolvedValue({ id: 'TURB002' } as never);
+      prisma.turbine.findUnique.mockResolvedValue({
+        turbineId: 'TURB002',
+      } as never);
       prisma.$queryRaw.mockResolvedValue([
         {
           count: 2,
@@ -223,7 +258,9 @@ describe('FleetService', () => {
     });
 
     it('omits time bounds that are not given', async () => {
-      prisma.turbine.findUnique.mockResolvedValue({ id: 'TURB001' } as never);
+      prisma.turbine.findUnique.mockResolvedValue({
+        turbineId: 'TURB001',
+      } as never);
       prisma.$queryRaw.mockResolvedValue([
         { count: 0, first_timestamp: null, last_timestamp: null },
       ]);
