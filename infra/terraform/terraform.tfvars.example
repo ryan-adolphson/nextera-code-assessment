@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars (gitignored).
+project_id = "my-gcp-project"
+region     = "us-central1"
+
+# Optional custom domains (leave empty to use the *.run.app URLs)
+api_domain = "api.example.com"
+web_domain = "app.example.com"
+
+# GitHub Actions deploys + migrations (Workload Identity Federation, no keys)
+github_repository = "my-org/nextera-code-assessment"
+# github_environment = "production"
+
+# deletion_protection     = false   # throwaway environments only
+# db_tier                 = "db-g1-small"
+# db_high_availability    = true
+# api_max_instances       = 5
+# ingestion_max_instances = 5
+# web_max_instances       = 3
+# ingestion_invokers      = ["group:wind-ops@example.com"]   # may upload CSVs to the worker
+# db_pool_max             = 4

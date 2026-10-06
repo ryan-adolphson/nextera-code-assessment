@@ -1,0 +1,110 @@
+@import 'tailwindcss';
+
+/*
+ * Theme tokens: the single source of truth for colours. Tailwind utilities (below), ECharts and
+ * Leaflet all read these variables, so light/dark mode switches everything at once.
+ */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --text: #1a1a1a;
+  --muted: #6b6b6b;
+  --surface: #f2f2f4;
+  --border: #e3e3e8;
+  --accent: #3b5bdb;
+  --highlight: #fff3bf;
+  --ok: #2b8a3e;
+  /*
+   * Staleness levels: yellow (--caution), orange (--warn), red (--danger). The staleness badge
+   * puts --on-* text on them (WCAG AA, light/dark): 10.8/14.1, 5.8/9.7, 5.5/7.9.
+   */
+  --caution: #fcc419;
+  --on-caution: #1a1a1a;
+  --warn: #e67700;
+  --on-warn: #1a1a1a;
+  --danger: #c92a2a;
+  --on-danger: #ffffff;
+  --danger-bg: #fff5f5;
+  /* Chart series colour (validated: lightness band, chroma, >=3:1 on the surface). */
+  --series-1: #2a78d6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141417;
+    --text: #ececf1;
+    --muted: #9a9aa3;
+    --surface: #222228;
+    --border: #2e2e35;
+    --accent: #748ffc;
+    --highlight: #5c4b00;
+    --ok: #51cf66;
+    --caution: #ffe066;
+    --on-caution: #141417;
+    --warn: #ffa94d;
+    --on-warn: #141417;
+    --danger: #ff8787;
+    --on-danger: #141417;
+    --danger-bg: #3b1d1d;
+    --series-1: #3987e5; /* dark step of the same hue, validated against #141417 */
+  }
+}
+
+/*
+ * Tokens as Tailwind colours: bg-page, text-ink, text-muted, bg-surface, border-line, bg-accent…
+ * `inline` keeps the var() references, so utilities follow the dark-mode values automatically.
+ */
+@theme inline {
+  --color-page: var(--bg);
+  --color-ink: var(--text);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --color-line: var(--border);
+  --color-accent: var(--accent);
+  --color-highlight: var(--highlight);
+  --color-ok: var(--ok);
+  --color-caution: var(--caution);
+  --color-on-caution: var(--on-caution);
+  --color-warn: var(--warn);
+  --color-on-warn: var(--on-warn);
+  --color-danger: var(--danger);
+  --color-on-danger: var(--on-danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-series: var(--series-1);
+}
+
+@theme {
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Brief highlight when a live reading updates something (animate-flash). */
+  --animate-flash: flash 1.5s ease-out;
+
+  @keyframes flash {
+    from {
+      background-color: var(--highlight);
+    }
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-page font-sans text-[15px]/normal text-ink;
+  }
+
+  a {
+    @apply text-accent underline-offset-2 hover:underline;
+  }
+}
+
+/* Data tables (farm comparison, turbine readings): hairline rows, compact cells. */
+@utility data-table {
+  @apply w-full border-collapse;
+
+  & th,
+  & td {
+    @apply border-b border-line px-3 py-2 text-left whitespace-nowrap;
+  }
+
+  & th {
+    @apply font-semibold;
+  }
+}

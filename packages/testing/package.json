@@ -1,0 +1,20 @@
+{
+  "name": "@nextera/testing",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Vitest setup shared by the services: Testcontainers Postgres + Redis with migrations applied.",
+  "type": "module",
+  "exports": {
+    "./global-setup": "./src/global-setup.ts",
+    "./setup-e2e": "./src/setup-e2e.ts",
+    "./setup-unit": "./src/setup-unit.ts",
+    "./seed-data": "./src/seed-data.ts"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "^12.2.0",
+    "@testcontainers/redis": "^12.2.0",
+    "reflect-metadata": "^0.2.2",
+    "testcontainers": "^12.2.0",
+    "vitest": "^4.1.2"
+  }
+}

@@ -1,0 +1,176 @@
+# Deploys main to GCP after CI passed on it:
+#   1. build + push the api, ingestion and web images (linux/amd64)
+#   2. `prisma migrate deploy` against Cloud SQL through the Cloud SQL Auth Proxy (stops here on failure)
+#   3. `gcloud run deploy` nextera-api and nextera-ingestion
+#   4. `gcloud run deploy` nextera-web, only after 3 succeeded (the new frontend may need the new API).
+#      The web image has no API URL baked in: Terraform sets API_BASE_URL on the service.
+# Authenticates with Workload Identity Federation (no keys). One-time setup: CLAUDE.md, "Deploying".
+# Repository variables come from `terraform output github_actions_variables`.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # Manual re-deploy of main (e.g. after fixing a failed migration).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # GitHub OIDC token for Workload Identity Federation
+
+# One deploy at a time, so two migrations never run concurrently. Never cancel a running one:
+# a migration killed halfway needs a human. (GitHub keeps at most one pending run: the newest.)
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, migrate, deploy
+    # Only successful CI runs for pushes to main of this repository (not PRs, not forks),
+    # or a manual run on main.
+    if: >-
+      (github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_repository.full_name == github.repository)
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # The deployer service account trusts only jobs in this environment (infra/terraform/github.tf).
+    environment: production
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      REGISTRY: ${{ vars.GCP_REGISTRY }}
+      CLOUDSQL_INSTANCE: ${{ vars.CLOUDSQL_INSTANCE }}
+      WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      DEPLOYER_SA: ${{ vars.GCP_DEPLOYER_SA }}
+      CLOUD_SQL_PROXY_VERSION: v2.26.0
+    steps:
+      - name: Check repository variables
+        run: |
+          missing=0
+          for name in PROJECT_ID REGION REGISTRY CLOUDSQL_INSTANCE WIF_PROVIDER DEPLOYER_SA; do
+            if [ -z "${!name}" ]; then echo "::error::Repository variable for $name is not set"; missing=1; fi
+          done
+          exit "$missing"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SHA }} # the commit CI tested, not whatever main is now
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      # --- 1. Images ---------------------------------------------------------------------
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build and push api
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/api:${{ env.SHA }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build and push ingestion
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/ingestion/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/ingestion:${{ env.SHA }}
+          cache-from: type=gha,scope=ingestion
+          cache-to: type=gha,scope=ingestion,mode=max
+
+      # apps/web is a separate npm project, so its build context is apps/web (not the repo root).
+      - name: Build and push web
+        uses: docker/build-push-action@v7
+        with:
+          context: apps/web
+          file: apps/web/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/web:${{ env.SHA }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+      # --- 2. Migrations -------------------------------------------------------------------
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      # Installs the Prisma CLI + migration engine (and builds @nextera/shared via `prepare`).
+      - run: npm ci
+
+      # The proxy authenticates as the deployer (roles/cloudsql.client) with the credentials from
+      # the auth step, and exposes the instance at /cloudsql/<connection name>/.s.PGSQL.5432: the
+      # same socket path Cloud Run mounts, so the `database-url` secret works here unchanged.
+      - name: Start Cloud SQL Auth Proxy
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/cloud-sql-proxy" \
+            "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/${CLOUD_SQL_PROXY_VERSION}/cloud-sql-proxy.linux.amd64"
+          chmod +x "$RUNNER_TEMP/cloud-sql-proxy"
+          sudo mkdir -p /cloudsql && sudo chown "$(id -u):$(id -g)" /cloudsql
+          "$RUNNER_TEMP/cloud-sql-proxy" --unix-socket /cloudsql \
+            --health-check --http-address 127.0.0.1 --http-port 9090 \
+            "$CLOUDSQL_INSTANCE" > "$RUNNER_TEMP/cloud-sql-proxy.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            if curl -fs http://127.0.0.1:9090/startup >/dev/null; then echo "Cloud SQL Auth Proxy ready"; exit 0; fi
+            sleep 1
+          done
+          echo "::error::Cloud SQL Auth Proxy did not start"
+          cat "$RUNNER_TEMP/cloud-sql-proxy.log"
+          exit 1
+
+      # Masked in logs by the action. Only the deployer's accessor binding on this one secret allows it.
+      - id: secrets
+        uses: google-github-actions/get-secretmanager-secrets@v3
+        with:
+          secrets: |-
+            DATABASE_URL:${{ env.PROJECT_ID }}/database-url
+
+      - name: prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ steps.secrets.outputs.DATABASE_URL }}
+        run: npm run db:deploy
+
+      - name: Cloud SQL Auth Proxy log
+        if: always()
+        run: cat "$RUNNER_TEMP/cloud-sql-proxy.log" 2>/dev/null || true
+
+      # --- 3. Services (only reached if the migration succeeded) --------------------------------
+      - name: Deploy nextera-api
+        run: |
+          gcloud run deploy nextera-api --image "${REGISTRY}/api:${SHA}" \
+            --project "$PROJECT_ID" --region "$REGION" --quiet
+
+      - name: Deploy nextera-ingestion
+        run: |
+          gcloud run deploy nextera-ingestion --image "${REGISTRY}/ingestion:${SHA}" \
+            --project "$PROJECT_ID" --region "$REGION" --quiet
+
+      # --- 4. Angular app (only reached if the API deploy succeeded) ----------------------------
+      # The revision fails its startup probe (and traffic stays on the old one) if API_BASE_URL,
+      # set by Terraform, is invalid: the container validates it before nginx starts.
+      - name: Deploy nextera-web
+        run: |
+          gcloud run deploy nextera-web --image "${REGISTRY}/web:${SHA}" \
+            --project "$PROJECT_ID" --region "$REGION" --quiet

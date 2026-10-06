@@ -1,0 +1,16 @@
+# Build context is apps/web; keep it small and secret-free.
+node_modules
+dist
+coverage
+out-tsc
+.angular
+.vscode
+.env
+.env.*
+**/*.md
+**/*.spec.ts
+src/testing
+docker/*.test.mts
+# Dockerfiles reach BuildKit anyway; excluding them keeps a Dockerfile edit from invalidating COPY layers.
+Dockerfile
+.dockerignore

@@ -1,0 +1,20 @@
+# Build context is the repo root; keep it small and secret-free.
+**/node_modules
+**/dist
+**/coverage
+**/.angular
+**/*.tsbuildinfo
+packages/shared/src/generated
+apps/web
+# Dockerfiles reach BuildKit anyway; excluding them keeps a Dockerfile edit from invalidating COPY layers.
+**/Dockerfile
+
+.git
+.env
+.env.*
+!.env.example
+
+.claude
+infra
+docker-compose.yml
+**/*.md

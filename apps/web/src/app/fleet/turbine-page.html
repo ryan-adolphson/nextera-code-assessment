@@ -1,0 +1,158 @@
+@if (turbine(); as turbine) {
+  <nav class="flex flex-wrap gap-1.5 text-sm" aria-label="Breadcrumb" data-testid="breadcrumb">
+    <a routerLink="/">All farms</a>
+    <span aria-hidden="true">›</span>
+    <a [routerLink]="['/farms', turbine.farmId]">{{ turbine.farmName }}</a>
+    <span aria-hidden="true">›</span>
+    <span aria-current="page">{{ turbine.id }}</span>
+  </nav>
+
+  <header class="mt-3">
+    <h1 class="text-3xl font-bold">
+      {{ turbine.id }} <span class="text-muted">{{ turbine.farmName }}</span>
+    </h1>
+    <p class="mt-1.5 flex flex-wrap items-center gap-2 text-sm" data-testid="status">
+      <app-staleness-badge [staleness]="turbine.staleness" />
+      @if (turbine.latest) {
+        <span class="text-muted"
+          >Latest reading {{ turbine.latest.timestamp | date: 'MMM d, HH:mm' : 'UTC' }} UTC, arrived
+          after {{ delayMinutes(turbine.latest) }} min</span
+        >
+      }
+    </p>
+  </header>
+
+  <!-- One filter row above everything it scopes. -->
+  <div
+    class="mt-5 mb-3 flex flex-wrap items-center gap-1.5"
+    role="group"
+    aria-label="Time range"
+    data-testid="range"
+  >
+    @for (range of ranges; track range.ms) {
+      <button
+        type="button"
+        class="cursor-pointer rounded-md border border-line bg-page px-3 py-1 text-ink hover:border-accent aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-white"
+        [attr.aria-pressed]="store.historyRangeMs() === range.ms"
+        (click)="setRange(range.ms)"
+      >
+        {{ range.label }}
+      </button>
+    }
+    <span class="ml-2 text-sm text-muted" data-testid="window-end"
+      >Ending now ({{ store.now() | date: 'HH:mm' : 'UTC' }} UTC)</span
+    >
+  </div>
+
+  @if (!store.history().length) {
+    @if (store.historyLoading()) {
+      <p class="text-muted">Loading readings…</p>
+    } @else {
+      <!-- One explanation instead of five empty charts. -->
+      <section
+        class="rounded-lg border border-line bg-surface px-4 py-6 text-center"
+        role="status"
+        data-testid="empty-window"
+      >
+        <p class="font-semibold" data-testid="empty-window-message">
+          No readings in the last {{ rangeName() }}.
+        </p>
+        @if (turbine.latest) {
+          <p class="mt-1 text-sm text-muted" data-testid="empty-window-last-reading">
+            Last reading: {{ turbine.latest.timestamp | date: 'MMM d, y, HH:mm' : 'UTC' }} UTC
+          </p>
+          @if (longerRange(); as longer) {
+            <button
+              type="button"
+              class="mt-3 cursor-pointer rounded-md border border-line bg-page px-3 py-1 text-sm text-ink hover:border-accent"
+              data-testid="empty-window-longer"
+              (click)="setRange(longer.ms)"
+            >
+              Show the last {{ longer.long }}
+            </button>
+          }
+        } @else {
+          <p class="mt-1 text-sm text-muted" data-testid="empty-window-last-reading">
+            This turbine has not reported any readings yet.
+          </p>
+        }
+      </section>
+    }
+  } @else {
+    @if (window(); as window) {
+      <!-- Refetch keeps the frame: previous charts stay, dimmed, until new data arrives. -->
+      <section
+        class="grid gap-3 transition-opacity data-refreshing:opacity-50"
+        aria-label="Telemetry charts"
+        [attr.data-refreshing]="store.historyLoading() ? '' : null"
+      >
+        @for (chart of charts(); track chart.key) {
+          <app-line-chart
+            [attr.data-metric]="chart.key"
+            [title]="chart.title"
+            [unit]="chart.unit"
+            [decimals]="chart.decimals"
+            [points]="chart.points"
+            [domain]="window"
+            [gapMs]="gapMs"
+            [hoverT]="hoverT()"
+            (hoverTChange)="hoverT.set($event)"
+            [view]="view()"
+            (viewChange)="view.set($event)"
+            [stats]="store.stats()?.metrics?.[chart.key] ?? null"
+          />
+        }
+      </section>
+    }
+
+    <h2 class="mt-8 mb-3 text-lg font-semibold">Readings</h2>
+    <!-- Scrolls within 500px; focusable so keyboard users can scroll it too. -->
+    <div
+      class="max-h-[500px] overflow-auto rounded-lg border border-line"
+      role="region"
+      aria-label="Readings"
+      tabindex="0"
+      data-testid="history-scroll"
+    >
+      <!-- Every column after the first is numeric: right-aligned, aligned digits.
+           The header row sticks to the top while scrolling; an inset shadow draws its divider,
+           since a collapsed border on a sticky cell scrolls away with the rows. -->
+      <table
+        class="data-table [&_td]:tabular-nums [&_td:not(:first-child)]:text-right [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-page [&_th]:shadow-[inset_0_-1px_0_var(--border)] [&_th:not(:first-child)]:text-right"
+        data-testid="history"
+      >
+        <thead>
+          <tr>
+            <th scope="col">Measured (UTC)</th>
+            <th scope="col">Arrived after</th>
+            <th scope="col">Power (kW)</th>
+            <th scope="col">Wind (m/s)</th>
+            <th scope="col">Rotor (rpm)</th>
+            <th scope="col">Pitch (°)</th>
+            <th scope="col">Gearbox (°C)</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (r of store.history(); track r.id) {
+            <tr>
+              <td>{{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}</td>
+              <td class="data-delayed:text-warn" [attr.data-delayed]="isDelayed(r) ? '' : null">
+                {{ delayMinutes(r) }} min
+              </td>
+              <td>{{ r.powerOutputKw | number: '1.1-1' }}</td>
+              <td>{{ r.windSpeedMs | number: '1.1-1' }}</td>
+              <td>{{ r.rotorRpm | number: '1.1-1' }}</td>
+              <td>{{ r.bladePitchDeg | number: '1.1-1' }}</td>
+              <td>{{ r.gearboxTempC | number: '1.1-1' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+} @else {
+  <nav class="text-sm"><a [routerLink]="['/farms', farmId()]">← Back to the farm</a></nav>
+  <p class="mt-3" data-testid="turbine-not-found">
+    Turbine {{ turbineId() }} was not found on {{ farmId() }}.
+  </p>
+}

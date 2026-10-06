@@ -1,0 +1,67 @@
+<h1 class="text-3xl font-bold">Fleet overview</h1>
+
+<section
+  class="mt-6 grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-3"
+  aria-label="Fleet summary"
+>
+  <app-stat-tile label="Fleet output" testId="fleet-power"
+    >{{ store.fleet().powerKw / 1000 | number: '1.1-1' }} MW</app-stat-tile
+  >
+  <app-stat-tile label="Turbines reporting" testId="fleet-reporting"
+    >{{ store.fleet().reporting }} / {{ store.fleet().turbines }}</app-stat-tile
+  >
+  <app-stat-tile label="Wind farms">{{ store.fleet().farms }}</app-stat-tile>
+  <app-stat-tile label="Data as of" [small]="true"
+    >{{ store.fleetTime() | date: 'MMM d, HH:mm' : 'UTC' }} UTC</app-stat-tile
+  >
+</section>
+
+<h2 class="mt-8 mb-1 text-lg font-semibold">Wind farms</h2>
+<p class="mb-3 text-sm text-muted">Select a farm on the map or in the table to see its turbines.</p>
+<app-map-view
+  label="Map of wind farms"
+  [markers]="markers()"
+  [legend]="legend"
+  (markerClick)="open($event)"
+/>
+
+<div class="mt-6 overflow-x-auto">
+  <table class="data-table" data-testid="farms">
+    <thead>
+      <tr>
+        <th scope="col">Farm</th>
+        <th scope="col">Location</th>
+        <th scope="col" class="text-right!">Turbines</th>
+        <th scope="col" class="text-right!">Reporting</th>
+        <th scope="col" class="text-right!">Output (kW)</th>
+        <th scope="col" class="text-right!">Avg wind (m/s)</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (farm of store.farms(); track farm.id) {
+        <!-- Row click for mouse users; the link keeps it keyboard- and screen-reader-accessible. -->
+        <tr class="cursor-pointer hover:bg-surface" (click)="open(farm.id)">
+          <td>
+            <a [routerLink]="['/farms', farm.id]" (click)="$event.stopPropagation()">{{
+              farm.name
+            }}</a>
+            <span class="text-muted"> {{ farm.id }}</span>
+          </td>
+          <td class="text-muted">
+            {{ farm.latitude | number: '1.2-2' }}, {{ farm.longitude | number: '1.2-2' }}
+          </td>
+          <td class="text-right! tabular-nums">{{ farm.turbineCount }}</td>
+          <td class="text-right! tabular-nums">
+            {{ farm.turbineCount ? farm.reporting : '–' }}
+          </td>
+          <td class="text-right! tabular-nums">
+            {{ farm.turbineCount ? (farm.powerKw | number: '1.0-0') : '–' }}
+          </td>
+          <td class="text-right! tabular-nums">
+            {{ farm.avgWindMs === null ? '–' : (farm.avgWindMs | number: '1.1-1') }}
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
+</div>

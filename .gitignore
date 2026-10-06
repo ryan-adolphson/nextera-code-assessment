@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+.angular/
+*.tsbuildinfo
+packages/shared/src/generated/
+
+.env
+.env.*
+!.env.example
+
+# Terraform (.terraform.lock.hcl IS committed)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log

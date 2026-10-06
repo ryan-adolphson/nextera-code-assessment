@@ -1,0 +1,37 @@
+{
+  "name": "nextera",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/testing",
+    "apps/api",
+    "apps/ingestion"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "test:e2e": "npm run test:e2e --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "format": "npm run format --workspaces --if-present",
+    "dev:shared": "npm run build:watch -w @nextera/shared",
+    "dev:api": "npm run start:dev -w @nextera/api",
+    "dev:ingestion": "npm run start:dev -w @nextera/ingestion",
+    "dev:web": "npm start --prefix apps/web --",
+    "dev:web:docker": "npm run start:docker --prefix apps/web --",
+    "db:migrate": "npm run db:migrate -w @nextera/shared --",
+    "db:deploy": "npm run db:deploy -w @nextera/shared",
+    "db:status": "npm run db:status -w @nextera/shared",
+    "db:seed": "npm run db:seed -w @nextera/shared",
+    "ingest:publish": "npm run publish:sample -w @nextera/ingestion --",
+    "docker:build:api": "docker buildx build --platform linux/amd64 -f apps/api/Dockerfile -t \"${REGISTRY:-nextera}/api:${TAG:-latest}\" --load .",
+    "docker:build:ingestion": "docker buildx build --platform linux/amd64 -f apps/ingestion/Dockerfile -t \"${REGISTRY:-nextera}/ingestion:${TAG:-latest}\" --load .",
+    "docker:build:web": "docker buildx build --platform linux/amd64 -f apps/web/Dockerfile -t \"${REGISTRY:-nextera}/web:${TAG:-latest}\" --load apps/web",
+    "docker:build": "npm run docker:build:api && npm run docker:build:ingestion && npm run docker:build:web",
+    "docker:push": "docker push \"${REGISTRY:-nextera}/api:${TAG:-latest}\" && docker push \"${REGISTRY:-nextera}/ingestion:${TAG:-latest}\" && docker push \"${REGISTRY:-nextera}/web:${TAG:-latest}\""
+  }
+}

@@ -1,0 +1,58 @@
+# nginx server for the Angular build (Cloud Run service nextera-web).
+# A template: the image's entrypoint substitutes ${PORT} (only; NGINX_ENVSUBST_FILTER) into
+# /etc/nginx/conf.d/default.conf at startup. nginx variables ($uri ...) are left alone.
+#
+# Caching: Angular's file names are content-hashed (outputHashing: all), so *.js / *.css are
+# immutable for a year. Everything else (index.html, the SPA fallback, /config.json, favicon,
+# media) is `no-cache`: the browser revalidates (ETag) and picks up a new deploy immediately.
+
+# Keyed on the status too: a 404 for a missing chunk must never be cached as immutable.
+map "$status $uri" $nextera_cache_control {
+  "~^(?:200|206|304) .*\.(?:js|css)$" "public, max-age=31536000, immutable";
+  default                              "no-cache";
+}
+
+server {
+  listen ${PORT};
+  server_name _;
+  root /usr/share/nginx/html;
+
+  server_tokens off;
+  # Behind Cloud Run's TLS front end: never redirect to http://<host>:${PORT}.
+  absolute_redirect off;
+
+  # On every response (a location without its own add_header inherits these).
+  add_header Cache-Control $nextera_cache_control always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header X-Frame-Options "DENY" always;
+
+  # Cloud Run doesn't compress responses; Firebase Hosting used to.
+  gzip on;
+  gzip_vary on;
+  gzip_min_length 1024;
+  gzip_types text/css application/javascript application/json image/svg+xml text/plain;
+
+  # Container probe (Terraform startup/liveness probes, compose HEALTHCHECK).
+  location = /health/live {
+    access_log off;
+    default_type text/plain;
+    return 200 "ok\n";
+  }
+
+  # Runtime config written at container start from API_BASE_URL (40-runtime-config.sh).
+  location = /config.json {
+    alias /usr/share/nginx/runtime/config.json;
+  }
+
+  # A missing script or stylesheet (e.g. a chunk from an older deploy) is a 404, never index.html:
+  # an HTML fallback would be cached as "immutable" JavaScript.
+  location ~* \.(?:js|css)$ {
+    try_files $uri =404;
+  }
+
+  # SPA fallback: deep links (/farms/FARM01/turbines/TURB001) get index.html.
+  location / {
+    try_files $uri /index.html;
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "name": "@nextera/shared",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Code shared by the API and the ingestion worker: Prisma schema, migrations, PrismaService and the Redis event store.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "prepare": "npm run build",
+    "build": "prisma generate && tsc -p tsconfig.build.json",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "prisma generate && tsc --noEmit",
+    "test": "prisma generate && vitest run",
+    "lint": "oxlint src/ --ignore-pattern src/generated",
+    "format": "prettier --write \"src/**/*.ts\" \"prisma/**/*.ts\"",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:status": "prisma migrate status",
+    "db:seed": "prisma db seed"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "dotenv": "^18.0.5",
+    "ioredis": "^5.11.1",
+    "pg": "^8.23.1"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "^12.0.1",
+    "@nestjs/config": "^12.0.1",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/common": "^12.0.1",
+    "@nestjs/config": "^12.0.1",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "oxlint": "^1.58.0",
+    "prettier": "^3.4.2",
+    "prisma": "^7.10.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}

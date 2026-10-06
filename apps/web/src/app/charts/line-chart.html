@@ -1,0 +1,52 @@
+<figure class="m-0 rounded-lg border border-line px-4 pt-3 pb-2">
+  <figcaption class="flex items-baseline justify-between gap-4">
+    <span class="text-sm text-muted" data-testid="chart-title">{{ title() }}</span>
+    @if (last(); as last) {
+      <!-- Direct label of the latest value: text ink, proportional figures. -->
+      <span data-testid="latest"
+        ><strong class="text-lg">{{ format(last.v) }}</strong> {{ unit() }}</span
+      >
+    }
+  </figcaption>
+  @if (statLines().length) {
+    <!-- The reference lines as text: they describe the whole time range, not a zoomed window. -->
+    <dl
+      class="m-0 flex flex-wrap gap-x-3 text-xs text-muted"
+      title="Over the whole time range"
+      data-testid="stats"
+    >
+      @for (line of statLines(); track line.key) {
+        <div class="flex gap-1">
+          <dt>{{ line.label }}</dt>
+          <dd class="m-0 text-ink tabular-nums" [attr.data-testid]="'stat-' + line.key">
+            {{ format(line.value) }} {{ unit() }}
+          </dd>
+        </div>
+      }
+    </dl>
+  }
+
+  <!-- Fixed height includes the x-axis band, so the card never scrolls. -->
+  <div class="relative h-56">
+    <div
+      #plot
+      class="size-full outline-offset-2"
+      role="img"
+      tabindex="0"
+      aria-keyshortcuts="ArrowLeft ArrowRight Home End Escape"
+      [attr.aria-label]="ariaLabel()"
+      (keydown)="onKeydown($event)"
+      (focus)="onFocus()"
+      (blur)="moveTo(null)"
+      (mouseleave)="moveTo(null)"
+    ></div>
+    @if (!visible().length) {
+      <p
+        class="absolute inset-0 m-0 grid place-items-center text-sm text-muted"
+        data-testid="chart-empty"
+      >
+        No readings in this range
+      </p>
+    }
+  </div>
+</figure>

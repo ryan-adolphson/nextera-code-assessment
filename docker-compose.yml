@@ -1,0 +1,175 @@
+name: nextera
+
+# Local stand-in for the GCP stack (see infra/terraform):
+#   postgres          -> Cloud SQL for PostgreSQL
+#   redis             -> Memorystore (SSE event history + fan-out)
+#   pubsub (+ init)   -> Pub/Sub topic "telemetry" with a push subscription to the ingestion worker
+#   migrate           -> `prisma migrate deploy`, which GitHub Actions runs in GCP (.github/workflows/deploy.yml)
+#   api               -> Cloud Run service nextera-api        (localhost:8080)
+#   ingestion         -> Cloud Run service nextera-ingestion  (localhost:8081)
+#   web               -> Cloud Run service nextera-web        (localhost:8082; or `ng serve` on :4200)
+# api / ingestion / web images are tagged ${REGISTRY:-nextera}/<service>:${TAG:-latest}, so
+#   docker compose build api ingestion web && docker compose push api ingestion web
+# pushes them to any registry (set REGISTRY/TAG in .env). For Cloud Run they must be linux/amd64:
+# on Apple Silicon prefix the build with DOCKER_DEFAULT_PLATFORM=linux/amd64 (or use npm run docker:build).
+# Host apps connect to localhost:${POSTGRES_PORT:-5433} / :${REDIS_PORT:-6380}; services use postgres:5432 / redis:6379.
+
+x-database-url: &database-url postgresql://${POSTGRES_USER:-nextera}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-nextera}?schema=public
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: nextera-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nextera}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (copy .env.example)}
+      POSTGRES_DB: ${POSTGRES_DB:-nextera}
+    ports:
+      # Bound to localhost only. Host port defaults to 5433 because 5432 is often taken by a local Postgres.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      # Postgres 18+ images keep data under /var/lib/postgresql/<major>/docker, so mount the parent directory.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - backend
+
+  redis:
+    image: redis:8-alpine
+    container_name: nextera-redis
+    restart: unless-stopped
+    ports:
+      # 6380 on the host avoids clashing with a local Redis on 6379.
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - backend
+
+  pubsub:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    container_name: nextera-pubsub
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=${GOOGLE_CLOUD_PROJECT:-nextera-local}
+    ports:
+      - "127.0.0.1:8085:8085" # PUBSUB_EMULATOR_HOST=localhost:8085 for host scripts
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8085"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - backend
+
+  # Creates the topic and the push subscription (what Terraform does in GCP), then exits.
+  pubsub-init:
+    image: curlimages/curl:8.16.0
+    environment:
+      EMULATOR: http://pubsub:8085/v1/projects/${GOOGLE_CLOUD_PROJECT:-nextera-local}
+      TOPIC: ${PUBSUB_TOPIC:-telemetry}
+      PROJECT: ${GOOGLE_CLOUD_PROJECT:-nextera-local}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        put() { code=$$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'content-type: application/json' "$$1" -d "$$2"); [ "$$code" = 200 ] || [ "$$code" = 409 ] || { echo "PUT $$1 -> $$code"; exit 1; }; }
+        put "$$EMULATOR/topics/$$TOPIC" '{}'
+        put "$$EMULATOR/subscriptions/$$TOPIC-ingestion" "{\"topic\":\"projects/$$PROJECT/topics/$$TOPIC\",\"ackDeadlineSeconds\":30,\"pushConfig\":{\"pushEndpoint\":\"http://ingestion:8080/pubsub/telemetry\"}}"
+        echo "Pub/Sub ready: topic $$TOPIC -> push to ingestion"
+    depends_on:
+      pubsub:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - backend
+
+  # Applies pending Prisma migrations, then exits (in GCP the deploy workflow does this before rolling out).
+  migrate:
+    build:
+      context: .
+      dockerfile: packages/shared/Dockerfile
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - backend
+
+  # Same image as the Cloud Run service nextera-api.
+  api:
+    image: ${REGISTRY:-nextera}/api:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: *database-url
+      REDIS_URL: redis://redis:6379
+      DB_POOL_MAX: ${DB_POOL_MAX:-5}
+      # ng serve (CORS_ORIGINS from .env) + the compose web container, always.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:4200},http://localhost:${WEB_PORT:-8082}
+    ports:
+      # 8080 like Cloud Run; `npm run dev:api` on the host uses 3000, so both can run.
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # Same image as the Cloud Run service nextera-ingestion.
+  ingestion:
+    image: ${REGISTRY:-nextera}/ingestion:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/ingestion/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: *database-url
+      REDIS_URL: redis://redis:6379
+      DB_POOL_MAX: ${DB_POOL_MAX:-5}
+    ports:
+      - "127.0.0.1:${INGESTION_PORT:-8081}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      pubsub-init:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  # Same image as the Cloud Run service nextera-web (nginx + the Angular production build).
+  # The browser calls the compose api on the host port; http is accepted only for localhost.
+  web:
+    image: ${REGISTRY:-nextera}/web:${TAG:-latest}
+    build:
+      context: apps/web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: http://localhost:${API_PORT:-8080}/api
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8082}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+
+networks:
+  backend:
