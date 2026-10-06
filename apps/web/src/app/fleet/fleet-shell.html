@@ -1,0 +1,133 @@
+<a
+  href="#content"
+  class="sr-only rounded-md bg-page px-3 py-2 focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[2000]"
+  >Skip to content</a
+>
+
+<div class="md:flex md:min-h-dvh">
+  <aside
+    class="border-b border-line bg-surface md:sticky md:top-0 md:h-dvh md:w-56 md:shrink-0 md:overflow-y-auto md:border-r md:border-b-0"
+    data-testid="sidebar"
+  >
+    <div class="flex items-center gap-3 px-4 py-3 md:flex-col md:items-start md:py-5">
+      <a
+        routerLink="/farms"
+        class="text-lg font-bold whitespace-nowrap text-ink no-underline hover:no-underline"
+        data-testid="brand"
+        >Nextera <span class="hidden font-normal text-muted sm:inline">Wind fleet</span></a
+      >
+      <span
+        class="group ml-auto inline-flex items-center gap-2 rounded-full bg-page px-3 py-1 text-sm whitespace-nowrap md:ml-0"
+        role="status"
+        data-testid="live-status"
+        [attr.data-status]="store.liveStatus()"
+      >
+        <span
+          class="size-2 rounded-full bg-warn group-data-[status=offline]:bg-danger group-data-[status=open]:bg-ok"
+          aria-hidden="true"
+        ></span>
+        {{ liveLabel() }}
+      </span>
+      <button
+        #menuButton
+        type="button"
+        class="inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink hover:bg-page md:hidden"
+        aria-controls="main-nav"
+        data-testid="nav-toggle"
+        [attr.aria-expanded]="menuOpen()"
+        (click)="toggleMenu()"
+      >
+        <svg
+          class="size-6"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          aria-hidden="true"
+        >
+          @if (menuOpen()) {
+            <path d="M6 6l12 12M18 6 6 18" />
+          } @else {
+            <path d="M4 6h16M4 12h16M4 18h16" />
+          }
+        </svg>
+        <span class="sr-only">Menu</span>
+      </button>
+    </div>
+
+    <nav
+      id="main-nav"
+      aria-label="Main"
+      class="hidden border-t border-line px-2 py-2 data-open:block md:block md:border-t-0"
+      data-testid="main-nav"
+      [attr.data-open]="menuOpen() ? '' : null"
+    >
+      <ul class="grid gap-1">
+        @for (item of navItems; track item.id) {
+          <li>
+            <a
+              class="flex items-center gap-3 rounded-md border-l-3 border-transparent px-3 py-2 text-ink no-underline hover:bg-page hover:no-underline aria-[current=page]:border-accent aria-[current=page]:bg-page"
+              [routerLink]="item.path"
+              routerLinkActive="font-semibold"
+              ariaCurrentWhenActive="page"
+              [attr.data-testid]="'nav-' + item.id"
+            >
+              <svg
+                class="size-5 shrink-0 text-muted"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                @switch (item.id) {
+                  @case ('farms') {
+                    <path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2ZM9 4v14M15 6v14" />
+                  }
+                  @case ('turbines') {
+                    <path d="M12 11v10M9 21h6M12 11V3M12 11l7 4M12 11l-7 4" />
+                  }
+                  @case ('alerting') {
+                    <path d="M6 16v-5a6 6 0 1 1 12 0v5l2 2H4l2-2ZM10 21h4" />
+                  }
+                  @case ('reporting') {
+                    <path d="M4 20h16M7 16v-5M12 16V6M17 16v-8" />
+                  }
+                }
+              </svg>
+              <span>{{ item.label }}</span>
+              @if (item.id === 'alerting' && alertCount()) {
+                <span class="sr-only"
+                  >, {{ alertCount() }} {{ alertCount() === 1 ? 'alert' : 'alerts' }}</span
+                >
+                <span
+                  class="ml-auto rounded-full bg-danger px-2 text-xs/5 font-semibold text-on-danger tabular-nums"
+                  aria-hidden="true"
+                  data-testid="alert-count"
+                  >{{ alertCount() }}</span
+                >
+              }
+            </a>
+          </li>
+        }
+      </ul>
+    </nav>
+  </aside>
+
+  <main id="content" class="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">
+    <div class="mx-auto max-w-6xl">
+      @if (store.error(); as error) {
+        <p class="mb-4 rounded-lg bg-danger-bg px-4 py-3 text-danger" role="alert">{{ error }}</p>
+      }
+
+      @if (store.loading()) {
+        <p class="text-muted">Loading fleet…</p>
+      } @else {
+        <router-outlet />
+      }
+    </div>
+  </main>
+</div>

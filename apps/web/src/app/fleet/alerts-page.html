@@ -1,0 +1,71 @@
+<h1 class="text-3xl font-bold">Alerting</h1>
+<p class="mt-1 text-sm text-muted">
+  Turbines that have stopped reporting or never reported, worst first. Turbines report every 5
+  minutes.
+</p>
+
+<section
+  class="mt-6 grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-3"
+  aria-label="Alerts by level"
+>
+  @for (level of levels; track level) {
+    <app-stat-tile [label]="labels[level]" [testId]="'alert-count-' + level">{{
+      counts()[level]
+    }}</app-stat-tile>
+  }
+</section>
+
+@if (store.alerts().length === 0) {
+  <p
+    class="mt-6 flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-6"
+    role="status"
+    data-testid="no-alerts"
+  >
+    @if (store.turbines().length) {
+      <span class="size-2 rounded-full bg-ok" aria-hidden="true"></span>
+      All turbines are reporting.
+    } @else {
+      No turbines are registered yet.
+    }
+  </p>
+} @else {
+  <h2 class="mt-8 mb-3 text-lg font-semibold">
+    {{ store.alerts().length }}
+    {{ store.alerts().length === 1 ? 'turbine needs' : 'turbines need' }}
+    attention
+  </h2>
+  <div class="overflow-x-auto">
+    <table class="data-table" data-testid="alerts">
+      <thead>
+        <tr>
+          <th scope="col">Turbine</th>
+          <th scope="col">Farm</th>
+          <th scope="col">Status</th>
+          <th scope="col">Last reading (UTC)</th>
+          <th scope="col">Silent for</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (t of store.alerts(); track t.id) {
+          <tr data-testid="alert" [attr.data-turbine-id]="t.id" [attr.data-staleness]="t.staleness">
+            <td>
+              <a [routerLink]="['/farms', t.farmId, 'turbines', t.id]">{{ t.id }}</a>
+            </td>
+            <td>
+              <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a>
+              <span class="text-muted"> {{ t.farmId }}</span>
+            </td>
+            <td><app-staleness-badge [staleness]="t.staleness" /></td>
+            @if (t.latest; as r) {
+              <td class="tabular-nums">{{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}</td>
+              <td class="tabular-nums" data-testid="alert-age">{{ age(r.timestamp) }}</td>
+            } @else {
+              <td class="text-muted">Never reported</td>
+              <td class="text-muted" data-testid="alert-age">–</td>
+            }
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+}

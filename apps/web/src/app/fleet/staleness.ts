@@ -19,8 +19,12 @@ export type StaleLevel = (typeof STALENESS_LEVELS)[number]['level'];
 /** 'ok' = reporting; 'empty' = has never reported (no latest reading). */
 export type Staleness = 'ok' | StaleLevel | 'empty';
 
-/** Freshest first: the order used to pick a farm's level from its turbines. */
-const ORDER: readonly Staleness[] = ['ok', ...STALENESS_LEVELS.map((l) => l.level), 'empty'];
+/** Freshest first: the order used to pick a farm's level from its turbines (and to sort by status). */
+export const STALENESS_ORDER: readonly Staleness[] = [
+  'ok',
+  ...STALENESS_LEVELS.map((l) => l.level),
+  'empty',
+];
 
 export const STALENESS_LABELS: Record<Staleness, string> = {
   ok: 'Reporting',
@@ -48,7 +52,8 @@ export function stalenessOf(latest: Telemetry | null | undefined, now: number): 
 /** The freshest of several levels ('empty' when there are none). */
 export function freshestStaleness(levels: Staleness[]): Staleness {
   return levels.reduce<Staleness>(
-    (best, level) => (ORDER.indexOf(level) < ORDER.indexOf(best) ? level : best),
+    (best, level) =>
+      STALENESS_ORDER.indexOf(level) < STALENESS_ORDER.indexOf(best) ? level : best,
     'empty',
   );
 }

@@ -56,8 +56,8 @@ describe('Fleet routes', () => {
   }
   const fixture = () => harness.fixture;
 
-  describe('overview (/)', () => {
-    beforeEach(() => start('/'));
+  describe('overview (/farms)', () => {
+    beforeEach(() => start('/farms'));
 
     it('shows fleet totals and every farm, including farms without turbines', () => {
       expect(text('[data-testid=fleet-power]')).toBe('4.2 MW');
@@ -241,7 +241,7 @@ describe('Fleet routes', () => {
 
     it('goes back to all farms', async () => {
       await start('/farms/FARM01');
-      el().querySelector<HTMLAnchorElement>('nav a')!.click();
+      el().querySelector<HTMLAnchorElement>('[data-testid=back-to-farms]')!.click();
       await stable();
 
       expect(text('h1')).toBe('Fleet overview');

@@ -1,5 +1,16 @@
-import { ChangeDetectionStrategy, Component, OnInit, computed, inject } from '@angular/core';
-import { RouterLink, RouterOutlet } from '@angular/router';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  OnInit,
+  computed,
+  inject,
+  signal,
+  viewChild,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { filter } from 'rxjs';
 import { FleetStore, LiveStatus } from './fleet.store';
 
 const LIVE_LABELS: Record<LiveStatus, string> = {
@@ -9,51 +20,61 @@ const LIVE_LABELS: Record<LiveStatus, string> = {
   offline: 'Offline',
 };
 
+/** The main navigation, in order. `id` picks the icon and the `nav-<id>` test hook. */
+export const NAV_ITEMS = [
+  { id: 'farms', path: '/farms', label: 'Farms' },
+  { id: 'turbines', path: '/turbines', label: 'Turbines' },
+  { id: 'alerting', path: '/alerting', label: 'Alerting' },
+  { id: 'reporting', path: '/reporting', label: 'Reporting' },
+] as const;
+
 /**
- * Parent of the fleet pages. Owns the FleetStore (provided here, so the overview and farm pages
- * share it): the fleet is loaded and the SSE connection opened once, and navigating between
- * pages neither reloads nor reconnects.
+ * Parent of every page: the side navigation and the page region. Owns the FleetStore (provided
+ * here, so all pages share it): the fleet is loaded and the SSE connection opened once, and
+ * navigating between pages neither reloads nor reconnects.
+ *
+ * Desktop (md and up): a sticky left column with the app name, the live badge and the nav.
+ * Narrower: a top bar whose menu button expands the nav below it (Esc or navigating closes it).
  */
 @Component({
   selector: 'app-fleet-shell',
-  imports: [RouterLink, RouterOutlet],
+  imports: [RouterLink, RouterLinkActive, RouterOutlet],
   providers: [FleetStore],
-  template: `
-    <header class="mb-6 flex items-center justify-between">
-      <a routerLink="/" class="font-semibold text-muted no-underline hover:no-underline">
-        Wind fleet
-      </a>
-      <span
-        class="group inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1 text-sm"
-        role="status"
-        data-testid="live-status"
-        [attr.data-status]="store.liveStatus()"
-      >
-        <span
-          class="size-2 rounded-full bg-warn group-data-[status=offline]:bg-danger group-data-[status=open]:bg-ok"
-          aria-hidden="true"
-        ></span>
-        {{ liveLabel() }}
-      </span>
-    </header>
-
-    @if (store.error(); as error) {
-      <p class="mb-4 rounded-lg bg-danger-bg px-4 py-3 text-danger" role="alert">{{ error }}</p>
-    }
-
-    @if (store.loading()) {
-      <p class="text-muted">Loading fleet…</p>
-    } @else {
-      <router-outlet />
-    }
-  `,
+  templateUrl: './fleet-shell.html',
+  host: { '(document:keydown.escape)': 'closeMenu()' },
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class FleetShell implements OnInit {
   protected readonly store = inject(FleetStore);
   protected readonly liveLabel = computed(() => LIVE_LABELS[this.store.liveStatus()]);
+  protected readonly navItems = NAV_ITEMS;
+  /** Turbines needing attention (the Alerting page's rows), shown on the nav item. */
+  protected readonly alertCount = computed(() => this.store.alerts().length);
+  /** The narrow-screen menu (always shown from md up). */
+  protected readonly menuOpen = signal(false);
+  private readonly menuButton = viewChild.required<ElementRef<HTMLButtonElement>>('menuButton');
+
+  constructor() {
+    inject(Router)
+      .events.pipe(
+        filter((e) => e instanceof NavigationEnd),
+        takeUntilDestroyed(),
+      )
+      .subscribe(() => this.menuOpen.set(false));
+  }
 
   ngOnInit(): void {
     this.store.init();
+  }
+
+  protected toggleMenu(): void {
+    this.menuOpen.update((open) => !open);
+  }
+
+  /** Esc: closes the menu and returns focus to its button. */
+  protected closeMenu(): void {
+    if (!this.menuOpen()) return;
+    this.menuOpen.set(false);
+    this.menuButton().nativeElement.focus();
   }
 }

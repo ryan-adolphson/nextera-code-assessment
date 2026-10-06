@@ -1,6 +1,6 @@
 @if (turbine(); as turbine) {
   <nav class="flex flex-wrap gap-1.5 text-sm" aria-label="Breadcrumb" data-testid="breadcrumb">
-    <a routerLink="/">All farms</a>
+    <a routerLink="/farms">All farms</a>
     <span aria-hidden="true">›</span>
     <a [routerLink]="['/farms', turbine.farmId]">{{ turbine.farmName }}</a>
     <span aria-hidden="true">›</span>

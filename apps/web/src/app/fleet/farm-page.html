@@ -1,4 +1,6 @@
-<nav class="text-sm"><a routerLink="/">← All farms</a></nav>
+<nav class="text-sm" aria-label="Back">
+  <a routerLink="/farms" data-testid="back-to-farms">← All farms</a>
+</nav>
 
 @if (farm(); as farm) {
   <h1 class="mt-3 text-3xl font-bold">

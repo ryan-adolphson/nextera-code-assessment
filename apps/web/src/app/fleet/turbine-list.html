@@ -1,0 +1,100 @@
+<h1 class="text-3xl font-bold">Turbines</h1>
+<p class="mt-1 text-sm text-muted">Every turbine in the fleet with its latest reading, live.</p>
+
+@if (store.turbines().length === 0) {
+  <p class="mt-6 text-muted" data-testid="no-turbines">No turbines are registered yet.</p>
+} @else {
+  <div class="mt-6 flex flex-wrap items-end gap-3" role="search" aria-label="Filter turbines">
+    <label class="grid gap-1 text-sm">
+      <span class="text-muted">Turbine or farm</span>
+      <input
+        type="search"
+        class="w-56 max-w-full rounded-md border border-line bg-page px-3 py-1.5 text-ink"
+        placeholder="e.g. TURB001 or FARM01"
+        data-testid="turbine-filter"
+        [value]="query()"
+        (input)="onQuery($event)"
+      />
+    </label>
+    <label class="grid gap-1 text-sm">
+      <span class="text-muted">Status</span>
+      <select
+        class="rounded-md border border-line bg-page px-3 py-1.5 text-ink"
+        data-testid="status-filter"
+        (change)="onStatus($event)"
+      >
+        <option value="all" [selected]="status() === 'all'">All statuses</option>
+        @for (s of statuses; track s.value) {
+          <option [value]="s.value" [selected]="status() === s.value">{{ s.label }}</option>
+        }
+      </select>
+    </label>
+    <p class="pb-1.5 text-sm text-muted" role="status" data-testid="turbine-count">
+      {{ rows().length }} of {{ store.turbines().length }} turbines
+    </p>
+  </div>
+
+  <div class="mt-4 overflow-x-auto">
+    <table class="data-table" data-testid="turbines">
+      <thead>
+        <tr>
+          @for (col of columns; track col.key) {
+            <th scope="col" class="p-0!" [attr.aria-sort]="ariaSort(col.key)">
+              <button
+                type="button"
+                class="inline-flex w-full cursor-pointer items-center gap-1 px-3 py-2 font-semibold hover:text-accent"
+                [class.justify-end]="col.numeric"
+                [attr.data-testid]="'sort-' + col.key"
+                (click)="sortBy(col.key)"
+              >
+                {{ col.label }}
+                <span class="w-3 text-muted" aria-hidden="true">{{
+                  ariaSort(col.key) === 'ascending'
+                    ? '▲'
+                    : ariaSort(col.key) === 'descending'
+                      ? '▼'
+                      : ''
+                }}</span>
+              </button>
+            </th>
+          }
+        </tr>
+      </thead>
+      <tbody>
+        @for (t of rows(); track t.id) {
+          <tr
+            class="data-updated:animate-flash"
+            [attr.data-turbine-id]="t.id"
+            [attr.data-updated]="t.id === store.recentlyUpdated() ? '' : null"
+          >
+            <td>
+              <a [routerLink]="['/farms', t.farmId, 'turbines', t.id]">{{ t.id }}</a>
+            </td>
+            <td>
+              <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a>
+              <span class="text-muted"> {{ t.farmId }}</span>
+            </td>
+            <td><app-staleness-badge [staleness]="t.staleness" /></td>
+            @if (t.latest; as r) {
+              <td class="text-right! tabular-nums">{{ r.powerOutputKw | number: '1.0-0' }}</td>
+              <td class="text-right! tabular-nums">{{ r.windSpeedMs | number: '1.1-1' }}</td>
+              <td class="text-right! tabular-nums">{{ r.gearboxTempC | number: '1.1-1' }}</td>
+              <td class="tabular-nums">{{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}</td>
+            } @else {
+              <td class="text-right! text-muted">–</td>
+              <td class="text-right! text-muted">–</td>
+              <td class="text-right! text-muted">–</td>
+              <td class="text-muted">No readings yet</td>
+            }
+          </tr>
+        } @empty {
+          <tr>
+            <td colspan="7" class="text-muted" data-testid="no-matches">
+              No turbines match the filters.
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+}

@@ -9,14 +9,22 @@ import {
   DEFAULT_HISTORY_RANGE_MS,
   FarmOverview,
   MAX_HISTORY_READINGS,
+  TurbineOverview,
   READING_INTERVAL_MS,
   TELEMETRY_EVENTS,
   Telemetry,
   TelemetryStats,
 } from './fleet.model';
+import { alertsOf } from './alerts';
 import { Staleness, freshestStaleness, stalenessOf } from './staleness';
 
 export type LiveStatus = SseStatus | 'offline';
+
+/** A turbine with its farm's name, its latest reading (by measurement time) and staleness. */
+export interface FleetTurbine extends TurbineOverview {
+  farmName: string;
+  staleness: Staleness;
+}
 
 export interface FarmSummary {
   id: string;
@@ -105,7 +113,7 @@ export class FleetStore {
   });
 
   /** Each turbine with its latest reading (by measurement time) and staleness at `now`. */
-  readonly turbines = computed(() =>
+  readonly turbines = computed<FleetTurbine[]>(() =>
     this.farmList().flatMap((farm) =>
       farm.turbines.map((t) => {
         const latest = this.latestByTurbine().get(t.id) ?? null;
@@ -147,6 +155,12 @@ export class FleetStore {
       };
     }),
   );
+
+  /**
+   * Turbines needing attention now (staleness other than 'ok'), worst first: 60, 30, 15 min, then
+   * never reported (`alerts.ts`). Moves with the clock and live readings like `turbines`.
+   */
+  readonly alerts = computed(() => alertsOf(this.turbines()));
 
   readonly fleet = computed(() => {
     const farms = this.farms();
