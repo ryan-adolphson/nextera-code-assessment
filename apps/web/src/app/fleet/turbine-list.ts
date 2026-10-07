@@ -6,10 +6,10 @@ import { AlertLevelBadge } from '../alerting/alert-level-badge';
 import { AlertRulesStore } from '../alerting/alert-rules.store';
 import {
   LEVEL_SEVERITY,
-  describeTrigger,
   describeTriggerWithLevel,
   triggeredRules,
 } from '../alerting/evaluate-alerts';
+import { Tooltip } from '../ui/tooltip';
 import { FleetStore, FleetTurbine } from './fleet.store';
 import { STALENESS_LABELS, STALENESS_ORDER, Staleness } from './staleness';
 import { StalenessBadge } from './staleness-badge';
@@ -21,16 +21,16 @@ type SortValue = string | number | null;
 /**
  * The Alert cell of a turbine: the alert rules its LATEST reading (by measurement time) triggers,
  * also for stale turbines (the Status column shows staleness). `state`:
- * - `triggered`: `level` is the worst level, `summary` the worst rule ("Gearbox temperature
- *   126.5 °C > 120"), `more` the other triggered rules with their levels;
+ * - `triggered`: `level` is the worst level (the visible pill); `details` lists every triggered
+ *   rule with its level, worst first ("Error: Gearbox temperature 126.5 °C > 120"), for the
+ *   pill's tooltip;
  * - `none`: no rule fires; `no-reading`: never reported;
  * - `loading` / `unavailable`: the rules are not loaded yet / could not be loaded.
  */
 export interface AlertCell {
   state: 'triggered' | 'none' | 'no-reading' | 'loading' | 'unavailable';
   level: AlertLevel | null;
-  summary: string;
-  more: string[];
+  details: string[];
 }
 
 export type AlertFilter = 'all' | 'none' | AlertLevel;
@@ -96,7 +96,7 @@ const COLUMNS: {
  */
 @Component({
   selector: 'app-turbine-list',
-  imports: [AlertLevelBadge, DatePipe, DecimalPipe, RouterLink, StalenessBadge],
+  imports: [AlertLevelBadge, DatePipe, DecimalPipe, RouterLink, StalenessBadge, Tooltip],
   templateUrl: './turbine-list.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -139,19 +139,18 @@ export class TurbineList {
     return new Map(
       this.store.turbines().map((t): [string, AlertCell] => {
         const r = t.latest;
-        if (!r) return [t.id, { state: 'no-reading', level: null, summary: '', more: [] }];
-        if (unavailable) return [t.id, { state: unavailable, level: null, summary: '', more: [] }];
-        const [worst, ...rest] = triggeredRules(r, rules);
+        if (!r) return [t.id, { state: 'no-reading', level: null, details: [] }];
+        if (unavailable) return [t.id, { state: unavailable, level: null, details: [] }];
+        const triggered = triggeredRules(r, rules);
         return [
           t.id,
-          worst
+          triggered.length
             ? {
                 state: 'triggered',
-                level: worst.alertLevel,
-                summary: describeTrigger(r, worst),
-                more: rest.map((rule) => describeTriggerWithLevel(r, rule)),
+                level: triggered[0].alertLevel,
+                details: triggered.map((rule) => describeTriggerWithLevel(r, rule)),
               }
-            : { state: 'none', level: null, summary: '', more: [] },
+            : { state: 'none', level: null, details: [] },
         ];
       }),
     );

@@ -361,7 +361,7 @@ describe('TurbineList (/turbines)', () => {
       });
     });
 
-    it('shows the worst triggered level, the worst rule and the others behind "+N more"', async () => {
+    it('shows only the worst level pill, with every triggered rule in its tooltip', async () => {
       await rulesChanged(RULES());
 
       expect(alertStates()).toEqual({
@@ -375,23 +375,52 @@ describe('TurbineList (/turbines)', () => {
       });
       // TURB006 (stale, last reading 126.5 °C) is still evaluated.
       const t6 = alertCell('TURB006');
-      expect(t6.querySelector('[data-testid=alert-level]')!.getAttribute('data-level')).toBe(
-        'error',
-      );
-      expect(app.text(t6.querySelector('[data-testid=alert-level]'))).toBe('Error');
-      expect(app.text(t6.querySelector('[data-testid=alert-summary]'))).toBe(
-        'Gearbox temperature 126.5 °C > 120',
-      );
-      const more = t6.querySelector<HTMLDetailsElement>('details[data-testid=alert-more]')!;
-      expect(app.text(more.querySelector('summary'))).toBe('+1 more');
-      expect([...more.querySelectorAll('li')].map((li) => app.text(li))).toEqual([
+      const pill = t6.querySelector('[data-testid=alert-level]')!;
+      expect(pill.getAttribute('data-level')).toBe('error');
+      expect(app.text(pill)).toBe('Error');
+      // Visibly only the pill: the trigger holds just the pill, the tooltip is hidden.
+      const trigger = t6.querySelector<HTMLElement>('[data-testid=tooltip-trigger]')!;
+      expect(trigger.contains(pill)).toBe(true);
+      expect(app.text(trigger)).toBe('Error');
+      expect([trigger.tagName, trigger.getAttribute('type')]).toEqual(['BUTTON', 'button']);
+      const tooltip = t6.querySelector<HTMLElement>('[data-testid=alert-tooltip]')!;
+      expect(tooltip.hidden).toBe(true);
+      expect(tooltip.getAttribute('role')).toBe('tooltip');
+      expect(trigger.getAttribute('aria-describedby')).toBe(tooltip.id);
+      expect([
+        ...t6.querySelectorAll('[data-testid=tooltip-trigger], [data-testid=alert-tooltip]'),
+      ]).toHaveLength(2);
+      expect(
+        t6.querySelector('details, [data-testid=alert-summary], [data-testid=alert-more]'),
+      ).toBeNull();
+      // Every triggered rule, worst first, with its level.
+      const details = (cell: Element) =>
+        [...cell.querySelectorAll('[data-testid=alert-tooltip] li')].map((li) => app.text(li));
+      expect(details(t6)).toEqual([
+        'Error: Gearbox temperature 126.5 °C > 120',
         'Warning: Gearbox temperature 126.5 °C > 90',
       ]);
-      expect(app.text(alertCell('TURB005'))).toBe(
-        'Warning Wind speed 15.8 m/s > 9 +1 more Info: Power output 0 kW < 100',
-      );
+      expect(details(alertCell('TURB005'))).toEqual([
+        'Warning: Wind speed 15.8 m/s > 9',
+        'Info: Power output 0 kW < 100',
+      ]);
+
+      // Hover / focus opens it.
+      trigger.focus();
+      await app.stable();
+      expect(tooltip.hidden).toBe(false);
+      expect(tooltip.hasAttribute('data-open')).toBe(true);
+      trigger.blur();
+      await app.stable();
+      expect(tooltip.hidden).toBe(true);
+
+      // The other states have no tooltip.
       expect(app.text(alertCell('TURB001'))).toBe('None');
-      expect(alertCell('TURB001').querySelector('details')).toBeNull();
+      expect(app.text(alertCell('TURB004'))).toBe('—');
+      for (const id of ['TURB001', 'TURB004']) {
+        expect(alertCell(id).querySelector('[data-testid=tooltip-trigger]')).toBeNull();
+        expect(alertCell(id).querySelector('[role=tooltip]')).toBeNull();
+      }
     });
 
     it('sorts by alert (None, Info, Warning, Error; no reading last), ties by turbine id', async () => {
@@ -455,9 +484,14 @@ describe('TurbineList (/turbines)', () => {
       await app.stable();
 
       expect(alertCell('TURB001').getAttribute('data-alert')).toBe('error');
-      expect(app.text(alertCell('TURB001').querySelector('[data-testid=alert-summary]'))).toBe(
-        'Gearbox temperature 121 °C > 120',
-      );
+      expect(
+        [...alertCell('TURB001').querySelectorAll('[data-testid=alert-tooltip] li')].map((li) =>
+          app.text(li),
+        ),
+      ).toEqual([
+        'Error: Gearbox temperature 121 °C > 120',
+        'Warning: Gearbox temperature 121 °C > 90',
+      ]);
 
       app.sse.push(reading({ timestamp: '2026-01-03T00:05:00.000Z', gearboxTempC: 85 }));
       await app.stable();
@@ -492,6 +526,7 @@ describe('TurbineList when the alert rules cannot be loaded', () => {
     expect(cell.getAttribute('data-alert')).toBe('unavailable');
     expect(app.text(cell.querySelector('[aria-hidden=true]'))).toBe('—');
     expect(app.text(cell.querySelector('.sr-only'))).toBe('Alert rules unavailable');
+    expect(cell.querySelector('[role=tooltip]')).toBeNull();
     expect(app.text(row.querySelectorAll('td')[5])).toBe('300'); // power still shown
     expect(app.text(app.root().querySelector('[data-testid=turbine-count]'))).toBe(
       '7 of 7 turbines',

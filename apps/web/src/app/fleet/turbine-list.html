@@ -143,22 +143,16 @@
             >
               @switch (alert.state) {
                 @case ('triggered') {
-                  <span class="inline-flex items-center gap-2">
+                  <!-- Only the pill; every triggered rule (worst first) is in its tooltip, which
+                       is also the pill's accessible description. -->
+                  <app-tooltip testId="alert-tooltip">
                     <app-alert-level-badge [level]="alert.level!" />
-                    <span data-testid="alert-summary">{{ alert.summary }}</span>
-                  </span>
-                  @if (alert.more.length) {
-                    <details class="mt-1 text-sm" data-testid="alert-more">
-                      <summary class="cursor-pointer text-accent">
-                        +{{ alert.more.length }} more
-                      </summary>
-                      <ul class="mt-1 grid gap-0.5">
-                        @for (m of alert.more; track $index) {
-                          <li>{{ m }}</li>
-                        }
-                      </ul>
-                    </details>
-                  }
+                    <ul tooltip-content class="grid gap-0.5" data-testid="alert-details">
+                      @for (d of alert.details; track $index) {
+                        <li>{{ d }}</li>
+                      }
+                    </ul>
+                  </app-tooltip>
                 }
                 @case ('none') {
                   <span class="text-muted">None</span>
