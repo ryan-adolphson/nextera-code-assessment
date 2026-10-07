@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "angular-developer": {
+      "source": "angular/skills",
+      "sourceType": "github",
+      "skillPath": "angular-developer/SKILL.md",
+      "computedHash": "4b23f026727c3e7aad1b553eac3769a39fb2cb3d2e04a450712455ce67653cef"
+    },
+    "angular-new-app": {
+      "source": "angular/skills",
+      "sourceType": "github",
+      "skillPath": "angular-new-app/SKILL.md",
+      "computedHash": "49bd84ab08bd3498c52f476bed48fbb942dc6dbc0925607e84549adbed34bccf"
+    },
+    "nestjs-features-performance": {
+      "source": "amirtaherkhani/nestjs-skills",
+      "sourceType": "github",
+      "skillPath": "skills/nestjs-features-performance/SKILL.md",
+      "computedHash": "bc0f0ad29682fc4362f8cd28b3e804ba59460f1994811a7bffaff0b3d2305200"
+    },
+    "nestjs-professional-software-engineering": {
+      "source": "amirtaherkhani/nestjs-skills",
+      "sourceType": "github",
+      "skillPath": "skills/nestjs-professional-software-engineering/SKILL.md",
+      "computedHash": "8c0504d7a37332b213fdcb48361e1d7ac4cb2aa2aa13e297723c7ce062438117"
+    }
+  }
+}
