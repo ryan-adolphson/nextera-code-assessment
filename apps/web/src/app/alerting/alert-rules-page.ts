@@ -4,11 +4,16 @@ import {
   Component,
   DestroyRef,
   computed,
+  effect,
   inject,
   signal,
+  viewChild,
   type WritableSignal,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { ErrorStateMatcher } from '@angular/material/core';
+import { MatError, MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
+import { MatInput } from '@angular/material/input';
 import { Observable } from 'rxjs';
 import { TelemetryMetric } from '../fleet/fleet.model';
 import { ModalDialog } from '../ui/modal-dialog';
@@ -44,7 +49,16 @@ const DEFAULT_RULE: AlertConfigInput = {
  */
 @Component({
   selector: 'app-alert-rules-page',
-  imports: [AlertLevelBadge, AlertingTabs, ModalDialog],
+  imports: [
+    AlertLevelBadge,
+    AlertingTabs,
+    MatError,
+    MatFormField,
+    MatInput,
+    MatLabel,
+    MatSuffix,
+    ModalDialog,
+  ],
   templateUrl: './alert-rules-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -83,6 +97,22 @@ export class AlertRulesPage {
     return Number.isFinite(Number(raw)) ? null : 'Enter a number, e.g. 120 or -5.5.';
   });
   protected readonly unit = computed(() => metricOf(this.metric()).unit);
+  /**
+   * The threshold's Material error state (red outline, `<mat-error>`, `aria-invalid`). There is
+   * no Angular forms control, so MatInput never re-checks it on its own: the effect below does.
+   */
+  protected readonly valueErrorState: ErrorStateMatcher = {
+    isErrorState: () => this.submitted() && this.valueError() !== null,
+  };
+  private readonly valueInput = viewChild('valueInput', { read: MatInput });
+
+  constructor() {
+    effect(() => {
+      this.submitted();
+      this.valueError();
+      this.valueInput()?.updateErrorState();
+    });
+  }
 
   // --- Delete confirmation ----------------------------------------------------------------
   protected readonly deleting = signal<AlertConfig | null>(null);

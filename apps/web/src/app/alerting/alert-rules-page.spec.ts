@@ -147,12 +147,23 @@ describe('AlertRulesPage (/alerting/rules)', () => {
 
     expect(app.text(q('rule-value-error'))).toBe('Enter a threshold value.');
     expect(q('rule-value')!.getAttribute('aria-invalid')).toBe('true');
+    // The <mat-error> is announced with the field, after the unit.
+    expect(q('rule-value')!.getAttribute('aria-describedby')!.split(' ')).toEqual([
+      'rule-value-unit',
+      q('rule-value-error')!.id,
+    ]);
+    expect(q('rule-value')!.closest('mat-form-field')!.classList).toContain(
+      'mat-form-field-invalid',
+    );
     expect(isOpen('rule-dialog')).toBe(true);
     app.http.expectNone(URL);
 
     await type('rule-value', '-5');
-    expect(app.text(q('rule-value-error'))).toBe('');
-    expect(q('rule-value')!.getAttribute('aria-invalid')).toBeNull();
+    expect(q('rule-value-error')).toBeNull();
+    expect(q('rule-value')!.getAttribute('aria-invalid')).toBe('false');
+    expect(q('rule-value')!.closest('mat-form-field')!.classList).not.toContain(
+      'mat-form-field-invalid',
+    );
   });
 
   it('shows a duplicate (409) in the dialog and keeps it open', async () => {
@@ -214,7 +225,7 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     expect(q<HTMLSelectElement>('rule-metric')!.value).toBe('windSpeedMs');
     expect(q<HTMLSelectElement>('rule-level-select')!.value).toBe('warn');
     expect(q<HTMLInputElement>('rule-value')!.value).toBe('25');
-    expect(app.text(q('rule-value')!.parentElement)).toContain('m/s');
+    expect(app.text(q('rule-value')!.closest('mat-form-field'))).toContain('m/s');
 
     await type('rule-value', '28');
     await submit('rule-save');
@@ -316,9 +327,10 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     await click('add-rule');
     const dialog = q('rule-dialog')!;
     expect(dialog.getAttribute('aria-labelledby')).toBe(dialog.querySelector('h2')!.id);
-    for (const id of ['rule-metric', 'rule-comparison', 'rule-level-select']) {
-      expect(app.text(q(id)!.closest('label')!.querySelector('span'))).toBeTruthy();
-    }
-    expect(app.text(dialog.querySelector('label[for=rule-value]'))).toBe('Threshold');
+    // mat-form-field renders a <label for> per control from its <mat-label>.
+    const label = (id: string) => app.text(dialog.querySelector(`label[for="${q(id)!.id}"]`));
+    expect(
+      ['rule-metric', 'rule-comparison', 'rule-value', 'rule-level-select'].map(label),
+    ).toEqual(['Metric', 'Condition', 'Threshold', 'Level']);
   });
 });

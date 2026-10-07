@@ -116,10 +116,11 @@
   (closed)="closeEditor()"
 >
   <form class="grid gap-4" novalidate (submit)="$event.preventDefault(); save()">
-    <label class="grid gap-1 text-sm">
-      <span class="font-medium">Metric</span>
+    <!-- Material outline fields; the selects stay native (matNativeControl). -->
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Metric</mat-label>
       <select
-        class="rounded-md border border-line bg-page px-3 py-2 text-ink"
+        matNativeControl
         data-testid="rule-metric"
         autofocus
         (change)="metric.set($any($event.target).value)"
@@ -130,13 +131,13 @@
           </option>
         }
       </select>
-    </label>
+    </mat-form-field>
 
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      <label class="grid gap-1 text-sm">
-        <span class="font-medium">Condition</span>
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Condition</mat-label>
         <select
-          class="rounded-md border border-line bg-page px-3 py-2 text-ink"
+          matNativeControl
           data-testid="rule-comparison"
           (change)="comparison.set($any($event.target).value)"
         >
@@ -144,37 +145,32 @@
             <option [value]="c.value" [selected]="comparison() === c.value">{{ c.label }}</option>
           }
         </select>
-      </label>
+      </mat-form-field>
 
-      <div class="grid gap-1 text-sm">
-        <label class="font-medium" for="rule-value">Threshold</label>
-        <div class="flex items-center gap-2">
-          <input
-            id="rule-value"
-            type="number"
-            step="any"
-            inputmode="decimal"
-            class="w-full min-w-0 rounded-md border border-line bg-page px-3 py-2 text-ink aria-invalid:border-danger"
-            data-testid="rule-value"
-            aria-describedby="rule-value-unit rule-value-error"
-            [attr.aria-invalid]="submitted() && valueError() ? 'true' : null"
-            [value]="value()"
-            (input)="value.set($any($event.target).value)"
-          />
-          <span class="text-muted" id="rule-value-unit">{{ unit() }}</span>
-        </div>
-        <p class="text-danger" id="rule-value-error" data-testid="rule-value-error">
-          @if (submitted() && valueError(); as message) {
-            {{ message }}
-          }
-        </p>
-      </div>
+      <!-- No Angular forms: the error state comes from valueErrorState (see the component). -->
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Threshold</mat-label>
+        <input
+          #valueInput
+          matInput
+          type="number"
+          step="any"
+          inputmode="decimal"
+          data-testid="rule-value"
+          aria-describedby="rule-value-unit"
+          [errorStateMatcher]="valueErrorState"
+          [value]="value()"
+          (input)="value.set($any($event.target).value)"
+        />
+        <span matTextSuffix class="pl-1 text-muted" id="rule-value-unit">{{ unit() }}</span>
+        <mat-error data-testid="rule-value-error">{{ valueError() }}</mat-error>
+      </mat-form-field>
     </div>
 
-    <label class="grid gap-1 text-sm">
-      <span class="font-medium">Level</span>
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Level</mat-label>
       <select
-        class="rounded-md border border-line bg-page px-3 py-2 text-ink"
+        matNativeControl
         data-testid="rule-level-select"
         (change)="level.set($any($event.target).value)"
       >
@@ -182,7 +178,7 @@
           <option [value]="l.value" [selected]="level() === l.value">{{ l.label }}</option>
         }
       </select>
-    </label>
+    </mat-form-field>
 
     @if (editorError(); as error) {
       <p

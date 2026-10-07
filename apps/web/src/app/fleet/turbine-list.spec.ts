@@ -48,6 +48,21 @@ describe('TurbineList (/turbines)', () => {
     await app.stable();
   }
 
+  it('labels each filter with a Material outline field', () => {
+    const label = (testId: string) => {
+      const control = app.root().querySelector(`[data-testid=${testId}]`)!;
+      expect(control.closest('mat-form-field')!.classList).toContain(
+        'mat-form-field-appearance-outline',
+      );
+      return app.text(app.root().querySelector(`label[for="${control.id}"]`));
+    };
+    expect(
+      ['turbine-filter', 'status-filter', 'commissioned-filter', 'alert-filter'].map(label),
+    ).toEqual(['Turbine or farm', 'Status', 'Commissioned', 'Alert']);
+    // The selects stay native, so they keep the platform pickers (and the tests' change events).
+    expect(app.root().querySelector('[data-testid=status-filter]')!.tagName).toBe('SELECT');
+  });
+
   it('lists every turbine of every farm by turbine id, with status and latest reading', () => {
     expect(app.text(app.root().querySelector('h1'))).toBe('Turbines');
     expect(ids()).toEqual([

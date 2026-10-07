@@ -1,6 +1,8 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { MatIcon } from '@angular/material/icon';
+import { MatFormField, MatLabel } from '@angular/material/form-field';
+import { MatInput } from '@angular/material/input';
 import { MatTooltip } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 import { AlertLevel, ALERT_RULE_LEVELS } from '../alerting/alert-config.model';
@@ -101,7 +103,10 @@ const COLUMNS: {
     AlertLevelBadge,
     DatePipe,
     DecimalPipe,
+    MatFormField,
     MatIcon,
+    MatInput,
+    MatLabel,
     MatTooltip,
     RouterLink,
     StalenessBadge,

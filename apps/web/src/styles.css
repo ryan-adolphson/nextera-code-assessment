@@ -100,21 +100,50 @@
 }
 
 /*
- * Angular Material tooltip (`matTooltip`). There is no Material theme, so its tokens come from
- * ours (they follow dark mode). `app-tooltip` (matTooltipClass) is the left-aligned, wider,
- * multi-line variant: one line per `\n` in the message.
+ * Angular Material without a Material theme: its system tokens (--mat-sys-*) point at ours, so
+ * every component follows the palette and dark mode. Component tokens below override details.
  */
 :root {
-  --mat-tooltip-container-color: var(--surface);
-  --mat-tooltip-supporting-text-color: var(--text);
-  --mat-tooltip-container-shape: 6px;
-  --mat-tooltip-supporting-text-font: inherit;
+  --mat-sys-primary: var(--accent);
+  --mat-sys-on-primary: var(--on-accent);
+  --mat-sys-surface: var(--bg);
+  --mat-sys-on-surface: var(--text);
+  --mat-sys-on-surface-variant: var(--muted);
+  --mat-sys-surface-container: var(--surface);
+  --mat-sys-surface-container-highest: var(--surface);
+  --mat-sys-outline: var(--muted);
+  --mat-sys-outline-variant: var(--border);
+  --mat-sys-error: var(--danger);
+  --mat-sys-inverse-surface: var(--surface);
+  --mat-sys-inverse-on-surface: var(--text);
+  --mat-sys-corner-extra-small: 6px;
+  --mat-sys-hover-state-layer-opacity: 0.08;
+  --mat-sys-focus-state-layer-opacity: 0.12;
+  /* Typography: the app's font, at the body sizes. */
+  --mat-sys-body-large-font: inherit;
+  --mat-sys-body-large-size: 0.9375rem;
+  --mat-sys-body-large-line-height: 1.5rem;
+  --mat-sys-body-large-weight: 400;
+  --mat-sys-body-large-tracking: normal;
+  --mat-sys-body-small-font: inherit;
+  --mat-sys-body-small-size: 0.8125rem;
+  --mat-sys-body-small-line-height: 1.25rem;
+  --mat-sys-body-small-weight: 400;
+  --mat-sys-body-small-tracking: normal;
+
+  /* Form fields (outline): compact 40px controls, hairline outline like the tables. */
+  --mat-form-field-container-height: 40px;
+  --mat-form-field-container-vertical-padding: 8px;
+  --mat-form-field-outlined-outline-color: var(--border);
+  --mat-form-field-outlined-hover-outline-color: var(--muted);
+  --mat-form-field-outlined-label-text-color: var(--muted);
+
+  /* Tooltip (`matTooltip`): our surface card instead of Material's inverse chip. */
   --mat-tooltip-supporting-text-size: 0.875rem;
   --mat-tooltip-supporting-text-line-height: 1.4;
-  --mat-tooltip-supporting-text-weight: 400;
-  --mat-tooltip-supporting-text-tracking: normal;
 }
 
+/* `matTooltipClass="app-tooltip"`: left-aligned, wider, one line per `\n` in the message. */
 .app-tooltip .mat-mdc-tooltip-surface {
   @apply max-w-[min(20rem,calc(100vw-16px))] border border-line px-3 py-2 text-left whitespace-pre-line shadow-md;
 }
