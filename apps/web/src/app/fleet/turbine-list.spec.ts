@@ -1,7 +1,5 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { MatPaginatorHarness } from '@angular/material/paginator/testing';
-import { MatTooltipHarness } from '@angular/material/tooltip/testing';
-import { AlertConfig } from '../alerting/alert-config.model';
 import {
   TEST_API_BASE_URL,
   largeFleetFixture,
@@ -18,14 +16,8 @@ describe('TurbineList (/turbines)', () => {
   let app: Awaited<ReturnType<typeof openFleet>>;
   beforeEach(async () => {
     app = await openFleet('/turbines', () => CLOCK, mixedFleetFixture());
-    await flushRules([]); // no alert rules unless a test loads some
   });
   afterEach(() => app.http.verify());
-
-  async function flushRules(rules: AlertConfig[]) {
-    app.http.expectOne({ method: 'GET', url: RULES_URL }).flush(rules);
-    await app.stable();
-  }
 
   const table = () => app.root().querySelector('[data-testid=turbines]')!;
   const rows = () => [...table().querySelectorAll('tbody tr[data-turbine-id]')];
@@ -64,9 +56,11 @@ describe('TurbineList (/turbines)', () => {
       );
       return app.text(app.root().querySelector(`label[for="${control.id}"]`));
     };
-    expect(
-      ['turbine-filter', 'status-filter', 'commissioned-filter', 'alert-filter'].map(label),
-    ).toEqual(['Turbine or farm', 'Status', 'Commissioned', 'Alert']);
+    expect(['turbine-filter', 'status-filter', 'commissioned-filter'].map(label)).toEqual([
+      'Turbine or farm',
+      'Status',
+      'Commissioned',
+    ]);
     // The selects stay native, so they keep the platform pickers (and the tests' change events).
     expect(app.root().querySelector('[data-testid=status-filter]')!.tagName).toBe('SELECT');
   });
@@ -139,7 +133,6 @@ describe('TurbineList (/turbines)', () => {
       'Prairie Ridge FARM01',
       'Reporting',
       'Commissioned',
-      'None',
       '1,961',
       '6.7',
       '80.0',
@@ -150,7 +143,6 @@ describe('TurbineList (/turbines)', () => {
       'High Plains FARM02',
       'No readings yet',
       'Not commissioned',
-      '—',
       '–',
       '–',
       '–',
@@ -166,6 +158,27 @@ describe('TurbineList (/turbines)', () => {
     );
   });
 
+  it('has no Alert column, filter or sort, and does not load the alert rules', () => {
+    expect([...table().querySelectorAll('thead th')].map((th) => app.text(th))).toEqual([
+      'Turbine',
+      'Farm',
+      'Status',
+      'Commissioned',
+      'Power (kW)',
+      'Wind (m/s)',
+      'Gearbox (°C)',
+      'Last reading (UTC)',
+    ]);
+    expect(
+      app
+        .root()
+        .querySelector(
+          '[data-testid=alert-cell], [data-testid=alert-filter], [data-testid=sort-alert]',
+        ),
+    ).toBeNull();
+    app.http.expectNone(RULES_URL);
+  });
+
   it('links each turbine to its page and each farm to its farm page', () => {
     const links = [...rows()[1].querySelectorAll('a')].map((a) => a.getAttribute('href'));
     expect(links).toEqual(['/farms/FARM02/turbines/TURB002', '/farms/FARM02']);
@@ -174,7 +187,7 @@ describe('TurbineList (/turbines)', () => {
   it('sorts by a column from its header button, and reverses on a second click', async () => {
     // Every header is a Material sort header: a focusable role=button, aria-sort on the <th>.
     const headers = [...table().querySelectorAll('thead th')];
-    expect(headers).toHaveLength(9);
+    expect(headers).toHaveLength(8);
     for (const th of headers) {
       expect(th.classList).toContain('mat-sort-header');
       const button = th.querySelector('[role=button]')!;
@@ -383,263 +396,12 @@ describe('TurbineList (/turbines)', () => {
       'High Plains FARM02',
       'Reporting',
       'Not commissioned',
-      'None',
       '2,500',
       '10.2',
       '81.5',
       'Jan 3, 00:00',
     ]);
     expect(row.hasAttribute('data-updated')).toBe(true);
-  });
-
-  describe('Alert column', () => {
-    let n = 0;
-    const rule = (overrides: Partial<AlertConfig>): AlertConfig => ({
-      id: `rule-${n++}`,
-      measurementMetric: 'gearboxTempC',
-      comparison: 'above',
-      valueMetric: 120,
-      alertLevel: 'error',
-      enabled: true,
-      ...overrides,
-    });
-    /** In metric order, as the API lists them. */
-    const RULES = (): AlertConfig[] => [
-      rule({
-        measurementMetric: 'powerOutputKw',
-        comparison: 'below',
-        valueMetric: 100,
-        alertLevel: 'info',
-      }),
-      rule({ measurementMetric: 'windSpeedMs', valueMetric: 9, alertLevel: 'warn' }),
-      rule({ valueMetric: 90, alertLevel: 'warn' }),
-      rule({ valueMetric: 120, alertLevel: 'error' }),
-    ];
-    const alertCell = (id: string) =>
-      table().querySelector(`tr[data-turbine-id=${id}] [data-testid=alert-cell]`)!;
-    const alertStates = () =>
-      Object.fromEntries(
-        rows().map((r) => [
-          r.getAttribute('data-turbine-id'),
-          r.querySelector('[data-testid=alert-cell]')!.getAttribute('data-alert'),
-        ]),
-      );
-    async function alertFilter(value: string) {
-      const select = app.root().querySelector<HTMLSelectElement>('[data-testid=alert-filter]')!;
-      select.value = value;
-      select.dispatchEvent(new Event('change'));
-      await app.stable();
-    }
-    /** Re-reads the rules as if another browser changed them (alert-config.changed). */
-    async function rulesChanged(rules: AlertConfig[]) {
-      app.sse.pushEvent('alert-config.changed', { action: 'updated', id: 'x' });
-      await app.stable();
-      await flushRules(rules);
-    }
-
-    /** The Material tooltip of a turbine's alert pill. */
-    const tooltip = (id: string) =>
-      TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
-        MatTooltipHarness.with({
-          selector: `tr[data-turbine-id=${id}] [data-testid=alert-tooltip-trigger]`,
-        }),
-      );
-    /** The lines of that tooltip (it renders its text only while open). */
-    async function details(id: string) {
-      const tip = await tooltip(id);
-      await tip.show();
-      const text = await tip.getTooltipText();
-      await tip.hide();
-      return text.split('\n');
-    }
-
-    it('shows None for every reading when there are no rules, and — without a reading', () => {
-      expect(app.text(table().querySelector('thead th:nth-child(5)'))).toBe('Alert');
-      expect(alertStates()).toEqual({
-        TURB001: 'none',
-        TURB002: 'none',
-        TURB003: 'none',
-        TURB004: 'no-reading',
-        TURB005: 'none',
-        TURB006: 'none',
-        TURB007: 'none',
-      });
-    });
-
-    it('shows only the worst level pill, with every triggered rule in its tooltip', async () => {
-      await rulesChanged(RULES());
-
-      expect(alertStates()).toEqual({
-        TURB001: 'none',
-        TURB002: 'none',
-        TURB003: 'warn',
-        TURB004: 'no-reading',
-        TURB005: 'warn',
-        TURB006: 'error',
-        TURB007: 'none',
-      });
-      // TURB006 (stale, last reading 126.5 °C) is still evaluated.
-      const t6 = alertCell('TURB006');
-      const pill = t6.querySelector('[data-testid=alert-level]')!;
-      expect(pill.getAttribute('data-level')).toBe('error');
-      expect(app.text(pill)).toBe('Error');
-      // Visibly only the pill: the trigger button holds just the pill, the tooltip is closed.
-      const trigger = t6.querySelector<HTMLElement>('[data-testid=alert-tooltip-trigger]')!;
-      expect(trigger.contains(pill)).toBe(true);
-      expect(app.text(trigger)).toBe('Error');
-      expect([trigger.tagName, trigger.getAttribute('type')]).toEqual(['BUTTON', 'button']);
-      expect(t6.querySelectorAll('[data-testid=alert-tooltip-trigger]')).toHaveLength(1);
-      expect(
-        t6.querySelector('details, [data-testid=alert-summary], [data-testid=alert-more]'),
-      ).toBeNull();
-      const tip = await tooltip('TURB006');
-      expect(await tip.isOpen()).toBe(false);
-      // Every triggered rule, worst first, with its level: one line each.
-      expect(await details('TURB006')).toEqual([
-        'Error: Gearbox temperature 126.5 °C > 120',
-        'Warning: Gearbox temperature 126.5 °C > 90',
-      ]);
-      expect(await details('TURB005')).toEqual([
-        'Warning: Wind speed 15.8 m/s > 9',
-        'Info: Power output 0 kW < 100',
-      ]);
-      // The message is also the button's accessible description (Material's AriaDescriber).
-      const describedBy = trigger.getAttribute('aria-describedby')!;
-      expect(document.getElementById(describedBy)?.textContent).toBe(
-        'Error: Gearbox temperature 126.5 °C > 120\nWarning: Gearbox temperature 126.5 °C > 90',
-      );
-
-      // Hover opens it, leaving closes it; a click/tap opens it too.
-      await tip.show();
-      expect(await tip.isOpen()).toBe(true);
-      expect(document.querySelector('.app-tooltip')).not.toBeNull();
-      await tip.hide();
-      expect(await tip.isOpen()).toBe(false);
-      trigger.click();
-      await app.stable();
-      expect(await tip.isOpen()).toBe(true);
-
-      // The other states have no tooltip.
-      expect(app.text(alertCell('TURB001'))).toBe('None');
-      expect(app.text(alertCell('TURB004'))).toBe('—');
-      for (const id of ['TURB001', 'TURB004']) {
-        expect(alertCell(id).querySelector('[data-testid=alert-tooltip-trigger]')).toBeNull();
-      }
-    });
-
-    it('sorts by alert (None, Info, Warning, Error; no reading last), ties by turbine id', async () => {
-      await rulesChanged(RULES());
-      await sortBy('alert');
-      expect(sortedColumns()).toEqual([['Alert', 'ascending']]);
-      expect(ids()).toEqual([
-        'TURB001',
-        'TURB002',
-        'TURB007',
-        'TURB003',
-        'TURB005',
-        'TURB006',
-        'TURB004',
-      ]);
-
-      await sortBy('alert');
-      expect(sortedColumns()).toEqual([['Alert', 'descending']]);
-      expect(ids()).toEqual([
-        'TURB006',
-        'TURB003',
-        'TURB005',
-        'TURB001',
-        'TURB002',
-        'TURB007',
-        'TURB004',
-      ]);
-    });
-
-    it('filters by alert level or none, combined with the other filters', async () => {
-      await rulesChanged(RULES());
-      const select = () =>
-        app.root().querySelector<HTMLSelectElement>('[data-testid=alert-filter]')!;
-      expect([...select().options].map((o) => [o.value, app.text(o)])).toEqual([
-        ['all', 'Any'],
-        ['error', 'Error'],
-        ['warn', 'Warning'],
-        ['info', 'Info'],
-        ['none', 'None'],
-      ]);
-
-      await alertFilter('error');
-      expect(ids()).toEqual(['TURB006']);
-      await alertFilter('warn');
-      expect(ids()).toEqual(['TURB003', 'TURB005']);
-      expect(select().value).toBe('warn');
-      await status('stale-60');
-      expect(ids()).toEqual(['TURB005']);
-      await status('all');
-      await alertFilter('info');
-      expect(ids()).toEqual([]);
-      await alertFilter('none');
-      expect(ids()).toEqual(['TURB001', 'TURB002', 'TURB007']);
-      await alertFilter('all');
-      expect(ids()).toHaveLength(7);
-    });
-
-    it('updates live when a new reading crosses a threshold', async () => {
-      await rulesChanged(RULES());
-      app.sse.push(reading({ timestamp: '2026-01-03T00:00:00.000Z', gearboxTempC: 121 }));
-      await app.stable();
-
-      expect(alertCell('TURB001').getAttribute('data-alert')).toBe('error');
-      expect(await details('TURB001')).toEqual([
-        'Error: Gearbox temperature 121 °C > 120',
-        'Warning: Gearbox temperature 121 °C > 90',
-      ]);
-
-      app.sse.push(reading({ timestamp: '2026-01-03T00:05:00.000Z', gearboxTempC: 85 }));
-      await app.stable();
-      expect(alertCell('TURB001').getAttribute('data-alert')).toBe('none');
-    });
-
-    it('re-evaluates when the rules change (alert-config.changed)', async () => {
-      await rulesChanged([rule({ valueMetric: 70, alertLevel: 'info' })]);
-      expect(alertCell('TURB001').getAttribute('data-alert')).toBe('info');
-
-      await rulesChanged([]);
-      expect(alertCell('TURB001').getAttribute('data-alert')).toBe('none');
-    });
-  });
-});
-
-describe('TurbineList when the alert rules cannot be loaded', () => {
-  it('shows — with an accessible hint, and the rest of the table still works', async () => {
-    const app = await openFleet(
-      '/turbines',
-      () => Date.parse('2026-01-03T00:00:00.000Z'),
-      mixedFleetFixture(),
-    );
-    app.http.expectOne(RULES_URL).flush('down', { status: 503, statusText: 'Unavailable' });
-    await app.stable();
-
-    expect(app.text(app.root().querySelector('[data-testid=alert-rules-unavailable]'))).toBe(
-      'Alert rules could not be loaded, so the Alert column is unavailable.',
-    );
-    const row = app.root().querySelector('tr[data-turbine-id=TURB006]')!;
-    const cell = row.querySelector('[data-testid=alert-cell]')!;
-    expect(cell.getAttribute('data-alert')).toBe('unavailable');
-    expect(app.text(cell.querySelector('[aria-hidden=true]'))).toBe('—');
-    expect(app.text(cell.querySelector('.sr-only'))).toBe('Alert rules unavailable');
-    expect(cell.querySelector('[role=tooltip]')).toBeNull();
-    expect(app.text(row.querySelectorAll('td')[5])).toBe('300'); // power still shown
-    expect(app.text(app.root().querySelector('[data-testid=turbine-count]'))).toBe(
-      '7 of 7 turbines',
-    );
-
-    // A later alert-config.changed retries; success clears the hint.
-    app.sse.pushEvent('alert-config.changed', { action: 'created', id: 'x' });
-    await app.stable();
-    app.http.expectOne(RULES_URL).flush([]);
-    await app.stable();
-    expect(app.root().querySelector('[data-testid=alert-rules-unavailable]')).toBeNull();
-    expect(cell.getAttribute('data-alert')).toBe('none');
-    app.http.verify();
   });
 });
 
@@ -661,8 +423,6 @@ describe('TurbineList pagination', () => {
   let app: Awaited<ReturnType<typeof openFleet>>;
   beforeEach(async () => {
     app = await openFleet('/turbines', () => CLOCK, largeFleetFixture(30));
-    app.http.expectOne({ method: 'GET', url: RULES_URL }).flush([]);
-    await app.stable();
   });
   afterEach(() => app.http.verify());
 

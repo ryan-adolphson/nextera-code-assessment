@@ -5,16 +5,7 @@ import { MatIconButton } from '@angular/material/button';
 import { MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { MatSort, MatSortHeader, Sort } from '@angular/material/sort';
-import { MatTooltip } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
-import { AlertLevel, ALERT_RULE_LEVELS } from '../alerting/alert-config.model';
-import { AlertLevelBadge } from '../alerting/alert-level-badge';
-import { AlertRulesStore } from '../alerting/alert-rules.store';
-import {
-  LEVEL_SEVERITY,
-  describeTriggerWithLevel,
-  triggeredRules,
-} from '../alerting/evaluate-alerts';
 import { FleetStore, FleetTurbine } from './fleet.store';
 import { STALENESS_LABELS, STALENESS_ORDER, Staleness } from './staleness';
 import { paginate } from '../ui/paging';
@@ -22,32 +13,15 @@ import { TABLE_IMPORTS } from '../ui/table';
 import { StalenessBadge } from './staleness-badge';
 
 export type TurbineSortKey =
-  'id' | 'farm' | 'status' | 'commissioned' | 'alert' | 'power' | 'wind' | 'gearbox' | 'time';
+  'id' | 'farm' | 'status' | 'commissioned' | 'power' | 'wind' | 'gearbox' | 'time';
 type SortValue = string | number | null;
-
-/**
- * The Alert cell of a turbine: the alert rules its LATEST reading (by measurement time) triggers,
- * also for stale turbines (the Status column shows staleness). `state`:
- * - `triggered`: `level` is the worst level (the visible pill); `details` lists every triggered
- *   rule with its level, worst first ("Error: Gearbox temperature 126.5 °C > 120"), for the
- *   pill's tooltip;
- * - `none`: no rule fires; `no-reading`: never reported;
- * - `loading` / `unavailable`: the rules are not loaded yet / could not be loaded.
- */
-export interface AlertCell {
-  state: 'triggered' | 'none' | 'no-reading' | 'loading' | 'unavailable';
-  level: AlertLevel | null;
-  details: string[];
-}
-
-export type AlertFilter = 'all' | 'none' | AlertLevel;
 
 export type CommissionedFilter = 'all' | 'yes' | 'no';
 
 interface Column {
   key: TurbineSortKey;
   label: string;
-  value: (t: FleetTurbine, alert: AlertCell) => SortValue;
+  value: (t: FleetTurbine) => SortValue;
   /** Numeric columns: the latest reading's field and its number format. */
   reading?: { field: 'powerOutputKw' | 'windSpeedMs' | 'gearboxTempC'; format: string };
 }
@@ -67,13 +41,6 @@ const COLUMNS: Column[] = [
     key: 'commissioned',
     label: 'Commissioned',
     value: (t) => (t.commissioned ? 0 : 1),
-  },
-  {
-    // None, then Info, Warning, Error (like Status: best first); no reading or no rules: last.
-    key: 'alert',
-    label: 'Alert',
-    value: (_, a) =>
-      a.state === 'none' ? 0 : a.state === 'triggered' ? LEVEL_SEVERITY[a.level!] : null,
   },
   {
     key: 'power',
@@ -101,10 +68,9 @@ const COLUMNS: Column[] = [
 ];
 
 /**
- * /turbines: every turbine of every farm with its status, the alert rules its latest reading
- * triggers and the reading itself, live (readings from FleetStore, rules from AlertRulesStore).
+ * /turbines: every turbine of every farm with its status and latest reading, live (FleetStore).
  * Sortable by any column (default: turbine id), filterable by text (turbine id, farm id or name),
- * status, commissioning and alert.
+ * status and commissioning.
  */
 @Component({
   selector: 'app-turbine-list',
@@ -112,7 +78,6 @@ const COLUMNS: Column[] = [
   // keep their height, the table frame takes what is left and scrolls its rows.
   host: { class: 'flex min-h-0 flex-1 flex-col' },
   imports: [
-    AlertLevelBadge,
     DatePipe,
     DecimalPipe,
     MatFormField,
@@ -123,7 +88,6 @@ const COLUMNS: Column[] = [
     MatSort,
     MatSortHeader,
     MatSuffix,
-    MatTooltip,
     RouterLink,
     StalenessBadge,
     TABLE_IMPORTS,
@@ -133,15 +97,9 @@ const COLUMNS: Column[] = [
 })
 export class TurbineList {
   protected readonly store = inject(FleetStore);
-  protected readonly rulesStore = inject(AlertRulesStore);
   protected readonly columnKeys = COLUMNS.map((c) => c.key);
   protected readonly numericColumns = COLUMNS.filter((c): c is NumericColumn => !!c.reading);
   protected readonly trackById = (_: number, t: FleetTurbine) => t.id;
-  protected readonly alertFilters: { value: AlertFilter; label: string }[] = [
-    { value: 'all', label: 'Any' },
-    ...[...ALERT_RULE_LEVELS].reverse(),
-    { value: 'none', label: 'None' },
-  ];
   protected readonly commissionedFilters: { value: CommissionedFilter; label: string }[] = [
     { value: 'all', label: 'Any' },
     { value: 'yes', label: 'Commissioned' },
@@ -158,53 +116,21 @@ export class TurbineList {
   });
   protected readonly query = signal('');
   protected readonly status = signal<Staleness | 'all'>('all');
-  protected readonly alertFilter = signal<AlertFilter>('all');
   protected readonly commissionedFilter = signal<CommissionedFilter>('all');
-
-  /** Each turbine's Alert cell, by turbine id; follows live readings and rule changes. */
-  protected readonly alerts = computed(() => {
-    const rules = this.rulesStore.rules();
-    const unavailable = this.rulesStore.failed()
-      ? 'unavailable'
-      : this.rulesStore.loading()
-        ? 'loading'
-        : null;
-    return new Map(
-      this.store.turbines().map((t): [string, AlertCell] => {
-        const r = t.latest;
-        if (!r) return [t.id, { state: 'no-reading', level: null, details: [] }];
-        if (unavailable) return [t.id, { state: unavailable, level: null, details: [] }];
-        const triggered = triggeredRules(r, rules);
-        return [
-          t.id,
-          triggered.length
-            ? {
-                state: 'triggered',
-                level: triggered[0].alertLevel,
-                details: triggered.map((rule) => describeTriggerWithLevel(r, rule)),
-              }
-            : { state: 'none', level: null, details: [] },
-        ];
-      }),
-    );
-  });
 
   protected readonly rows = computed(() => {
     const query = this.query().trim().toLowerCase();
     const status = this.status();
-    const alertFilter = this.alertFilter();
     const commissioned = this.commissionedFilter();
-    const alerts = this.alerts();
     const { key, dir } = this.sort();
     const column = COLUMNS.find((c) => c.key === key)!;
-    const value = (t: FleetTurbine) => column.value(t, alerts.get(t.id)!);
+    const value = (t: FleetTurbine) => column.value(t);
     return this.store
       .turbines()
       .filter(
         (t) =>
           (status === 'all' || t.staleness === status) &&
           (commissioned === 'all' || t.commissioned === (commissioned === 'yes')) &&
-          matchesAlert(alerts.get(t.id)!, alertFilter) &&
           (!query || [t.id, t.farmId, t.farmName].some((s) => s.toLowerCase().includes(query))),
       )
       .sort((a, b) => compare(value(a), value(b), dir) || a.id.localeCompare(b.id));
@@ -212,10 +138,6 @@ export class TurbineList {
 
   /** Rows on the current page (Material paginator; 25 per page by default). */
   protected readonly paging = paginate(this.rows, 25);
-
-  protected alertOf(t: FleetTurbine): AlertCell {
-    return this.alerts().get(t.id)!;
-  }
 
   /**
    * MatSort with `matSortDisableClear`: the same column reverses the order, another column sorts
@@ -247,18 +169,6 @@ export class TurbineList {
     this.commissionedFilter.set((event.target as HTMLSelectElement).value as CommissionedFilter);
     this.paging.reset();
   }
-
-  protected onAlertFilter(event: Event): void {
-    this.alertFilter.set((event.target as HTMLSelectElement).value as AlertFilter);
-    this.paging.reset();
-  }
-}
-
-/** "Any" keeps every turbine; the others need an evaluated reading with that outcome. */
-function matchesAlert(alert: AlertCell, filter: AlertFilter): boolean {
-  if (filter === 'all') return true;
-  if (filter === 'none') return alert.state === 'none';
-  return alert.state === 'triggered' && alert.level === filter;
 }
 
 /** Ascending or descending; turbines without a value (no readings) always go last. */

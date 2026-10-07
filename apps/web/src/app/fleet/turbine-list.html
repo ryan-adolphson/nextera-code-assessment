@@ -1,6 +1,6 @@
 <h1 class="text-3xl font-bold">Turbines</h1>
 <p class="mt-1 text-sm text-muted">
-  Every turbine in the fleet with its latest reading and the alert rules it triggers, live.
+  Every turbine in the fleet with its status and latest reading, live.
 </p>
 
 @if (store.turbines().length === 0) {
@@ -64,24 +64,10 @@
         }
       </select>
     </mat-form-field>
-    <mat-form-field appearance="outline" subscriptSizing="dynamic">
-      <mat-label>Alert</mat-label>
-      <select matNativeControl data-testid="alert-filter" (change)="onAlertFilter($event)">
-        @for (f of alertFilters; track f.value) {
-          <option [value]="f.value" [selected]="alertFilter() === f.value">{{ f.label }}</option>
-        }
-      </select>
-    </mat-form-field>
     <p class="pb-2.5 text-sm text-muted" role="status" data-testid="turbine-count">
       {{ rows().length }} of {{ store.turbines().length }} turbines
     </p>
   </div>
-
-  @if (rulesStore.failed()) {
-    <p class="mt-4 text-sm text-muted" role="status" data-testid="alert-rules-unavailable">
-      Alert rules could not be loaded, so the Alert column is unavailable.
-    </p>
-  }
 
   <!-- The table frame: as tall as its rows, at most the height left in the window (min 12rem).
        The rows scroll (both ways) under the sticky header row; the paginator stays below. -->
@@ -155,51 +141,6 @@
           </td>
         </ng-container>
 
-        <ng-container matColumnDef="alert">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-alert">Alert</th>
-          <td
-            mat-cell
-            *matCellDef="let t"
-            data-testid="alert-cell"
-            [attr.data-alert]="
-              alertOf(t).state === 'triggered' ? alertOf(t).level : alertOf(t).state
-            "
-          >
-            @let alert = alertOf(t);
-            @switch (alert.state) {
-              @case ('triggered') {
-                <!-- Only the pill; every triggered rule (worst first) is in its Material tooltip,
-                     which is also the button's accessible description. A button so it is
-                     focusable and named by the pill ("Error"); a click/tap shows the tooltip. -->
-                <button
-                  #tip="matTooltip"
-                  type="button"
-                  class="inline-flex cursor-default rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                  data-testid="alert-tooltip-trigger"
-                  matTooltipClass="app-tooltip"
-                  matTooltipPosition="above"
-                  [matTooltip]="alert.details.join('\n')"
-                  (click)="tip.show()"
-                >
-                  <app-alert-level-badge [level]="alert.level!" />
-                </button>
-              }
-              @case ('none') {
-                <span class="text-muted">None</span>
-              }
-              @case ('no-reading') {
-                <span class="text-muted">—</span>
-              }
-              @default {
-                <span class="text-muted" aria-hidden="true">—</span>
-                <span class="sr-only">{{
-                  alert.state === 'loading' ? 'Loading alert rules' : 'Alert rules unavailable'
-                }}</span>
-              }
-            }
-          </td>
-        </ng-container>
-
         <!-- Numeric columns: right-aligned, arrow before the label. -->
         @for (col of numericColumns; track col.key) {
           <ng-container [matColumnDef]="col.key">
@@ -245,7 +186,7 @@
           [attr.data-updated]="t.id === store.recentlyUpdated() ? '' : null"
         ></tr>
         <tr class="mat-mdc-no-data-row" *matNoDataRow>
-          <td class="mat-mdc-cell px-3 py-2 text-muted" colspan="9" data-testid="no-matches">
+          <td class="mat-mdc-cell px-3 py-2 text-muted" colspan="8" data-testid="no-matches">
             No turbines match the filters.
           </td>
         </tr>
