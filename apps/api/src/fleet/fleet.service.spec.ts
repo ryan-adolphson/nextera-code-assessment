@@ -25,6 +25,7 @@ const row = (turbineId: string, farmId: string) => ({
   farm_id: farmId,
   timestamp: new Date('2026-01-02T23:55:00Z'),
   received_at: new Date('2026-01-03T00:13:00Z'),
+  created_at: new Date('2026-01-03T00:13:01Z'), // never in the response
   power_output_kw: 1960.5,
   wind_speed_ms: 6.7,
   rotor_rpm: 11.6,

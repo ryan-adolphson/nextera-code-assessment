@@ -35,6 +35,7 @@ interface TelemetryRow {
   farm_id: string;
   timestamp: Date;
   received_at: Date;
+  created_at: Date;
   power_output_kw: number;
   wind_speed_ms: number;
   rotor_rpm: number;
@@ -48,6 +49,7 @@ const fromRow = (r: TelemetryRow): Telemetry => ({
   farmId: r.farm_id,
   timestamp: r.timestamp,
   receivedAt: r.received_at,
+  createdAt: r.created_at,
   powerOutputKw: r.power_output_kw,
   windSpeedMs: r.wind_speed_ms,
   rotorRpm: r.rotor_rpm,

@@ -101,6 +101,8 @@ describe('Ingestion worker (e2e, real Postgres + Redis)', () => {
     const row = await prisma.telemetry.findFirstOrThrow();
     expect(row.timestamp).toEqual(new Date('2026-03-01T00:05:00Z'));
     expect(row.receivedAt).toEqual(new Date('2026-03-01T00:30:00Z'));
+    // created_at is the real insert time (set by Postgres), whatever received_at says.
+    expect(Math.abs(row.createdAt.getTime() - Date.now())).toBeLessThan(60_000);
   });
 
   it('is idempotent: redeliveries and re-sent readings are acked without a second row or event', async () => {

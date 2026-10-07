@@ -101,6 +101,7 @@ describe('toTelemetryResponse', () => {
     farmId: 'FARM01',
     timestamp: new Date('2026-01-02T23:55:00.000Z'),
     receivedAt: new Date('2026-01-02T23:57:00.000Z'),
+    createdAt: new Date('2026-01-02T23:57:01.000Z'),
     powerOutputKw: 40,
     windSpeedMs: 8.5,
     rotorRpm: 12,

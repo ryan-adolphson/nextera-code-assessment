@@ -55,6 +55,9 @@ model Telemetry {
   timestamp     DateTime         @db.Timestamptz(3)
   /// When the platform received it; later than `timestamp` for delayed records.
   receivedAt    DateTime         @default(now()) @map("received_at") @db.Timestamptz(3)
+  /// When the row was inserted (set by Postgres, never by the app). Unlike received_at, which a
+  /// payload or CSV can set for backfills, this is always the real write time.
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   powerOutputKw Float            @map("power_output_kw")
   windSpeedMs   Float            @map("wind_speed_ms")
   rotorRpm      Float            @map("rotor_rpm")

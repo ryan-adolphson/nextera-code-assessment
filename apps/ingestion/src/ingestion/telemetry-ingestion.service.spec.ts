@@ -28,6 +28,7 @@ const stored: Telemetry = {
   farmId: 'FARM01',
   timestamp: new Date('2026-01-01T00:00:00Z'),
   receivedAt: new Date('2026-01-01T00:02:00Z'),
+  createdAt: new Date('2026-01-01T00:02:01Z'),
   powerOutputKw: 2331.2,
   windSpeedMs: 8,
   rotorRpm: 14,
