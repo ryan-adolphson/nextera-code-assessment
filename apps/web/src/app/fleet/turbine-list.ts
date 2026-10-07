@@ -108,6 +108,9 @@ const COLUMNS: Column[] = [
  */
 @Component({
   selector: 'app-turbine-list',
+  // A column filling the shell's window-high page (route data `fillViewport`): heading and filters
+  // keep their height, the table frame takes what is left and scrolls its rows.
+  host: { class: 'flex min-h-0 flex-1 flex-col' },
   imports: [
     AlertLevelBadge,
     DatePipe,

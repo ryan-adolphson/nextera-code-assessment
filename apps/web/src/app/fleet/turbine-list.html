@@ -83,165 +83,183 @@
     </p>
   }
 
-  <!-- relative: contains the cells' absolutely positioned sr-only text (no page overflow) -->
-  <div class="relative mt-4 overflow-x-auto">
-    <!-- Sorting: MatSort (two states, aria-sort on the header) drives the `sort` signal; the
-         order itself (no reading last, ties by id) is computed in the component. -->
-    <table
-      mat-table
-      matSort
-      matSortDisableClear
-      data-testid="turbines"
-      [dataSource]="paging.page()"
-      [trackBy]="trackById"
-      [matSortActive]="sort().key"
-      [matSortDirection]="sort().dir"
-      (matSortChange)="onSort($event)"
+  <!-- The table frame: as tall as its rows, at most the height left in the window (min 12rem).
+       The rows scroll (both ways) under the sticky header row; the paginator stays below. -->
+  <div
+    class="mt-4 flex min-h-48 flex-col overflow-hidden rounded-lg border border-line"
+    data-testid="turbines-frame"
+  >
+    <!-- relative: contains the cells' absolutely positioned sr-only text (no page overflow) -->
+    <div
+      class="relative min-h-0 flex-1 overflow-auto"
+      role="region"
+      aria-label="Turbines"
+      tabindex="0"
+      data-testid="turbines-scroll"
     >
-      <ng-container matColumnDef="id">
-        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-id">Turbine</th>
-        <td mat-cell *matCellDef="let t">
-          <a [routerLink]="['/farms', t.farmId, 'turbines', t.id]">{{ t.id }}</a>
-        </td>
-      </ng-container>
+      <!-- Sorting: MatSort (two states, aria-sort on the header) drives the `sort` signal; the
+         order itself (no reading last, ties by id) is computed in the component. -->
+      <table
+        mat-table
+        matSort
+        matSortDisableClear
+        data-testid="turbines"
+        [dataSource]="paging.page()"
+        [trackBy]="trackById"
+        [matSortActive]="sort().key"
+        [matSortDirection]="sort().dir"
+        (matSortChange)="onSort($event)"
+      >
+        <ng-container matColumnDef="id">
+          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-id">Turbine</th>
+          <td mat-cell *matCellDef="let t">
+            <a [routerLink]="['/farms', t.farmId, 'turbines', t.id]">{{ t.id }}</a>
+          </td>
+        </ng-container>
 
-      <ng-container matColumnDef="farm">
-        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-farm">Farm</th>
-        <td mat-cell *matCellDef="let t">
-          <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a>
-          <span class="text-muted"> {{ t.farmId }}</span>
-        </td>
-      </ng-container>
+        <ng-container matColumnDef="farm">
+          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-farm">Farm</th>
+          <td mat-cell *matCellDef="let t">
+            <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a>
+            <span class="text-muted"> {{ t.farmId }}</span>
+          </td>
+        </ng-container>
 
-      <ng-container matColumnDef="status">
-        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-status">Status</th>
-        <td mat-cell *matCellDef="let t"><app-staleness-badge [staleness]="t.staleness" /></td>
-      </ng-container>
-
-      <ng-container matColumnDef="commissioned">
-        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-commissioned">
-          Commissioned
-        </th>
-        <td
-          mat-cell
-          *matCellDef="let t"
-          data-testid="commissioned-cell"
-          [attr.data-commissioned]="t.commissioned"
-        >
-          <!-- check mark (green) when commissioned, X (muted: a state, not an error) when not.
-               `!` utilities: mat-icon's own size/colour rules are unlayered. -->
-          <mat-icon
-            class="size-5! align-middle"
-            [class]="t.commissioned ? 'text-ok!' : 'text-muted!'"
-            data-testid="commissioned-icon"
-            [attr.data-icon]="t.commissioned ? 'check' : 'x'"
-            [svgIcon]="t.commissioned ? 'check' : 'close'"
-          />
-          <span class="sr-only">{{ t.commissioned ? 'Commissioned' : 'Not commissioned' }}</span>
-        </td>
-      </ng-container>
-
-      <ng-container matColumnDef="alert">
-        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-alert">Alert</th>
-        <td
-          mat-cell
-          *matCellDef="let t"
-          data-testid="alert-cell"
-          [attr.data-alert]="alertOf(t).state === 'triggered' ? alertOf(t).level : alertOf(t).state"
-        >
-          @let alert = alertOf(t);
-          @switch (alert.state) {
-            @case ('triggered') {
-              <!-- Only the pill; every triggered rule (worst first) is in its Material tooltip,
-                   which is also the button's accessible description. A button so it is
-                   focusable and named by the pill ("Error"); a click/tap shows the tooltip. -->
-              <button
-                #tip="matTooltip"
-                type="button"
-                class="inline-flex cursor-default rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                data-testid="alert-tooltip-trigger"
-                matTooltipClass="app-tooltip"
-                matTooltipPosition="above"
-                [matTooltip]="alert.details.join('\n')"
-                (click)="tip.show()"
-              >
-                <app-alert-level-badge [level]="alert.level!" />
-              </button>
-            }
-            @case ('none') {
-              <span class="text-muted">None</span>
-            }
-            @case ('no-reading') {
-              <span class="text-muted">—</span>
-            }
-            @default {
-              <span class="text-muted" aria-hidden="true">—</span>
-              <span class="sr-only">{{
-                alert.state === 'loading' ? 'Loading alert rules' : 'Alert rules unavailable'
-              }}</span>
-            }
-          }
-        </td>
-      </ng-container>
-
-      <!-- Numeric columns: right-aligned, arrow before the label. -->
-      @for (col of numericColumns; track col.key) {
-        <ng-container [matColumnDef]="col.key">
-          <th
-            mat-header-cell
-            *matHeaderCellDef
-            mat-sort-header
-            arrowPosition="before"
-            class="[&_.mat-sort-header-container]:justify-end"
-            [attr.data-testid]="'sort-' + col.key"
-          >
-            {{ col.label }}
+        <ng-container matColumnDef="status">
+          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-status">
+            Status
           </th>
-          <td mat-cell *matCellDef="let t" class="text-right! tabular-nums">
-            @if (t.latest; as r) {
-              {{ r[col.reading.field] | number: col.reading.format }}
-            } @else {
-              <span class="text-muted">–</span>
+          <td mat-cell *matCellDef="let t"><app-staleness-badge [staleness]="t.staleness" /></td>
+        </ng-container>
+
+        <ng-container matColumnDef="commissioned">
+          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-commissioned">
+            Commissioned
+          </th>
+          <td
+            mat-cell
+            *matCellDef="let t"
+            data-testid="commissioned-cell"
+            [attr.data-commissioned]="t.commissioned"
+          >
+            <!-- check mark (green) when commissioned, X (muted: a state, not an error) when not.
+                 `!` utilities: mat-icon's own size/colour rules are unlayered. -->
+            <mat-icon
+              class="size-5! align-middle"
+              [class]="t.commissioned ? 'text-ok!' : 'text-muted!'"
+              data-testid="commissioned-icon"
+              [attr.data-icon]="t.commissioned ? 'check' : 'x'"
+              [svgIcon]="t.commissioned ? 'check' : 'close'"
+            />
+            <span class="sr-only">{{ t.commissioned ? 'Commissioned' : 'Not commissioned' }}</span>
+          </td>
+        </ng-container>
+
+        <ng-container matColumnDef="alert">
+          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-alert">Alert</th>
+          <td
+            mat-cell
+            *matCellDef="let t"
+            data-testid="alert-cell"
+            [attr.data-alert]="
+              alertOf(t).state === 'triggered' ? alertOf(t).level : alertOf(t).state
+            "
+          >
+            @let alert = alertOf(t);
+            @switch (alert.state) {
+              @case ('triggered') {
+                <!-- Only the pill; every triggered rule (worst first) is in its Material tooltip,
+                     which is also the button's accessible description. A button so it is
+                     focusable and named by the pill ("Error"); a click/tap shows the tooltip. -->
+                <button
+                  #tip="matTooltip"
+                  type="button"
+                  class="inline-flex cursor-default rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  data-testid="alert-tooltip-trigger"
+                  matTooltipClass="app-tooltip"
+                  matTooltipPosition="above"
+                  [matTooltip]="alert.details.join('\n')"
+                  (click)="tip.show()"
+                >
+                  <app-alert-level-badge [level]="alert.level!" />
+                </button>
+              }
+              @case ('none') {
+                <span class="text-muted">None</span>
+              }
+              @case ('no-reading') {
+                <span class="text-muted">—</span>
+              }
+              @default {
+                <span class="text-muted" aria-hidden="true">—</span>
+                <span class="sr-only">{{
+                  alert.state === 'loading' ? 'Loading alert rules' : 'Alert rules unavailable'
+                }}</span>
+              }
             }
           </td>
         </ng-container>
-      }
 
-      <ng-container matColumnDef="time">
-        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-time">
-          Last reading (UTC)
-        </th>
-        <td mat-cell *matCellDef="let t" class="tabular-nums">
-          @if (t.latest; as r) {
-            {{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}
-          } @else {
-            <span class="text-muted">No readings yet</span>
-          }
-        </td>
-      </ng-container>
+        <!-- Numeric columns: right-aligned, arrow before the label. -->
+        @for (col of numericColumns; track col.key) {
+          <ng-container [matColumnDef]="col.key">
+            <th
+              mat-header-cell
+              *matHeaderCellDef
+              mat-sort-header
+              arrowPosition="before"
+              class="[&_.mat-sort-header-container]:justify-end"
+              [attr.data-testid]="'sort-' + col.key"
+            >
+              {{ col.label }}
+            </th>
+            <td mat-cell *matCellDef="let t" class="text-right! tabular-nums">
+              @if (t.latest; as r) {
+                {{ r[col.reading.field] | number: col.reading.format }}
+              } @else {
+                <span class="text-muted">–</span>
+              }
+            </td>
+          </ng-container>
+        }
 
-      <tr mat-header-row *matHeaderRowDef="columnKeys"></tr>
-      <tr
-        mat-row
-        *matRowDef="let t; columns: columnKeys"
-        class="data-updated:animate-flash"
-        [attr.data-turbine-id]="t.id"
-        [attr.data-updated]="t.id === store.recentlyUpdated() ? '' : null"
-      ></tr>
-      <tr class="mat-mdc-no-data-row" *matNoDataRow>
-        <td class="mat-mdc-cell px-3 py-2 text-muted" colspan="9" data-testid="no-matches">
-          No turbines match the filters.
-        </td>
-      </tr>
-    </table>
+        <ng-container matColumnDef="time">
+          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-time">
+            Last reading (UTC)
+          </th>
+          <td mat-cell *matCellDef="let t" class="tabular-nums">
+            @if (t.latest; as r) {
+              {{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}
+            } @else {
+              <span class="text-muted">No readings yet</span>
+            }
+          </td>
+        </ng-container>
+
+        <tr mat-header-row *matHeaderRowDef="columnKeys; sticky: true" class="bg-page"></tr>
+        <tr
+          mat-row
+          *matRowDef="let t; columns: columnKeys"
+          class="data-updated:animate-flash"
+          [attr.data-turbine-id]="t.id"
+          [attr.data-updated]="t.id === store.recentlyUpdated() ? '' : null"
+        ></tr>
+        <tr class="mat-mdc-no-data-row" *matNoDataRow>
+          <td class="mat-mdc-cell px-3 py-2 text-muted" colspan="9" data-testid="no-matches">
+            No turbines match the filters.
+          </td>
+        </tr>
+      </table>
+    </div>
+    <mat-paginator
+      class="shrink-0 border-t border-line"
+      aria-label="Turbine table pages"
+      data-testid="turbines-paginator"
+      [length]="paging.length()"
+      [pageIndex]="paging.pageIndex()"
+      [pageSize]="paging.pageSize()"
+      [pageSizeOptions]="paging.pageSizeOptions"
+      (page)="paging.onPage($event)"
+    />
   </div>
-  <mat-paginator
-    aria-label="Turbine table pages"
-    data-testid="turbines-paginator"
-    [length]="paging.length()"
-    [pageIndex]="paging.pageIndex()"
-    [pageSize]="paging.pageSize()"
-    [pageSizeOptions]="paging.pageSizeOptions"
-    (page)="paging.onPage($event)"
-  />
 }

@@ -27,6 +27,8 @@ export const routes: Routes = [
       {
         path: 'turbines',
         title: 'Turbines · Nextera',
+        // Filters and table in one window-high view: only the table rows scroll.
+        data: { fillViewport: true },
         loadComponent: () => import('./fleet/turbine-list').then((m) => m.TurbineList),
       },
       {

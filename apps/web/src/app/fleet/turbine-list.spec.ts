@@ -97,6 +97,32 @@ describe('TurbineList (/turbines)', () => {
     expect(clear()).toBeNull();
   });
 
+  it('fits filters and table in the window: only the rows scroll, under a sticky header, above the paginator', () => {
+    // The page is a flex column filling the shell's window-high main area.
+    const host = app.root().querySelector('app-turbine-list')!;
+    expect([...host.classList]).toEqual(expect.arrayContaining(['flex', 'flex-1', 'min-h-0']));
+    const frame = app.root().querySelector('[data-testid=turbines-frame]')!;
+    expect([...frame.classList]).toEqual(
+      expect.arrayContaining(['flex', 'flex-col', 'min-h-48', 'overflow-hidden']),
+    );
+    expect(frame.previousElementSibling!.getAttribute('role')).toBe('search');
+
+    const region = app.root().querySelector<HTMLElement>('[data-testid=turbines-scroll]')!;
+    expect([region.getAttribute('role'), region.getAttribute('aria-label')]).toEqual([
+      'region',
+      'Turbines',
+    ]);
+    expect(region.tabIndex).toBe(0); // keyboard users can scroll it
+    expect([...region.classList]).toEqual(expect.arrayContaining(['overflow-auto', 'min-h-0']));
+    expect(region.contains(table())).toBe(true);
+    const paginator = app.root().querySelector('[data-testid=turbines-paginator]')!;
+    expect(region.contains(paginator)).toBe(false);
+    expect(paginator.parentElement).toBe(frame);
+    for (const th of table().querySelectorAll('thead th')) {
+      expect(th.classList).toContain('mat-mdc-table-sticky');
+    }
+  });
+
   it('lists every turbine of every farm by turbine id, with status and latest reading', () => {
     expect(app.text(app.root().querySelector('h1'))).toBe('Turbines');
     expect(ids()).toEqual([

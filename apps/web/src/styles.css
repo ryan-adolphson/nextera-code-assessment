@@ -147,7 +147,7 @@
   --mat-sys-on-secondary-container: var(--text);
 
   /* Tables (`mat-table`): compact 40px rows, hairline row dividers, transparent background. */
-  --mat-table-background-color: transparent;
+  --mat-table-background-color: var(--surface);
   --mat-table-header-container-height: 40px;
   --mat-table-row-item-container-height: 40px;
   --mat-table-row-item-outline-color: var(--border);

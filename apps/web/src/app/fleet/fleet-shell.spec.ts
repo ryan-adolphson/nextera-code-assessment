@@ -100,6 +100,28 @@ describe('FleetShell navigation', () => {
     expect(TestBed.inject(Title).getTitle()).toBe(title);
   });
 
+  it('gives /turbines a window-high layout (route data fillViewport) and the other pages none', async () => {
+    const shell = () => app.root().querySelector('[data-testid=shell]')!;
+    const main = () => app.root().querySelector('main')!;
+    await open('/turbines');
+    expect(shell().hasAttribute('data-fill')).toBe(true);
+    // Window-high flex column (row from md up); main fills the rest and is the fallback scroller.
+    for (const c of ['data-fill:h-dvh', 'data-fill:flex-col', 'md:data-fill:flex-row']) {
+      expect(shell().classList).toContain(c);
+    }
+    for (const c of ['group-data-fill/shell:min-h-0', 'group-data-fill/shell:overflow-y-auto']) {
+      expect(main().classList).toContain(c);
+    }
+    expect(main().firstElementChild!.classList).toContain('group-data-fill/shell:flex-1');
+
+    link('farms').click();
+    await app.stable();
+    expect(shell().hasAttribute('data-fill')).toBe(false);
+    link('turbines').click();
+    await app.stable();
+    expect(shell().hasAttribute('data-fill')).toBe(true);
+  });
+
   it('keeps the app name and live status in the sidebar', async () => {
     await open('/turbines');
     const sidebar = app.root().querySelector('[data-testid=sidebar]')!;

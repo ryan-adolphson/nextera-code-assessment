@@ -38,6 +38,9 @@ export const NAV_ITEMS = [
  *
  * Desktop (md and up): a sticky left column with the app name, the live badge and the nav.
  * Narrower: a top bar whose menu button expands the nav below it (Esc or navigating closes it).
+ * A route with `data: { fillViewport: true }` gets a window-high layout: the page is a flex column
+ * exactly as tall as the space left, so it can scroll a part of itself (e.g. a table) instead of
+ * the window. On screens too short for its minimum, the main area scrolls.
  */
 @Component({
   selector: 'app-fleet-shell',
@@ -55,19 +58,31 @@ export class FleetShell implements OnInit {
   protected readonly alertCount = computed(() => this.store.alerts().length);
   /** The narrow-screen menu (always shown from md up). */
   protected readonly menuOpen = signal(false);
+  /** The current route asks for a window-high page (route data `fillViewport`). */
+  protected readonly fillViewport = signal(false);
+  private readonly router = inject(Router);
   private readonly menuButton = viewChild.required<ElementRef<HTMLButtonElement>>('menuButton');
 
   constructor() {
-    inject(Router)
-      .events.pipe(
+    this.router.events
+      .pipe(
         filter((e) => e instanceof NavigationEnd),
         takeUntilDestroyed(),
       )
-      .subscribe(() => this.menuOpen.set(false));
+      .subscribe(() => {
+        this.menuOpen.set(false);
+        this.fillViewport.set(this.deepestRouteData()['fillViewport'] === true);
+      });
   }
 
   ngOnInit(): void {
     this.store.init();
+  }
+
+  private deepestRouteData(): Record<string, unknown> {
+    let route = this.router.routerState.snapshot.root;
+    while (route.firstChild) route = route.firstChild;
+    return route.data;
   }
 
   protected toggleMenu(): void {
