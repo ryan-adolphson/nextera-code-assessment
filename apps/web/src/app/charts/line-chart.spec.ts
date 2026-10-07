@@ -588,3 +588,138 @@ describe('LineChart (ECharts)', () => {
     expect(dispose).toHaveBeenCalled();
   });
 });
+
+/** One candlestick chart (a metric on the turbine page) over the gearbox anomaly. */
+@Component({
+  imports: [LineChart],
+  template: `
+    <app-line-chart
+      kind="candlestick"
+      title="Gearbox temperature"
+      unit="°C"
+      [points]="points()"
+      [domain]="domain()"
+      [hoverT]="hoverT()"
+      (hoverTChange)="hoverT.set($event)"
+      [view]="view()"
+      (viewChange)="view.set($event)"
+    />
+  `,
+})
+class CandleHost {
+  readonly points = signal([
+    at(0, 82.1),
+    at(5, 81.9),
+    at(15, 82.1),
+    at(20, 126.5),
+    at(25, 126.5),
+    at(30, 126.5),
+    at(35, 81.9),
+  ]);
+  // A 6-hour domain → 15-minute candles.
+  readonly domain = signal({ from: t0, to: t0 + 6 * 60 * MIN });
+  readonly hoverT = signal<number | null>(null);
+  readonly view = signal<TimeRange | null>(null);
+}
+
+describe('LineChart (candlestick)', () => {
+  let fixture: ComponentFixture<CandleHost>;
+  let host: CandleHost;
+  let chart: LineChart;
+
+  beforeEach(async () => {
+    fixture = TestBed.createComponent(CandleHost);
+    host = fixture.componentInstance;
+    await fixture.whenStable();
+    chart = fixture.debugElement.children[0].componentInstance as LineChart;
+  });
+
+  const option = () =>
+    chart.chart!.getOption() as unknown as {
+      series: {
+        type: string;
+        data: unknown[];
+        itemStyle: Record<string, unknown>;
+      }[];
+      brush: { brushType: string; brushMode: string; xAxisIndex: number }[];
+      dataZoom: { id: string; moveOnMouseMove?: boolean }[];
+      tooltip: { formatter: (params: unknown) => string | HTMLElement }[];
+    };
+  const text = (selector: string) =>
+    (fixture.nativeElement as HTMLElement)
+      .querySelector(selector)
+      ?.textContent?.replace(/\s+/g, ' ')
+      .trim();
+
+  it('draws UTC-aligned candles sized to the range: [centre, open, close, low, high]', () => {
+    const [readings] = option().series;
+    expect(readings.type).toBe('candlestick');
+    expect(readings.data).toEqual([
+      [t0 + 7.5 * MIN, 82.1, 81.9, 81.9, 82.1], // 03:00–03:15: 03:00, 03:05
+      [t0 + 22.5 * MIN, 82.1, 126.5, 82.1, 126.5], // 03:15–03:30: 03:15, 03:20, 03:25
+      [t0 + 37.5 * MIN, 126.5, 81.9, 81.9, 126.5], // 03:30–03:45: 03:30, 03:35
+    ]);
+    expect(text('[data-testid=candle-size]')).toBe(
+      '15 min candles · drag across the chart to zoom',
+    );
+    // The header still labels the latest reading.
+    expect(text('[data-testid=latest]')).toBe('81.9 °C');
+  });
+
+  it('draws rising candles hollow and falling ones solid, in the one series colour (no red/green)', () => {
+    const { itemStyle } = option().series[0];
+    expect(itemStyle['color0']).toBe(itemStyle['borderColor']); // falling: filled
+    expect(itemStyle['color']).not.toBe(itemStyle['borderColor']); // rising: surface fill
+    expect(itemStyle['borderColor0']).toBe(itemStyle['borderColor']);
+  });
+
+  it('turns on a horizontal brush, and dragging no longer pans (the slider does)', () => {
+    const [brush] = option().brush;
+    expect([brush.brushType, brush.brushMode, brush.xAxisIndex]).toEqual(['lineX', 'single', 0]);
+    expect(option().dataZoom.find((z) => z.id === 'inside')?.moveOnMouseMove).toBe(false);
+  });
+
+  it('zooms every chart to the brushed range (clamped to the domain) and clears the brush', async () => {
+    const dispatch = vi.spyOn(chart.chart!, 'dispatchAction');
+    chart.onBrushEnd([t0 + 40 * MIN, t0 - 30 * MIN]); // dragged right to left, past the start
+    await fixture.whenStable();
+
+    expect(host.view()).toEqual({ from: t0, to: t0 + 40 * MIN });
+    // ECharts adds an internal key to the action object.
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'brush', areas: [] }));
+    expect(chart.visibleRange().range.from).toBeCloseTo(t0, -3);
+    expect(chart.visibleRange().range.to).toBeCloseTo(t0 + 40 * MIN, -3);
+  });
+
+  it('ignores a click or a brush narrower than the minimum zoom', async () => {
+    chart.onBrushEnd(null);
+    chart.onBrushEnd([t0, t0 + 10 * MIN]);
+    await fixture.whenStable();
+    expect(host.view()).toBeNull();
+  });
+
+  it('snaps the crosshair to candles and describes the candle in the tooltip and aria-label', async () => {
+    chart.hoverAt(t0 + 24 * MIN);
+    await fixture.whenStable();
+    expect(host.hoverT()).toBe(t0 + 22.5 * MIN);
+    expect(chart.activeIndex).toBe(1);
+    // No hover dot on candles.
+    expect(option().series[1].data).toEqual([]);
+
+    const content = option().tooltip[0].formatter([
+      { value: [t0 + 22.5 * MIN, 82.1, 126.5, 82.1, 126.5] },
+    ]) as HTMLElement;
+    expect([...content.children].map((c) => c.textContent?.replace(/\s+/g, ' '))).toEqual([
+      'Start82.1 °C', // the open: the period's first reading
+      'End126.5 °C', // the close: its last reading
+      'Low82.1 °C',
+      'High126.5 °C',
+      'Jan 2, 03:15–03:30 UTC · 3 readings',
+    ]);
+    const plot = (fixture.nativeElement as HTMLElement).querySelector('[role=img]')!;
+    expect(plot.getAttribute('aria-label')).toBe(
+      'Gearbox temperature: latest 81.9 °C at Jan 2, 03:35 UTC. 7 readings in 3 15 min candles. ' +
+        'Selected: Jan 2, 03:15–03:30 UTC: start 82.1, end 126.5, low 82.1, high 126.5 °C (3 readings).',
+    );
+  });
+});

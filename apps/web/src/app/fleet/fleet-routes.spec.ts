@@ -335,20 +335,35 @@ describe('Fleet routes', () => {
       expect(charts()[4].querySelector('[data-testid=latest]')?.textContent?.trim()).toBe(
         '79.3 °C',
       );
-      // The missing 23:45 reading breaks every line (a null point between 23:40 and 23:50).
-      const chart = (
-        fixture().debugElement.query((d) => d.name === 'app-line-chart')
-          .componentInstance as LineChart
-      ).chart!;
-      const [readings] = chart.getOption()['series'] as {
+      const instances = fixture()
+        .debugElement.queryAll((d) => d.name === 'app-line-chart')
+        .map((d) => d.componentInstance as LineChart);
+      expect(instances.map((c) => c.kind())).toEqual([
+        'candlestick',
+        'candlestick',
+        'candlestick',
+        'candlestick',
+        'candlestick',
+        'line', // alerts per reading: a count has no open/close
+      ]);
+      // The metrics are 30-minute candles on the 24h range: 23:40, 23:50 and 23:55 fall in the
+      // 23:30–24:00 bucket → [centre, open, close, low, high].
+      const [power] = instances[0].chart!.getOption()['series'] as {
+        type: string;
+        data: number[][];
+      }[];
+      expect(power.type).toBe('candlestick');
+      expect(power.data).toEqual([
+        [Date.parse('2026-01-02T23:45:00.000Z'), 2041.8, 1960.5, 1960.5, 2093.6],
+      ]);
+      expect(charts()[0].querySelector('[data-testid=candle-size]')?.textContent?.trim()).toBe(
+        '30 min candles · drag across the chart to zoom',
+      );
+      // The alerts line still breaks at the missing 23:45 reading (a null point).
+      const [alerts] = instances[5].chart!.getOption()['series'] as {
         data: ([number, number | null] | { value: [number, number | null] })[];
       }[];
-      expect(readings.data.map((d) => (Array.isArray(d) ? d : d.value)[1])).toEqual([
-        2041.8,
-        null,
-        2093.6,
-        1960.5,
-      ]);
+      expect(alerts.data.map((d) => (Array.isArray(d) ? d : d.value)[1])).toEqual([0, null, 0, 0]);
     });
 
     it('switches the time range for all charts from one control', async () => {
@@ -415,9 +430,9 @@ describe('Fleet routes', () => {
         .debugElement.queryAll((d) => d.name === 'app-line-chart')
         .map((d) => d.componentInstance as LineChart);
       expect(instances).toHaveLength(6);
-      for (const chart of instances) {
-        expect(chart.activeIndex).toBe(3); // the latest reading (index 1 is the 23:45 gap)
-      }
+      // The candlestick charts snap to the one 23:30–24:00 candle; the alerts line to the latest
+      // reading (index 1 is the 23:45 gap).
+      expect(instances.map((chart) => chart.activeIndex)).toEqual([0, 0, 0, 0, 0, 3]);
     });
 
     describe('dataZoom', () => {
@@ -449,6 +464,27 @@ describe('Fleet routes', () => {
           expect(zoomed).toBe(true);
           expect(range.from).toBeCloseTo(from, -2);
           expect(range.to).toBeCloseTo(to, -2);
+        }
+      });
+
+      it('zooms all charts to a range brushed on a candlestick chart, and Reset zoom undoes it', async () => {
+        await start('/farms/FARM01/turbines/TURB001', history);
+        expect(el().querySelector('[data-testid=reset-zoom]')).toBeNull();
+
+        components()[2].onBrushEnd([from, to]); // a drag across the rotor chart
+        await stable();
+        for (const component of components()) {
+          const { range, zoomed } = component.visibleRange();
+          expect(zoomed).toBe(true);
+          expect(range.from).toBeCloseTo(from, -2);
+          expect(range.to).toBeCloseTo(to, -2);
+        }
+
+        el().querySelector<HTMLButtonElement>('[data-testid=reset-zoom]')!.click();
+        await stable();
+        expect(el().querySelector('[data-testid=reset-zoom]')).toBeNull();
+        for (const component of components()) {
+          expect(component.visibleRange().zoomed).toBe(false);
         }
       });
 

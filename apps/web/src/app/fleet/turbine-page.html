@@ -89,6 +89,19 @@
   } @else {
     @if (window(); as window) {
       <!-- Refetch keeps the frame: previous charts stay, dimmed, until new data arrives. -->
+      <!-- Zoomed (brush, slider or Ctrl+wheel): one button brings every chart back to the range. -->
+      @if (view()) {
+        <div class="mb-2 flex justify-end">
+          <button
+            type="button"
+            class="cursor-pointer rounded-md border border-line px-3 py-1 text-sm hover:bg-surface"
+            data-testid="reset-zoom"
+            (click)="view.set(null)"
+          >
+            Reset zoom
+          </button>
+        </div>
+      }
       <section
         class="grid gap-3 transition-opacity data-refreshing:opacity-50"
         aria-label="Telemetry charts"
@@ -96,6 +109,7 @@
       >
         @for (chart of charts(); track chart.key) {
           <app-line-chart
+            kind="candlestick"
             [attr.data-metric]="chart.key"
             [title]="chart.title"
             [unit]="chart.unit"

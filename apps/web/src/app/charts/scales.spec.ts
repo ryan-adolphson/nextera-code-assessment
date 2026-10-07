@@ -6,6 +6,9 @@ import {
   ticksWithin,
   timeTicks,
   withGapBreaks,
+  candleSizeFor,
+  formatDuration,
+  toCandles,
 } from './scales';
 
 const MIN = 60_000;
@@ -122,5 +125,68 @@ describe('ticksWithin (y ticks inside padded or zoomed bounds)', () => {
 
   it('returns no ticks for an empty range', () => {
     expect(ticksWithin(5, 5)).toEqual([]);
+  });
+});
+
+describe('candles', () => {
+  const H = 3_600_000;
+  const M = 60_000;
+  const t0 = Date.parse('2026-01-02T03:00:00Z');
+
+  it('sizes candles to the range: about 24–48 per chart', () => {
+    expect(candleSizeFor(6 * H)).toBe(15 * M);
+    expect(candleSizeFor(24 * H)).toBe(30 * M);
+    expect(candleSizeFor(48 * H)).toBe(H);
+    expect(candleSizeFor(7 * 24 * H)).toBe(4 * H);
+    expect([15 * M, 30 * M, H, 4 * H].map(formatDuration)).toEqual([
+      '15 min',
+      '30 min',
+      '1 h',
+      '4 h',
+    ]);
+  });
+
+  it('takes open/close from the first/last reading and low/high from the bucket, UTC-aligned', () => {
+    const points = [
+      { t: t0, v: 82.1 },
+      { t: t0 + 5 * M, v: 81.9 },
+      { t: t0 + 20 * M, v: 126.5 },
+      { t: t0 + 25 * M, v: 90 },
+      { t: t0 + 35 * M, v: 81.9 },
+    ];
+    expect(toCandles(points, 30 * M)).toEqual([
+      {
+        t: t0 + 15 * M,
+        start: t0,
+        end: t0 + 30 * M,
+        open: 82.1,
+        close: 90,
+        low: 81.9,
+        high: 126.5,
+        count: 4,
+      },
+      {
+        t: t0 + 45 * M,
+        start: t0 + 30 * M,
+        end: t0 + 60 * M,
+        open: 81.9,
+        close: 81.9,
+        low: 81.9,
+        high: 81.9,
+        count: 1,
+      },
+    ]);
+  });
+
+  it('leaves empty buckets out, so gaps stay visible', () => {
+    const candles = toCandles(
+      [
+        { t: t0, v: 1 },
+        { t: t0 + 2 * H, v: 2 },
+      ],
+      30 * M,
+    );
+    expect(candles.map((c) => c.start)).toEqual([t0, t0 + 2 * H]);
+    expect(toCandles([], 30 * M)).toEqual([]);
   });
 });

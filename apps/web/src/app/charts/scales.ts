@@ -132,3 +132,64 @@ export function ticksWithin(min: number, max: number, count = 4): number[] {
   }
   return ticks;
 }
+
+/** One candle: a metric over a time bucket [start, end), drawn at the bucket centre `t`. */
+export interface Candle {
+  /** Bucket centre (epoch ms): where the candle is drawn and the crosshair snaps. */
+  t: number;
+  start: number;
+  end: number;
+  /** First and last reading in the bucket, and the extremes. */
+  open: number;
+  close: number;
+  low: number;
+  high: number;
+  /** Readings in the bucket. */
+  count: number;
+}
+
+/**
+ * Candle size for a time range, about 24–48 candles per chart: up to 6 h → 15 min, up to 24 h →
+ * 30 min, up to 48 h → 1 h, longer → 4 h.
+ */
+export function candleSizeFor(spanMs: number): number {
+  if (spanMs <= 6 * HOUR) return 15 * MINUTE;
+  if (spanMs <= DAY) return 30 * MINUTE;
+  if (spanMs <= 2 * DAY) return HOUR;
+  return 4 * HOUR;
+}
+
+/**
+ * Readings (ascending by t) as UTC-aligned candles of `sizeMs`. Buckets without readings get no
+ * candle, so gaps stay visible.
+ */
+export function toCandles(points: readonly ChartPoint[], sizeMs: number): Candle[] {
+  const candles: Candle[] = [];
+  for (const p of points) {
+    const start = Math.floor(p.t / sizeMs) * sizeMs;
+    const last = candles.at(-1);
+    if (last && last.start === start) {
+      last.close = p.v;
+      last.low = Math.min(last.low, p.v);
+      last.high = Math.max(last.high, p.v);
+      last.count++;
+    } else {
+      candles.push({
+        t: start + sizeMs / 2,
+        start,
+        end: start + sizeMs,
+        open: p.v,
+        close: p.v,
+        low: p.v,
+        high: p.v,
+        count: 1,
+      });
+    }
+  }
+  return candles;
+}
+
+/** "15 min", "1 h", "4 h": a candle size in words. */
+export function formatDuration(ms: number): string {
+  return ms < HOUR ? `${ms / MINUTE} min` : `${ms / HOUR} h`;
+}

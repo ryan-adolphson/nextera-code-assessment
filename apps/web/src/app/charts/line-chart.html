@@ -8,6 +8,11 @@
       >
     }
   </figcaption>
+  @if (kind() === 'candlestick') {
+    <p class="m-0 text-xs text-muted" data-testid="candle-size">
+      {{ candleLabel() }} candles · drag across the chart to zoom
+    </p>
+  }
   @if (markerLegend().length) {
     <!-- The marker legend: each level shown, with a swatch and its count (never colour alone). -->
     <ul
