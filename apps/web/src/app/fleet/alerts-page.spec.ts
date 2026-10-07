@@ -50,6 +50,29 @@ describe('AlertsPage (/alerting)', () => {
     expect(await pages.getRangeLabel()).toBe('1 – 25 of 30');
     await pages.goToNextPage();
     expect(rows()).toHaveLength(5);
+
+    // One window-high view: the page is a flex column, only the rows scroll (sticky header),
+    // the paginator stays below them.
+    expect(app.root().querySelector('[data-testid=shell]')!.hasAttribute('data-fill')).toBe(true);
+    const host = app.root().querySelector('app-alerts-page')!;
+    expect([...host.classList]).toEqual(expect.arrayContaining(['flex', 'flex-1', 'min-h-0']));
+    const frame = app.root().querySelector('[data-testid=alerts-frame]')!;
+    expect([...frame.classList]).toEqual(
+      expect.arrayContaining(['flex', 'flex-col', 'min-h-48', 'overflow-hidden']),
+    );
+    const region = app.root().querySelector<HTMLElement>('[data-testid=alerts-scroll]')!;
+    expect([region.getAttribute('role'), region.getAttribute('aria-label')]).toEqual([
+      'region',
+      'Turbines needing attention',
+    ]);
+    expect(region.tabIndex).toBe(0);
+    expect(region.contains(app.root().querySelector('[data-testid=alerts]'))).toBe(true);
+    const paginator = app.root().querySelector('[data-testid=alerts-paginator]')!;
+    expect(region.contains(paginator)).toBe(false);
+    expect(paginator.parentElement).toBe(frame);
+    for (const th of app.root().querySelectorAll('[data-testid=alerts] thead th')) {
+      expect(th.classList).toContain('mat-mdc-table-sticky');
+    }
   });
 
   it('shows the Active and Rules tabs, with Active current', async () => {

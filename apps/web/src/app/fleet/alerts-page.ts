@@ -16,6 +16,9 @@ import { StalenessBadge } from './staleness-badge';
  */
 @Component({
   selector: 'app-alerts-page',
+  // A column filling the shell's window-high page (route data `fillViewport`): heading, tabs and
+  // counts keep their height, the table frame takes what is left and scrolls its rows.
+  host: { class: 'flex min-h-0 flex-1 flex-col' },
   imports: [AlertingTabs, DatePipe, RouterLink, StalenessBadge, StatTile, TABLE_IMPORTS],
   templateUrl: './alerts-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,

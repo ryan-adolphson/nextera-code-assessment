@@ -34,6 +34,8 @@ export const routes: Routes = [
       {
         path: 'alerting',
         title: 'Alerting · Nextera',
+        // Counts and table in one window-high view: only the table rows scroll.
+        data: { fillViewport: true },
         loadComponent: () => import('./fleet/alerts-page').then((m) => m.AlertsPage),
       },
       {
