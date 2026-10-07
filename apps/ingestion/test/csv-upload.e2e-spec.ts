@@ -22,7 +22,7 @@ describe('CSV upload: POST /ingest/telemetry (e2e, real Postgres + Redis)', () =
   });
 
   beforeEach(async () => {
-    await t.prisma.$executeRaw`TRUNCATE TABLE telemetry`;
+    await t.prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry`;
     lastEventId = (await t.events.publish('test.marker', null)).id;
   });
 
@@ -126,6 +126,45 @@ describe('CSV upload: POST /ingest/telemetry (e2e, real Postgres + Redis)', () =
       where: { timestamp: new Date('2026-03-01T00:05:00Z') },
     });
     expect(added.receivedAt.getTime()).toBeGreaterThanOrEqual(before - 1000);
+  });
+
+  it('stores the alert rules each new row triggers (enabled rules only)', async () => {
+    const hot = await t.prisma.alertConfig.create({
+      data: {
+        measurementMetric: 'gearboxTempC',
+        comparison: 'above',
+        valueMetric: 120,
+        alertLevel: 'error',
+      },
+    });
+    await t.prisma.alertConfig.create({
+      data: {
+        measurementMetric: 'gearboxTempC',
+        comparison: 'above',
+        valueMetric: 90,
+        alertLevel: 'warn',
+        enabled: false,
+      },
+    });
+    try {
+      const res = await upload(
+        csv(
+          'TURB001,FARM01,2026-03-01T00:00:00Z,,2000,8,14,3.6,126.5',
+          'TURB001,FARM01,2026-03-01T00:05:00Z,,2000,8,14,3.6,95',
+        ),
+      );
+      expect(res.status).toBe(201);
+
+      const links = await t.prisma.telemetryAlert.findMany({
+        include: { telemetry: true },
+      });
+      expect(links.map((l) => [l.telemetry.gearboxTempC, l.alertId])).toEqual([
+        [126.5, hot.id],
+      ]);
+    } finally {
+      await t.prisma
+        .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config`;
+    }
   });
 
   it('rejects a file with invalid rows: errors by line, nothing stored', async () => {

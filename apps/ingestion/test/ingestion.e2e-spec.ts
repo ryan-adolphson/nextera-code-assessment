@@ -16,7 +16,8 @@ const reading = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /** What Pub/Sub POSTs to a push endpoint. */
 function push(url: string, payload: unknown, messageId: string = randomUUID()) {
@@ -50,7 +51,7 @@ describe('Ingestion worker (e2e, real Postgres + Redis)', () => {
   });
 
   beforeEach(async () => {
-    await prisma.$executeRaw`TRUNCATE TABLE telemetry`;
+    await prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry`;
     lastEventId = (await events.publish('test.marker', null)).id;
   });
 
@@ -204,6 +205,78 @@ describe('Ingestion worker (e2e, real Postgres + Redis)', () => {
     expect((await ready.json()).details).toMatchObject({
       database: { status: 'up' },
       redis: { status: 'up' },
+    });
+  });
+
+  describe('alert rules (telemetry_alerts)', () => {
+    const rule = (
+      valueMetric: number,
+      alertLevel: 'info' | 'warn' | 'error',
+      enabled = true,
+    ) =>
+      prisma.alertConfig.create({
+        data: {
+          measurementMetric: 'gearboxTempC',
+          comparison: 'above',
+          valueMetric,
+          alertLevel,
+          enabled,
+        },
+      });
+    const alertsOf = (telemetryId: string) =>
+      prisma.telemetryAlert.findMany({
+        where: { telemetryId },
+        include: { alert: true },
+        orderBy: { alert: { valueMetric: 'asc' } },
+      });
+
+    afterEach(async () => {
+      await prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config`;
+    });
+
+    it('stores every enabled rule a reading triggers, and puts them in the live event', async () => {
+      const warn = await rule(90, 'warn');
+      const error = await rule(120, 'error');
+      await rule(100, 'info', false); // disabled: never stored
+      // Another metric, not reached (wind 8 m/s).
+      await prisma.alertConfig.create({
+        data: {
+          measurementMetric: 'windSpeedMs',
+          comparison: 'above',
+          valueMetric: 25,
+          alertLevel: 'error',
+        },
+      });
+
+      expect((await push(url, reading({ gearbox_temp_c: 126.5 }))).status).toBe(
+        204,
+      );
+
+      const stored = await prisma.telemetry.findFirstOrThrow();
+      expect((await alertsOf(stored.id)).map((a) => a.alertId)).toEqual([
+        warn.id,
+        error.id,
+      ]);
+      const [event] = await publishedEvents();
+      expect(
+        (event.data as { alerts: { id: string }[] }).alerts.map((a) => a.id),
+      ).toEqual([error.id, warn.id]); // worst first
+    });
+
+    it('stores no alert rows for a normal reading or a re-sent duplicate', async () => {
+      await rule(90, 'warn');
+      await push(url, reading({ gearbox_temp_c: 81.6 }));
+      expect(await prisma.telemetryAlert.count()).toBe(0);
+
+      await push(
+        url,
+        reading({ timestamp: '2026-03-01T00:05:00Z', gearbox_temp_c: 95 }),
+      );
+      await push(
+        url,
+        reading({ timestamp: '2026-03-01T00:05:00Z', gearbox_temp_c: 95 }),
+      );
+      expect(await prisma.telemetryAlert.count()).toBe(1);
     });
   });
 });

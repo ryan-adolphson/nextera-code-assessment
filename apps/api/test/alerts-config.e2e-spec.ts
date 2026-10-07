@@ -17,7 +17,7 @@ describe('alerts_config (e2e, real Postgres)', () => {
   });
 
   beforeEach(async () => {
-    await t.prisma.$executeRaw`TRUNCATE TABLE alert_history, alerts_config`;
+    await t.prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config`;
   });
 
   it('stores a threshold through Prisma with a database-generated UUID v4', async () => {
@@ -114,7 +114,7 @@ describe('Alert configs API (e2e)', () => {
   });
 
   beforeEach(async () => {
-    await t.prisma.$executeRaw`TRUNCATE TABLE alert_history, alerts_config`;
+    await t.prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config`;
   });
 
   const request = (
@@ -194,40 +194,55 @@ describe('Alert configs API (e2e)', () => {
     );
   });
 
-  it('refuses to delete a rule with alert history (409, disable it instead) and keeps both', async () => {
+  it('refuses to delete a rule that readings triggered (409, disable it instead) and keeps both', async () => {
     const created = await create();
     await t.prisma.$executeRaw`
       INSERT INTO farms (id, name, latitude, longitude)
-      VALUES ('FARM-AH', 'History farm', 1, 1) ON CONFLICT DO NOTHING`;
-    const turbine = await t.prisma.turbine.upsert({
-      where: { turbineId: 'TURB-AH' },
+      VALUES ('FARM-TA', 'Alerts farm', 1, 1) ON CONFLICT DO NOTHING`;
+    await t.prisma.turbine.upsert({
+      where: { turbineId: 'TURB-TA' },
       create: {
-        turbineId: 'TURB-AH',
-        farmId: 'FARM-AH',
+        turbineId: 'TURB-TA',
+        farmId: 'FARM-TA',
         latitude: 1,
         longitude: 1,
       },
       update: {},
     });
-    await t.prisma.alertHistory.create({
-      data: { turbineId: turbine.id, alertId: created.id },
+    // A reading that triggered the rule, as ingestion stores it.
+    const reading = await t.prisma.telemetry.create({
+      data: {
+        turbineId: 'TURB-TA',
+        farmId: 'FARM-TA',
+        timestamp: new Date('2026-03-01T00:00:00Z'),
+        powerOutputKw: 1,
+        windSpeedMs: 1,
+        rotorRpm: 1,
+        bladePitchDeg: 1,
+        gearboxTempC: 126.5,
+        alerts: { create: { alertId: created.id } },
+      },
     });
 
-    const res = await request('DELETE', `/${created.id}`);
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as { message: string }).message).toBe(
-      `Alert config ${created.id} has alert history and cannot be deleted; disable it instead (enabled: false)`,
-    );
-    expect((await request('GET', `/${created.id}`)).status).toBe(200);
-    expect(
-      await t.prisma.alertHistory.count({ where: { alertId: created.id } }),
-    ).toBe(1);
+    try {
+      const res = await request('DELETE', `/${created.id}`);
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { message: string }).message).toBe(
+        `Alert config ${created.id} has triggered alerts on telemetry readings and cannot be deleted; disable it instead (enabled: false)`,
+      );
+      expect((await request('GET', `/${created.id}`)).status).toBe(200);
+      expect(
+        await t.prisma.telemetryAlert.count({ where: { alertId: created.id } }),
+      ).toBe(1);
 
-    // Disabling it works.
-    const disabled = await request('PATCH', `/${created.id}`, {
-      enabled: false,
-    });
-    expect(disabled.status).toBe(200);
+      // Disabling it works.
+      const disabled = await request('PATCH', `/${created.id}`, {
+        enabled: false,
+      });
+      expect(disabled.status).toBe(200);
+    } finally {
+      await t.prisma.telemetry.delete({ where: { id: reading.id } }); // cascades its alerts
+    }
   });
 
   it('lists rules by metric, then level severity, then value', async () => {

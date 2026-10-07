@@ -4,6 +4,7 @@ export type {
   AlertConfig,
   Farm,
   Telemetry,
+  TelemetryAlert,
   Turbine,
 } from './generated/prisma/client.js';
 export {
@@ -28,6 +29,7 @@ export type { AppEvent } from './events/event-store.js';
 
 // Wind domain: public response shapes (API + SSE) and event names
 export {
+  TELEMETRY_ALERTS_INCLUDE,
   TELEMETRY_METRICS,
   TELEMETRY_METRIC_COLUMNS,
   TELEMETRY_RECEIVED,
@@ -43,8 +45,16 @@ export type {
   TelemetryResponse,
   TelemetryStatsResponse,
   TelemetryStatsRow,
+  TelemetryWithAlerts,
   TurbineResponse,
 } from './wind/responses.js';
+
+// Alert evaluation (ingestion stores each reading's triggered rules in telemetry_alerts)
+export {
+  compareAlertsWorstFirst,
+  triggeredAlerts,
+} from './wind/evaluate-alerts.js';
+export type { AlertableReading } from './wind/evaluate-alerts.js';
 
 // Alert thresholds (alerts_config): response shape, mapper and change event
 export {

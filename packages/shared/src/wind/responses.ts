@@ -1,4 +1,15 @@
-import type { Farm, Telemetry, Turbine } from '../generated/prisma/client.js';
+import type {
+  AlertConfig,
+  Farm,
+  Prisma,
+  Telemetry,
+  Turbine,
+} from '../generated/prisma/client.js';
+import {
+  toAlertConfigResponse,
+  type AlertConfigResponse,
+} from './alert-config.js';
+import { compareAlertsWorstFirst } from './evaluate-alerts.js';
 
 /** SSE event published by the ingestion worker for every newly stored reading. */
 export const TELEMETRY_RECEIVED = 'telemetry.received';
@@ -34,7 +45,22 @@ export interface TelemetryResponse {
   rotorRpm: number;
   bladePitchDeg: number;
   gearboxTempC: number;
+  /**
+   * The alert rules this reading triggered when it was ingested (telemetry_alerts), worst level
+   * first, each as the rule is now (joined from alerts_config). Empty when none fired.
+   */
+  alerts: AlertConfigResponse[];
 }
+
+/** Prisma `include` that loads what `toTelemetryResponse` needs: the triggered rules. */
+export const TELEMETRY_ALERTS_INCLUDE = {
+  alerts: { include: { alert: true } },
+} as const satisfies Prisma.TelemetryInclude;
+
+/** A reading with its triggered rules (`include: TELEMETRY_ALERTS_INCLUDE`, or built by ingestion). */
+export type TelemetryWithAlerts = Telemetry & {
+  alerts: readonly { alert: AlertConfig }[];
+};
 
 /** The measured values of a reading, in a fixed order (API field names). */
 export const TELEMETRY_METRICS = [
@@ -142,7 +168,9 @@ export function toTurbineResponse(turbine: Turbine): TurbineResponse {
   };
 }
 
-export function toTelemetryResponse(reading: Telemetry): TelemetryResponse {
+export function toTelemetryResponse(
+  reading: TelemetryWithAlerts,
+): TelemetryResponse {
   return {
     id: reading.id,
     turbineId: reading.turbineId,
@@ -154,5 +182,9 @@ export function toTelemetryResponse(reading: Telemetry): TelemetryResponse {
     rotorRpm: reading.rotorRpm,
     bladePitchDeg: reading.bladePitchDeg,
     gearboxTempC: reading.gearboxTempC,
+    alerts: reading.alerts
+      .map(({ alert }) => alert)
+      .sort(compareAlertsWorstFirst)
+      .map(toAlertConfigResponse),
   };
 }

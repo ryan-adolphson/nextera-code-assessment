@@ -8,7 +8,8 @@ describe('Fleet API (e2e, CSV seed data)', () => {
 
   beforeAll(async () => {
     t = await createTestApp();
-    await t.prisma.$executeRaw`TRUNCATE TABLE alert_history, telemetry, turbines, farms`;
+    await t.prisma
+      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
   });
 
@@ -154,6 +155,114 @@ describe('Fleet API (e2e, CSV seed data)', () => {
         ['2026-01-02T03:25:00.000Z', 126.5],
         ['2026-01-02T03:20:00.000Z', 126.5],
       ]);
+    });
+
+    it('joins in the alert rules each reading triggered (telemetry_alerts → alerts_config)', async () => {
+      const rule = await t.prisma.alertConfig.create({
+        data: {
+          measurementMetric: 'gearboxTempC',
+          comparison: 'above',
+          valueMetric: 120,
+          alertLevel: 'error',
+        },
+      });
+      const hot = await t.prisma.telemetry.findUniqueOrThrow({
+        where: {
+          turbineId_timestamp: {
+            turbineId: 'TURB002',
+            timestamp: new Date('2026-01-02T03:25:00Z'),
+          },
+        },
+      });
+      // What ingestion stores for a reading that triggered the rule.
+      await t.prisma.telemetryAlert.create({
+        data: { telemetryId: hot.id, alertId: rule.id },
+      });
+
+      try {
+        const readings = await (
+          await get(
+            '/turbines/TURB002/telemetry?from=2026-01-02T03:20:00Z&to=2026-01-02T03:35:00Z',
+          )
+        ).json();
+        expect(
+          readings.map((r: { timestamp: string; alerts: unknown[] }) => [
+            r.timestamp,
+            r.alerts,
+          ]),
+        ).toEqual([
+          ['2026-01-02T03:30:00.000Z', []],
+          [
+            '2026-01-02T03:25:00.000Z',
+            [
+              {
+                id: rule.id,
+                measurementMetric: 'gearboxTempC',
+                comparison: 'above',
+                valueMetric: 120,
+                alertLevel: 'error',
+                enabled: true,
+              },
+            ],
+          ],
+          ['2026-01-02T03:20:00.000Z', []],
+        ]);
+
+        // A join, not a snapshot: the reading shows the rule as it is now.
+        await t.prisma.alertConfig.update({
+          where: { id: rule.id },
+          data: { valueMetric: 110 },
+        });
+        const [, edited] = await (
+          await get(
+            '/turbines/TURB002/telemetry?from=2026-01-02T03:20:00Z&to=2026-01-02T03:35:00Z',
+          )
+        ).json();
+        expect(edited.alerts[0].valueMetric).toBe(110);
+      } finally {
+        await t.prisma
+          .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config`;
+      }
+    });
+
+    it('includes the triggered rules on each turbine’s latest reading in GET /api/farms', async () => {
+      const rule = await t.prisma.alertConfig.create({
+        data: {
+          measurementMetric: 'powerOutputKw',
+          comparison: 'above',
+          valueMetric: 1000,
+          alertLevel: 'info',
+        },
+      });
+      const latest = await t.prisma.telemetry.findFirstOrThrow({
+        where: { turbineId: 'TURB001' },
+        orderBy: { timestamp: 'desc' },
+      });
+      await t.prisma.telemetryAlert.create({
+        data: { telemetryId: latest.id, alertId: rule.id },
+      });
+
+      try {
+        const farms = await (await get('/farms')).json();
+        const turbines = farms.flatMap(
+          (f: { turbines: { id: string; latest: { alerts: unknown[] } }[] }) =>
+            f.turbines,
+        );
+        expect(
+          turbines.map(
+            (x: { id: string; latest: { alerts: { id: string }[] } }) => [
+              x.id,
+              x.latest.alerts.map((a) => a.id),
+            ],
+          ),
+        ).toEqual([
+          ['TURB001', [rule.id]],
+          ['TURB002', []],
+        ]);
+      } finally {
+        await t.prisma
+          .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config`;
+      }
     });
 
     it('honours limit', async () => {

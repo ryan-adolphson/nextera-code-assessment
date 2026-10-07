@@ -238,12 +238,12 @@ describe('AlertConfigsService', () => {
       });
     });
 
-    it('maps a rule with alert history (P2003, RESTRICT) to 409 saying to disable it', async () => {
+    it('maps a rule that readings triggered (P2003, RESTRICT) to 409 saying to disable it', async () => {
       prisma.alertConfig.delete.mockRejectedValue(prismaError('P2003'));
 
       await expect(service.remove(ID)).rejects.toThrow(
         new ConflictException(
-          `Alert config ${ID} has alert history and cannot be deleted; disable it instead (enabled: false)`,
+          `Alert config ${ID} has triggered alerts on telemetry readings and cannot be deleted; disable it instead (enabled: false)`,
         ),
       );
       expect(events.publish).not.toHaveBeenCalled();

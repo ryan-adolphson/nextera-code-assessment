@@ -19,7 +19,7 @@ export interface AlertConfigResponse {
   comparison: AlertComparison;
   valueMetric: number;
   alertLevel: AlertLevel;
-  /** Disabled rules are kept (with their alert history) but not evaluated. */
+  /** Disabled rules are kept (and stay on the readings they triggered) but not evaluated. */
   enabled: boolean;
 }
 

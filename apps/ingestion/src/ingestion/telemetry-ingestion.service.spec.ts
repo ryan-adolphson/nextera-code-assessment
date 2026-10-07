@@ -4,6 +4,7 @@ import {
   EventStore,
   PrismaService,
   TELEMETRY_RECEIVED,
+  type AlertConfig,
   type Telemetry,
 } from '@nextera/shared';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
@@ -34,6 +35,16 @@ const stored: Telemetry = {
   gearboxTempC: 81.6,
 };
 
+const rule = (overrides: Partial<AlertConfig> = {}): AlertConfig => ({
+  id: 'rule-gearbox-error',
+  measurementMetric: 'gearboxTempC',
+  comparison: 'above',
+  valueMetric: 80,
+  alertLevel: 'error',
+  enabled: true,
+  ...overrides,
+});
+
 describe('TelemetryIngestionService', () => {
   let service: TelemetryIngestionService;
   let prisma: DeepMockProxy<PrismaService>;
@@ -45,6 +56,11 @@ describe('TelemetryIngestionService', () => {
       { turbineId: 'TURB001', farmId: 'FARM01' },
     ] as never);
     prisma.telemetry.createManyAndReturn.mockResolvedValue([stored]);
+    prisma.alertConfig.findMany.mockResolvedValue([]); // no rules unless a test adds some
+    // Interactive transactions run against the same mock.
+    prisma.$transaction.mockImplementation((fn: unknown) =>
+      (fn as (tx: PrismaService) => Promise<unknown>)(prisma),
+    );
     events.publish.mockReset();
 
     const moduleRef = await Test.createTestingModule({
@@ -88,6 +104,51 @@ describe('TelemetryIngestionService', () => {
     );
   });
 
+  it('stores the enabled rules the reading triggers in the same transaction, and publishes them', async () => {
+    // stored.gearboxTempC is 81.6: above 80 (error) and 60 (info), not above 90 (warn).
+    const error = rule();
+    const info = rule({
+      id: 'rule-gearbox-info',
+      valueMetric: 60,
+      alertLevel: 'info',
+    });
+    const warn = rule({
+      id: 'rule-gearbox-warn',
+      valueMetric: 90,
+      alertLevel: 'warn',
+    });
+    prisma.alertConfig.findMany.mockResolvedValue([info, warn, error]);
+
+    await service.ingest(dto);
+
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
+    expect(prisma.alertConfig.findMany).toHaveBeenCalledWith({
+      where: { enabled: true },
+    });
+    expect(prisma.telemetryAlert.createMany).toHaveBeenCalledWith({
+      data: [
+        { telemetryId: 'r1', alertId: 'rule-gearbox-error' },
+        { telemetryId: 'r1', alertId: 'rule-gearbox-info' },
+      ],
+    });
+    const [, payload] = events.publish.mock.calls[0];
+    expect(
+      payload.alerts.map((a: AlertConfig) => [a.id, a.alertLevel]),
+    ).toEqual([
+      ['rule-gearbox-error', 'error'],
+      ['rule-gearbox-info', 'info'],
+    ]);
+  });
+
+  it('writes no alert rows when no rule fires, and publishes an empty alerts list', async () => {
+    prisma.alertConfig.findMany.mockResolvedValue([rule({ valueMetric: 120 })]);
+
+    await service.ingest(dto);
+
+    expect(prisma.telemetryAlert.createMany).not.toHaveBeenCalled();
+    expect(events.publish.mock.calls[0][1].alerts).toEqual([]);
+  });
+
   it('looks turbines up by their business key (turbine_id), not the UUID id', async () => {
     await service.ingest(dto);
 
@@ -119,6 +180,9 @@ describe('TelemetryIngestionService', () => {
 
     await expect(service.ingest(dto)).resolves.toBe('duplicate');
     expect(events.publish).not.toHaveBeenCalled();
+    // Idempotent: a re-sent reading adds no alert rows either.
+    expect(prisma.alertConfig.findMany).not.toHaveBeenCalled();
+    expect(prisma.telemetryAlert.createMany).not.toHaveBeenCalled();
   });
 
   it('rejects an unknown turbine with 400 and stores nothing', async () => {
@@ -165,9 +229,6 @@ describe('TelemetryIngestionService', () => {
         { turbineId: 'TURB001', farmId: 'FARM01' },
         { turbineId: 'TURB002', farmId: 'FARM02' },
       ] as never);
-      prisma.$transaction.mockImplementation((fn: unknown) =>
-        (fn as (tx: PrismaService) => Promise<unknown>)(prisma),
-      );
     });
 
     it('rejects the file when any row has an unknown turbine or the wrong farm, merged with format errors by line', async () => {
@@ -240,6 +301,22 @@ describe('TelemetryIngestionService', () => {
           }),
         ],
         skipDuplicates: true,
+      });
+    });
+
+    it('loads the enabled rules once and stores the alerts of every new reading', async () => {
+      const hot = { ...stored, id: 'hot', gearboxTempC: 126.5 };
+      const cool = { ...stored, id: 'cool', gearboxTempC: 70 };
+      prisma.telemetry.createManyAndReturn.mockResolvedValue([hot, cool]);
+      prisma.alertConfig.findMany.mockResolvedValue([
+        rule({ valueMetric: 120 }),
+      ]);
+
+      await service.ingestBatch(parsed(row(2), row(3)));
+
+      expect(prisma.alertConfig.findMany).toHaveBeenCalledOnce();
+      expect(prisma.telemetryAlert.createMany).toHaveBeenCalledWith({
+        data: [{ telemetryId: 'hot', alertId: 'rule-gearbox-error' }],
       });
     });
 

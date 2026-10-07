@@ -26,6 +26,7 @@ export const reading = (overrides: Partial<Telemetry> = {}): Telemetry => ({
   rotorRpm: 12,
   bladePitchDeg: 4,
   gearboxTempC: 80,
+  alerts: [],
   ...overrides,
 });
 

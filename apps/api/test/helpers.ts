@@ -55,6 +55,7 @@ export function publishReading(
     rotorRpm: 12.8,
     bladePitchDeg: 4.1,
     gearboxTempC: 79.6,
+    alerts: [],
     ...overrides,
   };
   return t.events.publish(TELEMETRY_RECEIVED, reading).then(() => reading);

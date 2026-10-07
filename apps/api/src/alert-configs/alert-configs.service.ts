@@ -99,14 +99,17 @@ export class AlertConfigsService {
     return config;
   }
 
-  /** A rule with alert history cannot be deleted (alert_history RESTRICT): 409, disable it instead. */
+  /**
+   * A rule that readings triggered cannot be deleted (telemetry_alerts RESTRICT, P2003): 409,
+   * disable it instead.
+   */
   async remove(id: string): Promise<void> {
     await this.prisma.alertConfig
       .delete({ where: { id } })
       .catch((error: unknown) => {
         if (isPrismaError(error, 'P2003')) {
           throw new ConflictException(
-            `Alert config ${id} has alert history and cannot be deleted; disable it instead (enabled: false)`,
+            `Alert config ${id} has triggered alerts on telemetry readings and cannot be deleted; disable it instead (enabled: false)`,
           );
         }
         return rethrow(error, {}, id);

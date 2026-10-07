@@ -10,7 +10,10 @@ import {
   signal,
   untracked,
 } from '@angular/core';
+import { MatTooltip } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
+import { describeRule, levelLabel } from '../alerting/alert-config.model';
+import { AlertLevelBadge } from '../alerting/alert-level-badge';
 import { LineChart, TimeRange } from '../charts/line-chart';
 import { ChartPoint } from '../charts/scales';
 import { DELAYED_AFTER_MS, HISTORY_RANGES, READING_INTERVAL_MS, Telemetry } from './fleet.model';
@@ -36,7 +39,16 @@ export const METRICS: { key: Metric; title: string; unit: string; decimals: numb
 /** /farms/:farmId/turbines/:turbineId: one turbine's status, charts per metric and readings. */
 @Component({
   selector: 'app-turbine-page',
-  imports: [DatePipe, DecimalPipe, RouterLink, LineChart, StalenessBadge, TABLE_IMPORTS],
+  imports: [
+    AlertLevelBadge,
+    DatePipe,
+    DecimalPipe,
+    RouterLink,
+    LineChart,
+    MatTooltip,
+    StalenessBadge,
+    TABLE_IMPORTS,
+  ],
   templateUrl: './turbine-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -65,6 +77,7 @@ export class TurbinePage implements OnDestroy {
     'measured',
     'delay',
     ...this.readingColumns.map((c) => c.key),
+    'alerts',
   ];
   protected readonly historyPaging = paginate(this.store.history, 50, [25, 50, 100, 250]);
   protected readonly trackById = (_: number, r: Telemetry) => r.id;
@@ -124,6 +137,13 @@ export class TurbinePage implements OnDestroy {
     this.view.set(null);
     this.historyPaging.reset();
     this.store.select(this.turbineId(), ms);
+  }
+
+  /** Tooltip of a reading's Alerts cell: one line per triggered rule, worst first. */
+  protected alertLines(reading: Telemetry): string {
+    return reading.alerts
+      .map((rule) => `${levelLabel(rule.alertLevel)}: ${describeRule(rule)}`)
+      .join('\n');
   }
 
   protected delayMinutes(reading: Telemetry): number {

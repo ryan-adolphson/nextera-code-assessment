@@ -1,10 +1,14 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import {
   EventStore,
+  Prisma,
   PrismaService,
   TELEMETRY_RECEIVED,
   toTelemetryResponse,
+  triggeredAlerts,
+  type AlertConfig,
   type Telemetry,
+  type TelemetryWithAlerts,
 } from '@nextera/shared';
 import { IngestTelemetryDto } from './ingest-telemetry.dto.js';
 import {
@@ -36,7 +40,8 @@ export class TelemetryIngestionService {
   ) {}
 
   /**
-   * Stores one reading (a Pub/Sub message) and publishes telemetry.received for SSE.
+   * Stores one reading (a Pub/Sub message) with the enabled alert rules it triggers
+   * (telemetry_alerts, same transaction) and publishes telemetry.received for SSE.
    * Idempotent: (turbine_id, timestamp) is unique, so Pub/Sub redeliveries and re-sent readings are
    * skipped without a write or an event. Unknown turbines and farm mismatches are rejected (400),
    * which sends the message to the dead-letter topic for inspection or replay.
@@ -48,11 +53,20 @@ export class TelemetryIngestionService {
     const [problem] = await this.checkTurbines([{ line: 0, reading: dto }]);
     if (problem) throw new BadRequestException(problem.errors[0]);
 
-    const [reading] = await this.prisma.telemetry.createManyAndReturn({
-      data: [
-        toRow(dto, new Date(dto.received_at ?? publishTime ?? Date.now())),
-      ],
-      skipDuplicates: true,
+    const reading = await this.prisma.$transaction(async (tx) => {
+      const [inserted] = await tx.telemetry.createManyAndReturn({
+        data: [
+          toRow(dto, new Date(dto.received_at ?? publishTime ?? Date.now())),
+        ],
+        skipDuplicates: true,
+      });
+      if (!inserted) return null;
+      const [withAlerts] = await storeAlerts(
+        tx,
+        [inserted],
+        await enabledRules(tx),
+      );
+      return withAlerts;
     });
     if (!reading) return 'duplicate';
 
@@ -63,8 +77,8 @@ export class TelemetryIngestionService {
         toTelemetryResponse(reading),
       );
     } catch (error) {
-      // Remove the row so Pub/Sub's retry stores and publishes it again; otherwise the retry
-      // would be skipped as a duplicate and the event lost.
+      // Remove the row (its telemetry_alerts cascade) so Pub/Sub's retry stores and publishes it
+      // again; otherwise the retry would be skipped as a duplicate and the event lost.
       await this.prisma.telemetry
         .delete({ where: { id: reading.id } })
         .catch(() => undefined);
@@ -76,7 +90,8 @@ export class TelemetryIngestionService {
   /**
    * Stores a parsed CSV upload atomically. Format errors from parsing and turbine/farm errors from
    * the database are reported together, by line; if there are any, nothing is written.
-   * Existing readings are skipped (idempotent re-uploads).
+   * Existing readings are skipped (idempotent re-uploads). New readings get the enabled alert rules
+   * they trigger (telemetry_alerts) in the same transaction.
    * Publishes one telemetry.received per turbine (its newest new reading) rather than one per row,
    * so a large backfill doesn't flood dashboards.
    */
@@ -102,14 +117,14 @@ export class TelemetryIngestionService {
     );
     const inserted = await this.prisma.$transaction(
       async (tx) => {
-        const stored: Telemetry[] = [];
+        const rules = await enabledRules(tx);
+        const stored: TelemetryWithAlerts[] = [];
         for (let i = 0; i < data.length; i += BATCH_SIZE) {
-          stored.push(
-            ...(await tx.telemetry.createManyAndReturn({
-              data: data.slice(i, i + BATCH_SIZE),
-              skipDuplicates: true,
-            })),
-          );
+          const readings = await tx.telemetry.createManyAndReturn({
+            data: data.slice(i, i + BATCH_SIZE),
+            skipDuplicates: true,
+          });
+          stored.push(...(await storeAlerts(tx, readings, rules)));
         }
         return stored;
       },
@@ -156,8 +171,10 @@ export class TelemetryIngestionService {
    * The data is already committed, so a Redis failure here doesn't fail the upload (a retry would
    * only find duplicates); dashboards catch up on their next load.
    */
-  private async publishNewestPerTurbine(inserted: Telemetry[]): Promise<void> {
-    const newest = new Map<string, Telemetry>();
+  private async publishNewestPerTurbine(
+    inserted: TelemetryWithAlerts[],
+  ): Promise<void> {
+    const newest = new Map<string, TelemetryWithAlerts>();
     for (const reading of inserted) {
       const current = newest.get(reading.turbineId);
       if (!current || reading.timestamp > current.timestamp) {
@@ -177,6 +194,34 @@ export class TelemetryIngestionService {
       );
     }
   }
+}
+
+/** The rules ingestion evaluates: the enabled ones, read inside the write transaction. */
+function enabledRules(tx: Prisma.TransactionClient): Promise<AlertConfig[]> {
+  return tx.alertConfig.findMany({ where: { enabled: true } });
+}
+
+/**
+ * Evaluates new readings against `rules`, stores one telemetry_alerts row per triggered rule, and
+ * returns the readings with their alerts (worst first) for the SSE event, without re-reading.
+ */
+async function storeAlerts(
+  tx: Prisma.TransactionClient,
+  readings: Telemetry[],
+  rules: AlertConfig[],
+): Promise<TelemetryWithAlerts[]> {
+  const withAlerts = readings.map((reading) => ({
+    ...reading,
+    alerts: triggeredAlerts(reading, rules).map((alert) => ({ alert })),
+  }));
+  const links = withAlerts.flatMap((reading) =>
+    reading.alerts.map(({ alert }) => ({
+      telemetryId: reading.id,
+      alertId: alert.id,
+    })),
+  );
+  if (links.length) await tx.telemetryAlert.createMany({ data: links });
+  return withAlerts;
 }
 
 function toRow(dto: IngestTelemetryDto, receivedAt: Date) {

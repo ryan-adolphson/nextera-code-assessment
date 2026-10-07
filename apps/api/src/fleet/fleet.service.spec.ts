@@ -51,8 +51,25 @@ describe('FleetService', () => {
         farm('FARM03', []),
       ] as never);
       prisma.$queryRaw.mockResolvedValue([row('TURB001', 'FARM01')]);
+      const rule = {
+        id: 'rule-1',
+        measurementMetric: 'gearboxTempC',
+        comparison: 'above',
+        valueMetric: 70,
+        alertLevel: 'warn',
+        enabled: true,
+      } as const;
+      prisma.telemetryAlert.findMany.mockResolvedValue([
+        { telemetryId: 'r1', alertId: 'rule-1', alert: rule },
+      ] as never);
 
       const overview = await service.overview();
+
+      // One query joins the triggered rules of every latest reading.
+      expect(prisma.telemetryAlert.findMany).toHaveBeenCalledWith({
+        where: { telemetryId: { in: ['r1'] } },
+        include: { alert: true },
+      });
 
       expect(overview).toEqual([
         {
@@ -78,6 +95,7 @@ describe('FleetService', () => {
                 rotorRpm: 11.6,
                 bladePitchDeg: 4.6,
                 gearboxTempC: 79.3,
+                alerts: [rule],
               },
             },
             expect.objectContaining({
@@ -146,7 +164,43 @@ describe('FleetService', () => {
         },
         orderBy: { timestamp: 'desc' },
         take: 10,
+        include: { alerts: { include: { alert: true } } }, // the triggered rules
       });
+    });
+
+    it('returns each reading with its triggered rules, worst level first', async () => {
+      prisma.turbine.findUnique.mockResolvedValue({
+        turbineId: 'TURB001',
+      } as never);
+      const alert = (id: string, alertLevel: 'info' | 'error') => ({
+        alert: {
+          id,
+          measurementMetric: 'gearboxTempC',
+          comparison: 'above',
+          valueMetric: 1,
+          alertLevel,
+          enabled: true,
+        },
+      });
+      prisma.telemetry.findMany.mockResolvedValue([
+        {
+          id: 'r1',
+          turbineId: 'TURB001',
+          farmId: 'FARM01',
+          timestamp: new Date('2026-01-02T23:55:00Z'),
+          receivedAt: new Date('2026-01-02T23:56:00Z'),
+          powerOutputKw: 1,
+          windSpeedMs: 1,
+          rotorRpm: 1,
+          bladePitchDeg: 1,
+          gearboxTempC: 126.5,
+          alerts: [alert('i', 'info'), alert('e', 'error')],
+        },
+      ] as never);
+
+      const [reading] = await service.telemetry('TURB001', { limit: 10 });
+
+      expect(reading.alerts.map((a) => a.id)).toEqual(['e', 'i']);
     });
 
     it('omits time bounds that are not given', async () => {

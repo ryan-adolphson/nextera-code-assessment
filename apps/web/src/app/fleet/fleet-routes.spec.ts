@@ -625,6 +625,43 @@ describe('Fleet routes', () => {
       expect(delays[0].hasAttribute('data-delayed')).toBe(true);
     });
 
+    it('shows the alert rules each reading triggered, worst level first in the tooltip', async () => {
+      const rule = (alertLevel: 'warn' | 'error', valueMetric: number) => ({
+        id: `rule-${alertLevel}`,
+        measurementMetric: 'gearboxTempC' as const,
+        comparison: 'above' as const,
+        valueMetric,
+        alertLevel,
+        enabled: true,
+      });
+      const [newest, ...rest] = history;
+      await start('/farms/FARM01/turbines/TURB001', [
+        { ...newest, alerts: [rule('error', 75), rule('warn', 70)] },
+        ...rest,
+      ]);
+
+      const header = [...el().querySelectorAll('[data-testid=history] thead th')].map((th) =>
+        th.textContent?.trim(),
+      );
+      expect(header.at(-1)).toBe('Alerts');
+      const cells = [...el().querySelectorAll('[data-testid=reading-alerts]')];
+      expect(cells.map((c) => c.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
+        'Error',
+        '–',
+        '–',
+      ]);
+      const trigger = cells[0].querySelector<HTMLButtonElement>(
+        '[data-testid=reading-alerts-trigger]',
+      )!;
+      expect(trigger.querySelector('[data-testid=alert-level]')!.getAttribute('data-level')).toBe(
+        'error',
+      );
+      // Every rule, worst first: the tooltip and the button's accessible description.
+      expect(document.getElementById(trigger.getAttribute('aria-describedby')!)?.textContent).toBe(
+        'Error: Gearbox temperature above 75 °C\nWarning: Gearbox temperature above 70 °C',
+      );
+    });
+
     it('keeps the readings table in a keyboard-scrollable region capped at 500px', async () => {
       await start('/farms/FARM01/turbines/TURB001', history);
 
@@ -657,7 +694,7 @@ describe('Fleet routes', () => {
       expect(await pages.getRangeLabel()).toBe('1 – 50 of 60');
       // Material makes each header cell sticky (position: sticky; top: 0).
       const headers = [...el().querySelectorAll<HTMLElement>('[data-testid=history] thead th')];
-      expect(headers).toHaveLength(7);
+      expect(headers).toHaveLength(8); // measured, delay, 5 metrics, alerts
       for (const th of headers) {
         expect(th.classList).toContain('mat-mdc-table-sticky');
         expect(th.style.top).toBe('0px');

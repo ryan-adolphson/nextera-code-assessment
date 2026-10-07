@@ -155,6 +155,31 @@
           </ng-container>
         }
 
+        <!-- The rules the reading triggered when it arrived (stored, not re-evaluated): the worst
+             level's pill; every rule, worst first, is in its tooltip (also the button's
+             accessible description). A click/tap shows the tooltip. -->
+        <ng-container matColumnDef="alerts">
+          <th mat-header-cell *matHeaderCellDef>Alerts</th>
+          <td mat-cell *matCellDef="let r" data-testid="reading-alerts">
+            @if (r.alerts.length) {
+              <button
+                #tip="matTooltip"
+                type="button"
+                class="inline-flex cursor-default rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                data-testid="reading-alerts-trigger"
+                matTooltipClass="app-tooltip"
+                matTooltipPosition="above"
+                [matTooltip]="alertLines(r)"
+                (click)="tip.show()"
+              >
+                <app-alert-level-badge [level]="r.alerts[0].alertLevel" />
+              </button>
+            } @else {
+              <span class="text-muted">–</span>
+            }
+          </td>
+        </ng-container>
+
         <tr mat-header-row *matHeaderRowDef="historyColumns; sticky: true" class="bg-page"></tr>
         <tr mat-row *matRowDef="let r; columns: historyColumns"></tr>
       </table>

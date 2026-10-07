@@ -1,5 +1,9 @@
 import { Prisma } from '../generated/prisma/client.js';
-import { toTelemetryStatsResponse, toTurbineResponse } from './responses.js';
+import {
+  toTelemetryResponse,
+  toTelemetryStatsResponse,
+  toTurbineResponse,
+} from './responses.js';
 
 describe('toTurbineResponse', () => {
   const turbine = {
@@ -87,5 +91,65 @@ describe('toTelemetryStatsResponse', () => {
         gearboxTempC: null,
       },
     });
+  });
+});
+
+describe('toTelemetryResponse', () => {
+  const reading = {
+    id: 'f2b6c0de-0000-4000-8000-000000000001',
+    turbineId: 'TURB001',
+    farmId: 'FARM01',
+    timestamp: new Date('2026-01-02T23:55:00.000Z'),
+    receivedAt: new Date('2026-01-02T23:57:00.000Z'),
+    powerOutputKw: 40,
+    windSpeedMs: 8.5,
+    rotorRpm: 12,
+    bladePitchDeg: 4,
+    gearboxTempC: 126.5,
+  };
+  const rule = (
+    id: string,
+    alertLevel: 'info' | 'warn' | 'error',
+    measurementMetric: 'gearboxTempC' | 'powerOutputKw' = 'gearboxTempC',
+  ) => ({
+    id,
+    measurementMetric,
+    comparison: 'above' as const,
+    valueMetric: 1,
+    alertLevel,
+    enabled: true,
+  });
+
+  it('maps the reading with no alerts to an empty list', () => {
+    expect(toTelemetryResponse({ ...reading, alerts: [] })).toEqual({
+      id: reading.id,
+      turbineId: 'TURB001',
+      farmId: 'FARM01',
+      timestamp: '2026-01-02T23:55:00.000Z',
+      receivedAt: '2026-01-02T23:57:00.000Z',
+      powerOutputKw: 40,
+      windSpeedMs: 8.5,
+      rotorRpm: 12,
+      bladePitchDeg: 4,
+      gearboxTempC: 126.5,
+      alerts: [],
+    });
+  });
+
+  it('joins in each triggered rule as an AlertConfigResponse, worst level first', () => {
+    const { alerts } = toTelemetryResponse({
+      ...reading,
+      alerts: [
+        { alert: rule('a', 'info') },
+        { alert: rule('b', 'error') },
+        { alert: rule('c', 'warn', 'powerOutputKw') },
+      ],
+    });
+    expect(alerts.map((a) => [a.id, a.alertLevel])).toEqual([
+      ['b', 'error'],
+      ['c', 'warn'],
+      ['a', 'info'],
+    ]);
+    expect(alerts[0]).toEqual({ ...rule('b', 'error') });
   });
 });

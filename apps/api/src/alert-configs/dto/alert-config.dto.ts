@@ -66,7 +66,7 @@ export class UpdateAlertConfigDto {
   @IsIn(LEVELS, { message: `alertLevel must be one of: ${LEVELS.join(', ')}` })
   alertLevel?: AlertLevel;
 
-  /** false disables the rule (the way to retire a rule with alert history). */
+  /** false disables the rule (the way to retire a rule that readings triggered). */
   @IfPresent()
   @IsBoolean(BOOLEAN)
   enabled?: boolean;

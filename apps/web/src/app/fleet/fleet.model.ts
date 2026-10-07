@@ -1,3 +1,5 @@
+import type { AlertConfig } from '../alerting/alert-config.model';
+
 /** Mirrors TelemetryResponse in packages/shared (API + SSE payload). */
 export interface Telemetry {
   id: string;
@@ -12,6 +14,11 @@ export interface Telemetry {
   rotorRpm: number;
   bladePitchDeg: number;
   gearboxTempC: number;
+  /**
+   * The alert rules this reading triggered when it was ingested (telemetry_alerts), worst level
+   * first, each as the rule is now. Empty when none fired or the reading predates them.
+   */
+  alerts: AlertConfig[];
 }
 
 /** The measured values of a reading (mirrors TelemetryMetric in packages/shared). */

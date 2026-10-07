@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   Prisma,
   PrismaService,
+  TELEMETRY_ALERTS_INCLUDE,
   TELEMETRY_METRIC_COLUMNS,
   TELEMETRY_METRICS,
   toFarmResponse,
@@ -13,6 +14,7 @@ import {
   type TelemetryResponse,
   type TelemetryStatsResponse,
   type TelemetryStatsRow,
+  type TelemetryWithAlerts,
   type TurbineResponse,
 } from '@nextera/shared';
 import { TelemetryQueryDto } from './dto/telemetry-query.dto.js';
@@ -93,10 +95,11 @@ export class FleetService {
         ) latest`,
     ]);
 
+    const latest = await this.withAlerts(latestRows.map(fromRow));
     const latestByTurbine = new Map(
-      latestRows.map((row) => [
-        row.turbine_id,
-        toTelemetryResponse(fromRow(row)),
+      latest.map((reading) => [
+        reading.turbineId,
+        toTelemetryResponse(reading),
       ]),
     );
     return farms.map((farm) => ({
@@ -125,8 +128,34 @@ export class FleetService {
       },
       orderBy: { timestamp: 'desc' },
       take: query.limit,
+      include: TELEMETRY_ALERTS_INCLUDE, // the triggered rules, joined from alerts_config
     });
     return readings.map(toTelemetryResponse);
+  }
+
+  /**
+   * Adds each reading's triggered rules (telemetry_alerts joined with alerts_config) to readings
+   * loaded with raw SQL: one query for all of them.
+   */
+  private async withAlerts(
+    readings: Telemetry[],
+  ): Promise<TelemetryWithAlerts[]> {
+    if (!readings.length) return [];
+    const links = await this.prisma.telemetryAlert.findMany({
+      where: { telemetryId: { in: readings.map((r) => r.id) } },
+      include: { alert: true },
+    });
+    const byReading = new Map<string, typeof links>();
+    for (const link of links) {
+      byReading.set(link.telemetryId, [
+        ...(byReading.get(link.telemetryId) ?? []),
+        link,
+      ]);
+    }
+    return readings.map((reading) => ({
+      ...reading,
+      alerts: byReading.get(reading.id) ?? [],
+    }));
   }
 
   /**
