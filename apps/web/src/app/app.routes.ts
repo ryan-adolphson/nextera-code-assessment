@@ -1,12 +1,22 @@
 import { Routes } from '@angular/router';
+import { authGuard, guestGuard, roleGuard } from './core/auth/auth.guards';
 
 export const routes: Routes = [
+  // Outside the shell: no fleet state or SSE connection before signing in.
+  {
+    path: 'login',
+    title: 'Sign in · Nextera',
+    canMatch: [guestGuard],
+    loadComponent: () => import('./core/auth/login-page').then((m) => m.LoginPage),
+  },
   // The fleet overview lives at /farms, so the "Farms" nav item is active on every farm and
   // turbine page (all under /farms/...). Old links to / still land on it.
   { path: '', pathMatch: 'full', redirectTo: 'farms' },
   {
     // The shell owns the fleet state, live connection and side navigation, shared by every page.
+    // Signed-in users only (else /login), so FleetStore and its SSE connection start only then.
     path: '',
+    canMatch: [authGuard],
     loadComponent: () => import('./fleet/fleet-shell').then((m) => m.FleetShell),
     children: [
       {
@@ -49,6 +59,7 @@ export const routes: Routes = [
       {
         path: 'reporting',
         title: 'Reporting · Nextera',
+        canMatch: [roleGuard('owner')], // owners and admins (the API answers viewers 404)
         loadComponent: () => import('./reporting/reporting-page').then((m) => m.ReportingPage),
       },
     ],

@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { API_BASE_URL } from '../core/api-base-url';
+import { AuthStore } from '../core/auth/auth.store';
 import { FarmOverview, Telemetry, TelemetryStats } from './fleet.model';
 
 /** A telemetry query: [from, to) on measurement time, the newest `limit` readings. */
@@ -16,7 +17,18 @@ export class FleetApi {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = inject(API_BASE_URL);
 
-  readonly eventsUrl = `${this.baseUrl}/events`;
+  private readonly auth = inject(AuthStore);
+
+  /**
+   * The SSE endpoint with the access token as `?access_token=` (EventSource can't send headers;
+   * the API accepts the query token on this route only). MVP trade-off: query strings appear in
+   * request logs.
+   */
+  get eventsUrl(): string {
+    const token = this.auth.accessToken();
+    const url = `${this.baseUrl}/events`;
+    return token ? `${url}?access_token=${encodeURIComponent(token)}` : url;
+  }
 
   /** Farms, their turbines and each turbine's latest reading. */
   farms(): Observable<FarmOverview[]> {

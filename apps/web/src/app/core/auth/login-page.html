@@ -1,0 +1,55 @@
+<main id="content" class="flex min-h-dvh items-center justify-center bg-page px-4 py-10">
+  <div class="w-full max-w-sm rounded-lg border border-line bg-surface p-6 shadow-sm">
+    <p class="text-lg font-bold text-ink" data-testid="brand">
+      Nextera <span class="font-normal text-muted">Wind fleet</span>
+    </p>
+    <h1 class="mt-4 text-2xl font-bold">Sign in</h1>
+
+    <form class="mt-6 grid gap-4" data-testid="login-form" [formRoot]="loginForm">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Email</mat-label>
+        <input
+          matInput
+          type="email"
+          autocomplete="username"
+          inputmode="email"
+          data-testid="login-email"
+          [formField]="loginForm.email"
+        />
+        <mat-error data-testid="login-email-error">{{ messageOf('email') }}</mat-error>
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Password</mat-label>
+        <input
+          matInput
+          type="password"
+          autocomplete="current-password"
+          data-testid="login-password"
+          [formField]="loginForm.password"
+        />
+        <mat-error data-testid="login-password-error">{{ messageOf('password') }}</mat-error>
+      </mat-form-field>
+
+      @if (error(); as error) {
+        <p
+          class="m-0 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger"
+          role="alert"
+          data-testid="login-error"
+        >
+          {{ error }}
+        </p>
+      }
+
+      <button
+        matButton="filled"
+        type="submit"
+        class="w-full"
+        data-testid="login-submit"
+        [disabled]="busy()"
+      >
+        {{ busy() ? 'Signing in…' : 'Sign in' }}
+      </button>
+    </form>
+  </div>
+</main>

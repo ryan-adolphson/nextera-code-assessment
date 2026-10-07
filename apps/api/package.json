@@ -27,19 +27,22 @@
     "@nestjs/core": "^12.0.1",
     "@nestjs/platform-express": "^12.0.1",
     "@nestjs/terminus": "^12.1.0",
+    "@nextera/shared": "*",
+    "argon2": "^0.45.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "helmet": "^8.3.0",
     "ioredis": "^5.11.1",
+    "jose": "^6.2.12",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1",
-    "@nextera/shared": "*"
+    "rxjs": "^7.8.1"
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.0",
     "@nestjs/mau": "^0.2.6",
     "@nestjs/schematics": "^12.0.0",
     "@nestjs/testing": "^12.0.1",
+    "@nextera/testing": "*",
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
     "@types/supertest": "^7.0.0",
@@ -50,8 +53,7 @@
     "supertest": "^7.0.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.2",
-    "vitest-mock-extended": "^5.1.1",
-    "@nextera/testing": "*"
+    "vitest-mock-extended": "^5.1.1"
   },
   "engines": {
     "node": ">=24"

@@ -3,6 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 import { API_BASE_URL } from '../core/api-base-url';
+import { SESSION_STORAGE_KEY } from '../core/auth/auth.store';
 import { FleetApi } from './fleet-api.service';
 
 describe('FleetApi', () => {
@@ -81,5 +82,32 @@ describe('FleetApi', () => {
 
   it('exposes the SSE endpoint on the same base URL', () => {
     expect(api.eventsUrl).toBe('https://api.example.com/api/events');
+  });
+
+  it('passes the access token to the SSE endpoint as access_token (EventSource sends no headers)', () => {
+    TestBed.resetTestingModule();
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        accessToken: 'a.b+c',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        signedInAt: new Date().toISOString(),
+        user: { email: 'viewer@nextera.local', role: 'viewer' },
+      }),
+    );
+    try {
+      TestBed.configureTestingModule({
+        providers: [
+          provideHttpClient(),
+          provideHttpClientTesting(),
+          { provide: API_BASE_URL, useValue: 'https://api.example.com/api' },
+        ],
+      });
+      expect(TestBed.inject(FleetApi).eventsUrl).toBe(
+        'https://api.example.com/api/events?access_token=a.b%2Bc',
+      );
+    } finally {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+    }
   });
 });

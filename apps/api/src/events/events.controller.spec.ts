@@ -69,6 +69,25 @@ describe('EventsController', () => {
     sub.unsubscribe();
   });
 
+  it("ends the stream when the user's access token expires", () => {
+    vi.useFakeTimers({ now: new Date('2026-10-07T12:00:00Z') });
+    events.stream.mockReturnValue(NEVER);
+    const complete = vi.fn();
+    controller
+      .stream(undefined, {
+        id: 'u',
+        email: 'viewer@nextera.local',
+        role: 'viewer',
+        expiresAt: new Date('2026-10-07T12:10:00Z'),
+      })
+      .subscribe({ complete });
+
+    vi.advanceTimersByTime(10 * 60_000 - 1);
+    expect(complete).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(complete).toHaveBeenCalled();
+  });
+
   it('completes the stream (heartbeat included) on shutdown', () => {
     vi.useFakeTimers();
     events.stream.mockReturnValue(NEVER);

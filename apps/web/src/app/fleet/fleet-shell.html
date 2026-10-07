@@ -58,7 +58,7 @@
       [attr.data-open]="menuOpen() ? '' : null"
     >
       <ul class="grid gap-1">
-        @for (item of navItems; track item.id) {
+        @for (item of navItems(); track item.id) {
           <li>
             <a
               class="flex items-center gap-3 rounded-md border-l-3 border-transparent px-3 py-2 text-ink no-underline hover:bg-page hover:no-underline aria-[current=page]:border-accent aria-[current=page]:bg-page"
@@ -73,6 +73,31 @@
           </li>
         }
       </ul>
+
+      @if (auth.user(); as user) {
+        <div
+          class="mt-3 grid gap-2 border-t border-line px-3 pt-3 text-sm"
+          data-testid="current-user"
+        >
+          <p class="m-0 min-w-0">
+            <span class="block truncate text-ink" data-testid="current-user-email">{{
+              user.email
+            }}</span>
+            <span class="text-muted" data-testid="current-user-role" [attr.data-role]="user.role">{{
+              roleLabel()
+            }}</span>
+          </p>
+          <button
+            matButton="outlined"
+            type="button"
+            class="justify-self-start"
+            data-testid="sign-out"
+            (click)="signOut()"
+          >
+            Sign out
+          </button>
+        </div>
+      }
     </nav>
   </aside>
 

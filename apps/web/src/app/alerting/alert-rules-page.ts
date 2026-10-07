@@ -1,6 +1,7 @@
-import { Component, ViewContainerRef, inject, signal } from '@angular/core';
+import { Component, ViewContainerRef, computed, inject, signal } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { MatDialog, MatDialogConfig } from '@angular/material/dialog';
+import { AuthStore } from '../core/auth/auth.store';
 import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
 import { AlertConfig, describeRule, formatThreshold, metricOf } from './alert-config.model';
@@ -38,6 +39,9 @@ const DIALOG_CONFIG: MatDialogConfig = {
 })
 export class AlertRulesPage {
   protected readonly store = inject(AlertRulesStore);
+  /** Viewers see the rules; owners and admins also add, edit and delete them (the API enforces it). */
+  private readonly auth = inject(AuthStore);
+  protected readonly canEdit = computed(() => this.auth.can('owner'));
   private readonly dialog = inject(MatDialog);
   /** Opening dialogs here puts them in this page's injector (they reach its AlertRulesStore). */
   private readonly viewContainerRef = inject(ViewContainerRef);
@@ -45,7 +49,12 @@ export class AlertRulesPage {
   protected readonly metricOf = metricOf;
   protected readonly formatThreshold = formatThreshold;
   protected readonly describeRule = describeRule;
-  protected readonly columns = ['metric', 'comparison', 'threshold', 'level', 'actions'];
+  /** The Edit/Delete column only for those who may use it. */
+  protected readonly columns = computed(() =>
+    this.canEdit()
+      ? ['metric', 'comparison', 'threshold', 'level', 'actions']
+      : ['metric', 'comparison', 'threshold', 'level'],
+  );
   /** The rules, 25 per page (Material paginator). */
   protected readonly paging = paginate(this.store.rules, 25);
   protected readonly trackById = (_: number, rule: AlertConfig) => rule.id;

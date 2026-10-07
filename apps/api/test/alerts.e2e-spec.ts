@@ -26,7 +26,8 @@ describe('Alerts API (e2e, CSV seed data)', () => {
       data: alertIds.map((alertId) => ({ telemetryId, alertId })),
     });
   };
-  const get = (query: string) => fetch(`${t.url}/api/alerts${query}`);
+  const get = (query: string) =>
+    fetch(`${t.url}/api/alerts${query}`, { headers: t.auth('viewer') });
 
   beforeAll(async () => {
     t = await createTestApp();
@@ -140,7 +141,7 @@ describe('Alerts API (e2e, CSV seed data)', () => {
   it('allows the Angular origin (CORS)', async () => {
     const res = await fetch(
       `${t.url}/api/alerts?from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z`,
-      { headers: { Origin: 'http://localhost:4200' } },
+      { headers: { Origin: 'http://localhost:4200', ...t.auth('viewer') } },
     );
     expect(res.headers.get('access-control-allow-origin')).toBe(
       'http://localhost:4200',

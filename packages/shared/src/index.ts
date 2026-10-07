@@ -6,11 +6,13 @@ export type {
   Telemetry,
   TelemetryAlert,
   Turbine,
+  User,
 } from './generated/prisma/client.js';
 export {
   AlertComparison,
   AlertLevel,
   MeasurementMetric,
+  Role,
 } from './generated/prisma/enums.js';
 export { PrismaModule } from './prisma/prisma.module.js';
 export { PrismaService } from './prisma/prisma.service.js';
@@ -66,6 +68,10 @@ export type {
   AlertConfigResponse,
 } from './wind/alert-config.js';
 
+// Auth: roles (viewer < owner < admin), password hash parameters, email normalisation
+export { ROLE_RANK, ROLES, hasRole, isRole } from './auth/roles.js';
+export { PASSWORD_HASH_OPTIONS, normalizeEmail } from './auth/passwords.js';
+
 // Seed data loader (prisma/seed.ts and e2e tests)
 export {
   TELEMETRY_CSV_COLUMNS,
@@ -73,3 +79,8 @@ export {
   seedFromCsv,
 } from './seed/seed-from-csv.js';
 export type { SeedResult } from './seed/seed-from-csv.js';
+export {
+  SEED_PASSWORD_MIN_LENGTH,
+  SEED_USERS,
+  seedUsers,
+} from './seed/seed-users.js';

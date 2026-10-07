@@ -1,4 +1,4 @@
-import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { InteractivityChecker } from '@angular/cdk/a11y';
@@ -9,6 +9,9 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { Observable, Subject, of } from 'rxjs';
 import { routes } from '../app.routes';
 import { API_BASE_URL } from '../core/api-base-url';
+import { authInterceptor } from '../core/auth/auth.interceptor';
+import { SESSION_STORAGE_KEY, Session } from '../core/auth/auth.store';
+import { Role } from '../core/auth/roles';
 import { NOW } from '../core/clock';
 import { SseEvent, SseService } from '../core/sse.service';
 import { provideIcons } from '../ui/icons';
@@ -220,12 +223,31 @@ export function fakes(farms: FarmOverview[] = farmsFixture()) {
     status: (status: 'connecting' | 'open' | 'reconnecting') =>
       events.next({ kind: 'status', status }),
     fail: () => events.error(new Error('closed')),
+    /** Whether anything (FleetStore) is still subscribed to the live stream. */
+    observed: () => events.observed,
   };
   return { api, sse };
 }
 
+/** A stored session for `role`, signed in at `now` and valid for 24 h (what AuthStore keeps). */
+export function testSession(role: Role, now: number): Session {
+  return {
+    accessToken: `test-token-${role}`,
+    expiresAt: new Date(now + 24 * 3_600_000).toISOString(),
+    signedInAt: new Date(now).toISOString(),
+    user: { email: `${role}@nextera.local`, role },
+  };
+}
+
+/** Signs `role` in for the next TestBed (AuthStore restores it); null = signed out. */
+export function storeSession(session: Session | null): void {
+  localStorage.removeItem(SESSION_STORAGE_KEY);
+  if (session) localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+}
+
 /**
- * Opens `url` on the real routes with fake API/SSE and the client clock `clock()`. `root` is the
+ * Opens `url` on the real routes with fake API/SSE and the client clock `clock()`, signed in as
+ * `role` (default admin, who sees everything; null = signed out). `root` is the
  * whole rendered app (shell + page); `text` reads an element's whitespace-normalised text.
  * `beforeOpen` sets up the fakes before the first navigation (e.g. a turbine's history).
  */
@@ -234,14 +256,17 @@ export async function openFleet(
   clock: () => number,
   farms?: FarmOverview[],
   beforeOpen?: (fakes: { api: FakeFleetApi; sse: FakeSse }) => void,
+  role: Role | null = 'admin',
 ) {
   const { api, sse } = fakes(farms);
   beforeOpen?.({ api, sse });
+  storeSession(role && testSession(role, clock()));
   TestBed.configureTestingModule({
     providers: [
       provideRouter(routes, withComponentInputBinding()),
-      // Pages that talk to the API through HttpClient (alert rules): flush with `http`.
-      provideHttpClient(),
+      // Pages that talk to the API through HttpClient (alert rules): flush with `http`. With the
+      // app's auth interceptor (Bearer header, 401 → /login).
+      provideHttpClient(withInterceptors([authInterceptor])),
       provideHttpClientTesting(),
       { provide: API_BASE_URL, useValue: TEST_API_BASE_URL },
       { provide: FleetApi, useValue: api },

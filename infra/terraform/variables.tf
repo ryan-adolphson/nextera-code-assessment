@@ -140,3 +140,18 @@ variable "github_environment" {
   type        = string
   default     = "production"
 }
+
+# --- Auth (API) ---------------------------------------------------------------
+# The signing key is the Secret Manager secret jwt-secret (secrets.tf); these are plain claims.
+
+variable "jwt_issuer" {
+  description = "JWT `iss` claim the API signs and requires (JWT_ISSUER)."
+  type        = string
+  default     = "nextera-api"
+}
+
+variable "jwt_audience" {
+  description = "JWT `aud` claim the API signs and requires (JWT_AUDIENCE)."
+  type        = string
+  default     = "nextera-web"
+}

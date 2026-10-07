@@ -2,10 +2,12 @@ import { plainToInstance } from 'class-transformer';
 import {
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsString,
   Matches,
   Max,
   Min,
+  MinLength,
   validateSync,
 } from 'class-validator';
 
@@ -41,6 +43,25 @@ export class EnvironmentVariables {
    */
   @IsString()
   CORS_ORIGINS: string = '';
+
+  /**
+   * HS256 signing key of the API's access tokens (Secret Manager `jwt-secret` in GCP, .env locally).
+   * At least 32 characters (256 bits); `openssl rand -base64 48` gives 64. No default: the API
+   * refuses to start without it (compose passes "" when it's unset). Messages never print the value.
+   */
+  @IsString({ message: 'JWT_SECRET must be set' })
+  @MinLength(32, { message: 'JWT_SECRET must be at least 32 characters' })
+  JWT_SECRET: string;
+
+  /** JWT `iss` the API signs and requires. */
+  @IsString()
+  @IsNotEmpty()
+  JWT_ISSUER: string = 'nextera-api';
+
+  /** JWT `aud` the API signs and requires. */
+  @IsString()
+  @IsNotEmpty()
+  JWT_AUDIENCE: string = 'nextera-web';
 }
 
 /** Fails fast at startup with every invalid variable listed. */
