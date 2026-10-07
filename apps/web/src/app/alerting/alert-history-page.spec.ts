@@ -129,7 +129,7 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     expect(app.text(q('history-count'))).toBe('0 flagged readings on 0 turbines');
   });
 
-  it('shows one expandable summary row per turbine, with each distinct rule as a Material chip', async () => {
+  it('shows one expandable summary row per turbine with its number of alerts (the rows expand to them)', async () => {
     await flush(flagged());
 
     expect(summaries()).toEqual([
@@ -139,18 +139,11 @@ describe('AlertHistoryPage (/alerting/history)', () => {
         'TURB001',
         'Prairie Ridge FARM01',
         'Jan 2, 13:40',
-        ['Info: Power output below 100 kW ×1'],
+        '1',
+        [], // no chips in the summary row: a count
       ],
-      [
-        '',
-        'TURB002',
-        'High Plains FARM02',
-        'Jan 2, 03:30',
-        [
-          'Error: Gearbox temperature above 120 °C ×3',
-          'Warning: Gearbox temperature above 90 °C ×3',
-        ],
-      ],
+      // 3 readings × 2 rules
+      ['', 'TURB002', 'High Plains FARM02', 'Jan 2, 03:30', '6', []],
     ]);
     expect(app.text(q('history-count'))).toBe('4 flagged readings on 2 turbines');
     expect(all('history-turbine').map((tr) => tr.getAttribute('data-level'))).toEqual([
@@ -158,13 +151,11 @@ describe('AlertHistoryPage (/alerting/history)', () => {
       'error',
     ]);
 
-    // Material table with multiTemplateDataRows; the chips are Material chips coloured by level.
+    // Material table with multiTemplateDataRows; Alerts is a right-aligned count, not chips.
     expect(q('alert-history')!.classList).toContain('mat-mdc-table');
-    const chips = [...all('history-turbine')[1].querySelectorAll('[data-testid=alert-chip]')];
-    expect(chips.map((c) => [c.tagName, c.getAttribute('data-level')])).toEqual([
-      ['MAT-CHIP', 'error'],
-      ['MAT-CHIP', 'warn'],
-    ]);
+    expect([...q('alert-history')!.querySelectorAll('thead th')].map((th) => app.text(th))).toEqual(
+      ['Expand', 'Turbine', 'Farm', 'Latest (UTC)', 'Alerts'],
+    );
     // Collapsed: the detail rows are rendered but hidden, with no readings inside.
     expect(all('history-detail').map((tr) => tr.hasAttribute('hidden'))).toEqual([true, true]);
     expect(all('history-reading')).toHaveLength(0);

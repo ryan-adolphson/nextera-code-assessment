@@ -125,21 +125,11 @@
         </td>
       </ng-container>
 
-      <!-- Each distinct rule that fired in the range, worst first, with its reading count. -->
-      <ng-container matColumnDef="rules">
-        <th mat-header-cell *matHeaderCellDef>Alerts</th>
-        <td mat-cell *matCellDef="let t" class="py-1!">
-          <mat-chip-set aria-label="Alerts in this range" data-testid="turbine-alert-chips">
-            @for (r of t.rules; track r.rule.id) {
-              <mat-chip
-                class="alert-chip"
-                disableRipple
-                data-testid="alert-chip"
-                [attr.data-level]="r.rule.alertLevel"
-                >{{ ruleChip(r.rule) }} ×{{ r.count }}</mat-chip
-              >
-            }
-          </mat-chip-set>
+      <!-- How many alerts in the range (every rule each reading triggered); expand for them. -->
+      <ng-container matColumnDef="count">
+        <th mat-header-cell *matHeaderCellDef class="text-right!">Alerts</th>
+        <td mat-cell *matCellDef="let t" class="text-right! tabular-nums" data-testid="alert-count">
+          {{ t.alertCount }}
         </td>
       </ng-container>
 

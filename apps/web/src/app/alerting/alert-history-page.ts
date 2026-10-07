@@ -30,7 +30,6 @@ import {
   rangeError,
   utcDayOf,
 } from './alert-history';
-import { describeRuleWithLevel } from './alert-config.model';
 import { AlertingTabs } from './alerting-tabs';
 import { describeTriggerWithLevel } from './alert-text';
 
@@ -97,12 +96,11 @@ export class AlertHistoryPage {
     groupAlertsByTurbine(this.readings(), (farmId) => this.farmName(farmId)),
   );
   protected readonly paging = paginate(this.turbines, 25);
-  protected readonly columns = ['expand', 'turbine', 'farm', 'latest', 'rules'];
+  protected readonly columns = ['expand', 'turbine', 'farm', 'latest', 'count'];
   protected readonly trackTurbine = (_: number, t: TurbineAlerts) => t.turbineId;
   /** The turbines whose rows are expanded (any number at once). */
   protected readonly expanded = signal<ReadonlySet<string>>(new Set());
   protected readonly describe = describeTriggerWithLevel;
-  protected readonly ruleChip = describeRuleWithLevel;
 
   /**
    * Range requests: `switchMap` keeps only the latest range's answer (like AlertRulesStore); a

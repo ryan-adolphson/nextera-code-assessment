@@ -97,12 +97,14 @@ describe('groupAlertsByTurbine', () => {
     ]);
   });
 
-  it('lists each distinct rule once, worst first, with how many readings it flagged', () => {
-    const [, turb2] = groupAlertsByTurbine(readings, farm);
-    expect(turb2.rules.map((r) => [r.rule.id, r.count])).toEqual([
-      ['error', 1],
-      ['warn', 2],
-    ]);
+  it('takes the worst level over all of a turbine’s readings', () => {
+    const [turb1, turb2] = groupAlertsByTurbine(readings, farm);
+    expect([turb1.worst, turb2.worst]).toEqual(['info', 'error']); // TURB002: warn, then error+warn
+  });
+
+  it('counts every alert: the rules each reading triggered, summed', () => {
+    const [turb1, turb2] = groupAlertsByTurbine(readings, farm);
+    expect([turb1.alertCount, turb2.alertCount]).toEqual([1, 3]); // TURB002: 1 + 2
   });
 
   it('has no turbines without readings', () => {

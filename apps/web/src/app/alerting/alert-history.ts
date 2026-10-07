@@ -57,9 +57,10 @@ export interface TurbineAlerts {
   readings: Telemetry[];
   /** The newest flagged reading's measurement time (ISO). */
   latest: string;
+  /** The worst level any of its readings triggered (the summary row's `data-level`). */
   worst: AlertLevel;
-  /** Each distinct rule that fired, worst level first, with how many readings it flagged. */
-  rules: { rule: AlertConfig; count: number }[];
+  /** Every alert in the range: the rules each flagged reading triggered, summed. */
+  alertCount: number;
 }
 
 /**
@@ -72,23 +73,22 @@ export function groupAlertsByTurbine(
 ): TurbineAlerts[] {
   const groups = new Map<string, Telemetry[]>();
   for (const r of readings) groups.set(r.turbineId, [...(groups.get(r.turbineId) ?? []), r]);
-  return [...groups.values()].map((group) => {
-    const rules = new Map<string, { rule: AlertConfig; count: number }>();
-    for (const rule of group.flatMap((r) => r.alerts)) {
-      const seen = rules.get(rule.id);
-      rules.set(rule.id, { rule, count: (seen?.count ?? 0) + 1 });
-    }
-    const sorted = [...rules.values()].sort(
-      (a, b) => LEVEL_SEVERITY[b.rule.alertLevel] - LEVEL_SEVERITY[a.rule.alertLevel],
-    );
-    return {
-      turbineId: group[0].turbineId,
-      farmId: group[0].farmId,
-      farmName: farmNameOf(group[0].farmId),
-      readings: group,
-      latest: group[0].timestamp,
-      worst: sorted[0]?.rule.alertLevel ?? 'info',
-      rules: sorted,
-    };
-  });
+  return [...groups.values()].map((group) => ({
+    turbineId: group[0].turbineId,
+    farmId: group[0].farmId,
+    farmName: farmNameOf(group[0].farmId),
+    readings: group,
+    latest: group[0].timestamp,
+    worst: worstLevel(group.flatMap((r) => r.alerts)),
+    alertCount: group.reduce((sum, r) => sum + r.alerts.length, 0),
+  }));
+}
+
+/** The most severe level among `rules` (info when there are none). */
+function worstLevel(rules: readonly AlertConfig[]): AlertLevel {
+  return rules.reduce<AlertLevel>(
+    (worst, rule) =>
+      LEVEL_SEVERITY[rule.alertLevel] > LEVEL_SEVERITY[worst] ? rule.alertLevel : worst,
+    'info',
+  );
 }
