@@ -7,6 +7,7 @@ import {
   output,
   viewChild,
 } from '@angular/core';
+import { MatIcon } from '@angular/material/icon';
 
 let nextId = 0;
 
@@ -19,6 +20,7 @@ let nextId = 0;
  */
 @Component({
   selector: 'app-modal-dialog',
+  imports: [MatIcon],
   template: `
     <dialog
       #dialog
@@ -36,17 +38,7 @@ let nextId = 0;
           data-testid="dialog-close"
           (click)="closed.emit()"
         >
-          <svg
-            class="size-5"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            aria-hidden="true"
-          >
-            <path d="M6 6l12 12M18 6 6 18" />
-          </svg>
+          <mat-icon class="size-5!" svgIcon="close" />
           <span class="sr-only">Close</span>
         </button>
       </div>

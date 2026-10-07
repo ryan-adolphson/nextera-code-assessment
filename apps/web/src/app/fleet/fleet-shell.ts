@@ -9,9 +9,11 @@ import {
   viewChild,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { MatIcon } from '@angular/material/icon';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
 import { AlertRulesStore } from '../alerting/alert-rules.store';
+import { IconName } from '../ui/icons';
 import { FleetStore, LiveStatus } from './fleet.store';
 
 const LIVE_LABELS: Record<LiveStatus, string> = {
@@ -21,13 +23,13 @@ const LIVE_LABELS: Record<LiveStatus, string> = {
   offline: 'Offline',
 };
 
-/** The main navigation, in order. `id` picks the icon and the `nav-<id>` test hook. */
+/** The main navigation, in order. `id` is the `nav-<id>` test hook; `icon` a Material Symbol. */
 export const NAV_ITEMS = [
-  { id: 'farms', path: '/farms', label: 'Farms' },
-  { id: 'turbines', path: '/turbines', label: 'Turbines' },
-  { id: 'alerting', path: '/alerting', label: 'Alerting' },
-  { id: 'reporting', path: '/reporting', label: 'Reporting' },
-] as const;
+  { id: 'farms', path: '/farms', label: 'Farms', icon: 'map' },
+  { id: 'turbines', path: '/turbines', label: 'Turbines', icon: 'wind-power' },
+  { id: 'alerting', path: '/alerting', label: 'Alerting', icon: 'notifications' },
+  { id: 'reporting', path: '/reporting', label: 'Reporting', icon: 'bar-chart' },
+] as const satisfies readonly { id: string; path: string; label: string; icon: IconName }[];
 
 /**
  * Parent of every page: the side navigation and the page region. Owns the FleetStore and the
@@ -39,7 +41,7 @@ export const NAV_ITEMS = [
  */
 @Component({
   selector: 'app-fleet-shell',
-  imports: [RouterLink, RouterLinkActive, RouterOutlet],
+  imports: [MatIcon, RouterLink, RouterLinkActive, RouterOutlet],
   providers: [FleetStore, AlertRulesStore],
   templateUrl: './fleet-shell.html',
   host: { '(document:keydown.escape)': 'closeMenu()' },

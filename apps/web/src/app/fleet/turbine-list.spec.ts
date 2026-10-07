@@ -216,11 +216,14 @@ describe('TurbineList (/turbines)', () => {
         commissionedCell(id).querySelector('[data-testid=commissioned-icon]');
 
       expect(icon('TURB001')!.getAttribute('data-icon')).toBe('check');
+      expect(icon('TURB001')!.getAttribute('data-mat-icon-name')).toBe('check');
+      expect(icon('TURB001')!.querySelector('svg')).not.toBeNull();
       expect(icon('TURB001')!.getAttribute('aria-hidden')).toBe('true');
       expect(app.text(commissionedCell('TURB001'))).toBe('Commissioned');
       expect(commissionedCell('TURB001').getAttribute('data-commissioned')).toBe('true');
 
       expect(icon('TURB007')!.getAttribute('data-icon')).toBe('x');
+      expect(icon('TURB007')!.getAttribute('data-mat-icon-name')).toBe('close');
       expect(icon('TURB007')!.getAttribute('aria-hidden')).toBe('true');
       expect(app.text(commissionedCell('TURB007'))).toBe('Not commissioned');
       expect(commissionedCell('TURB007').getAttribute('data-commissioned')).toBe('false');

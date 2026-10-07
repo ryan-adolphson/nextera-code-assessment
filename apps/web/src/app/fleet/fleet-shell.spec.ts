@@ -38,9 +38,17 @@ describe('FleetShell navigation', () => {
       ['Alerting', '/alerting'],
       ['Reporting', '/reporting'],
     ]);
-    expect(app.root().querySelectorAll('nav[aria-label=Main] svg[aria-hidden=true]')).toHaveLength(
-      4,
-    );
+    const icons = [...app.root().querySelectorAll('nav[aria-label=Main] mat-icon')];
+    expect(icons.map((i) => i.getAttribute('data-mat-icon-name'))).toEqual([
+      'map',
+      'wind-power',
+      'notifications',
+      'bar-chart',
+    ]);
+    for (const icon of icons) {
+      expect(icon.getAttribute('aria-hidden')).toBe('true');
+      expect(icon.querySelector('svg')).not.toBeNull(); // inline Material Symbol, no font
+    }
   });
 
   it.each([

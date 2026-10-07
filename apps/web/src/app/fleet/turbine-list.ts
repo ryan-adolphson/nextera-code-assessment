@@ -1,5 +1,6 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { MatIcon } from '@angular/material/icon';
 import { MatTooltip } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 import { AlertLevel, ALERT_RULE_LEVELS } from '../alerting/alert-config.model';
@@ -96,7 +97,15 @@ const COLUMNS: {
  */
 @Component({
   selector: 'app-turbine-list',
-  imports: [AlertLevelBadge, DatePipe, DecimalPipe, MatTooltip, RouterLink, StalenessBadge],
+  imports: [
+    AlertLevelBadge,
+    DatePipe,
+    DecimalPipe,
+    MatIcon,
+    MatTooltip,
+    RouterLink,
+    StalenessBadge,
+  ],
   templateUrl: './turbine-list.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

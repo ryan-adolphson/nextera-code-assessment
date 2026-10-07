@@ -30,7 +30,8 @@
               "node_modules/@angular/cdk/overlay-prebuilt.css",
               "src/styles.css"
             ],
-            "allowedCommonJsDependencies": ["leaflet"]
+            "allowedCommonJsDependencies": ["leaflet"],
+            "loader": { ".svg": "text" }
           },
           "configurations": {
             "production": {

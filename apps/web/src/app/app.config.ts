@@ -3,6 +3,7 @@ import { ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { routes } from './app.routes';
 import { API_BASE_URL } from './core/api-base-url';
+import { provideIcons } from './ui/icons';
 
 // Zoneless (Angular 21 default): change detection is driven by signals, no zone.js.
 // `apiBaseUrl` is resolved before bootstrap (src/main.ts, core/runtime-config.ts).
@@ -12,6 +13,7 @@ export function appConfig(apiBaseUrl: string): ApplicationConfig {
       provideBrowserGlobalErrorListeners(),
       provideRouter(routes, withComponentInputBinding()), // route params as component inputs
       provideHttpClient(withFetch()),
+      provideIcons(),
       { provide: API_BASE_URL, useValue: apiBaseUrl },
     ],
   };

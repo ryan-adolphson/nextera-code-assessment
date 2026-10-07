@@ -23,6 +23,7 @@
     "@angular/material": "~21.2.0",
     "@angular/platform-browser": "^21.2.0",
     "@angular/router": "^21.2.0",
+    "@material-symbols/svg-400": "^0.47.6",
     "echarts": "^6.1.0",
     "leaflet": "^1.9.4",
     "rxjs": "~7.8.0",

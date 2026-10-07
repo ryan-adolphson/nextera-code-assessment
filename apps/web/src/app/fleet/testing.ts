@@ -8,6 +8,7 @@ import { routes } from '../app.routes';
 import { API_BASE_URL } from '../core/api-base-url';
 import { NOW } from '../core/clock';
 import { SseEvent, SseService } from '../core/sse.service';
+import { provideIcons } from '../ui/icons';
 import { FleetApi } from './fleet-api.service';
 import { FarmOverview, MetricStats, Telemetry, TelemetryStats } from './fleet.model';
 
@@ -203,6 +204,7 @@ export async function openFleet(url: string, clock: () => number, farms?: FarmOv
       { provide: FleetApi, useValue: api },
       { provide: SseService, useValue: sse },
       { provide: NOW, useValue: clock },
+      provideIcons(),
     ],
   });
   const harness = await RouterTestingHarness.create(url);

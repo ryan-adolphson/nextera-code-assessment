@@ -37,21 +37,7 @@
         [attr.aria-expanded]="menuOpen()"
         (click)="toggleMenu()"
       >
-        <svg
-          class="size-6"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          aria-hidden="true"
-        >
-          @if (menuOpen()) {
-            <path d="M6 6l12 12M18 6 6 18" />
-          } @else {
-            <path d="M4 6h16M4 12h16M4 18h16" />
-          }
-        </svg>
+        <mat-icon class="size-6!" [svgIcon]="menuOpen() ? 'close' : 'menu'" />
         <span class="sr-only">Menu</span>
       </button>
     </div>
@@ -73,31 +59,7 @@
               ariaCurrentWhenActive="page"
               [attr.data-testid]="'nav-' + item.id"
             >
-              <svg
-                class="size-5 shrink-0 text-muted"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.75"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                @switch (item.id) {
-                  @case ('farms') {
-                    <path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2ZM9 4v14M15 6v14" />
-                  }
-                  @case ('turbines') {
-                    <path d="M12 11v10M9 21h6M12 11V3M12 11l7 4M12 11l-7 4" />
-                  }
-                  @case ('alerting') {
-                    <path d="M6 16v-5a6 6 0 1 1 12 0v5l2 2H4l2-2ZM10 21h4" />
-                  }
-                  @case ('reporting') {
-                    <path d="M4 20h16M7 16v-5M12 16V6M17 16v-8" />
-                  }
-                }
-              </svg>
+              <mat-icon class="size-5! shrink-0 text-muted!" [svgIcon]="item.icon" />
               <span>{{ item.label }}</span>
               @if (item.id === 'alerting' && alertCount()) {
                 <span class="sr-only"
