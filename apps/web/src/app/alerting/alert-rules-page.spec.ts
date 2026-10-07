@@ -89,8 +89,12 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     ).toEqual(['info', 'warn', 'error']);
     // Tabs: Rules is current; the side nav keeps Alerting current.
     expect(q('alerting-tab-rules')!.getAttribute('aria-current')).toBe('page');
-    expect(q('alerting-tab-active')!.getAttribute('aria-current')).toBeNull();
-    expect(q('alerting-tab-active')!.getAttribute('href')).toBe('/alerting');
+    expect(q('alerting-tab-history')!.getAttribute('aria-current')).toBeNull();
+    expect(q('alerting-tab-history')!.getAttribute('href')).toBe('/alerting/history');
+    // The Active tab is gone: History and Rules only.
+    expect(
+      [...app.root().querySelectorAll('nav[aria-label=Alerting] a')].map((a) => app.text(a)),
+    ).toEqual(['History', 'Rules']);
     expect(q('nav-alerting')!.getAttribute('aria-current')).toBe('page');
     // Material table, 25 rules per page.
     expect(q('rules')!.classList).toContain('mat-mdc-table');

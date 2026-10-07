@@ -54,8 +54,6 @@ export class FleetShell implements OnInit {
   protected readonly store = inject(FleetStore);
   protected readonly liveLabel = computed(() => LIVE_LABELS[this.store.liveStatus()]);
   protected readonly navItems = NAV_ITEMS;
-  /** Turbines needing attention (the Alerting page's rows), shown on the nav item. */
-  protected readonly alertCount = computed(() => this.store.alerts().length);
   /** The narrow-screen menu (always shown from md up). */
   protected readonly menuOpen = signal(false);
   /** The current route asks for a window-high page (route data `fillViewport`). */

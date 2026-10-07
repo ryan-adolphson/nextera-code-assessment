@@ -31,17 +31,20 @@ export const routes: Routes = [
         data: { fillViewport: true },
         loadComponent: () => import('./fleet/turbine-list').then((m) => m.TurbineList),
       },
-      {
-        path: 'alerting',
-        title: 'Alerting · Nextera',
-        // Counts and table in one window-high view: only the table rows scroll.
-        data: { fillViewport: true },
-        loadComponent: () => import('./fleet/alerts-page').then((m) => m.AlertsPage),
-      },
+      // Alerting opens on its History tab (the side nav links to /alerting).
+      { path: 'alerting', pathMatch: 'full', redirectTo: 'alerting/history' },
       {
         path: 'alerting/rules',
         title: 'Alert rules · Nextera',
         loadComponent: () => import('./alerting/alert-rules-page').then((m) => m.AlertRulesPage),
+      },
+      {
+        path: 'alerting/history',
+        title: 'Alert history · Nextera',
+        // Range and table in one window-high view: only the table rows scroll.
+        data: { fillViewport: true },
+        loadComponent: () =>
+          import('./alerting/alert-history-page').then((m) => m.AlertHistoryPage),
       },
       {
         path: 'reporting',

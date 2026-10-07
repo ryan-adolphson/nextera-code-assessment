@@ -56,7 +56,8 @@ describe('FleetShell navigation', () => {
     ['/farms/FARM01', 'nav-farms'],
     ['/farms/FARM01/turbines/TURB001', 'nav-farms'],
     ['/turbines', 'nav-turbines'],
-    ['/alerting', 'nav-alerting'],
+    ['/alerting', 'nav-alerting'], // redirects to /alerting/history
+    ['/alerting/history', 'nav-alerting'],
     ['/alerting/rules', 'nav-alerting'],
     ['/reporting', 'nav-reporting'],
   ])('marks only the current section on %s', async (path, active) => {
@@ -93,7 +94,8 @@ describe('FleetShell navigation', () => {
     ['/farms/FARM01', 'Farm · Nextera'],
     ['/farms/FARM01/turbines/TURB001', 'Turbine · Nextera'],
     ['/turbines', 'Turbines · Nextera'],
-    ['/alerting', 'Alerting · Nextera'],
+    ['/alerting', 'Alert history · Nextera'], // opens on the History tab
+    ['/alerting/rules', 'Alert rules · Nextera'],
     ['/reporting', 'Reporting · Nextera'],
   ])('titles %s "%s"', async (path, title) => {
     await open(path);
@@ -127,32 +129,6 @@ describe('FleetShell navigation', () => {
     const sidebar = app.root().querySelector('[data-testid=sidebar]')!;
     expect(sidebar.querySelector('[data-testid=brand]')!.getAttribute('href')).toBe('/farms');
     expect(app.text(sidebar.querySelector('[data-testid=live-status]'))).toBe('Connecting…');
-  });
-
-  describe('alert count on the Alerting item', () => {
-    afterEach(() => vi.useRealTimers());
-
-    it('shows none while every turbine reports', async () => {
-      await open('/farms');
-      expect(link('alerting').querySelector('[data-testid=alert-count]')).toBeNull();
-      expect(spoken(link('alerting'))).toBe('Alerting');
-    });
-
-    it('counts the turbines needing attention, with accessible text, and follows live data', async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true }); // timers only; the clock is NOW
-      await open('/farms');
-      clockNow += 11 * 60_000; // 16 min after both turbines' latest reading
-      await vi.advanceTimersByTimeAsync(11 * 60_000);
-      await app.stable();
-
-      expect(app.text(link('alerting').querySelector('[data-testid=alert-count]'))).toBe('2');
-      expect(spoken(link('alerting'))).toBe('Alerting, 2 alerts');
-      expect(link('alerting').querySelector('[data-testid=alert-count]')!.ariaHidden).toBe('true');
-
-      app.sse.push(reading({ timestamp: new Date(clockNow).toISOString() }));
-      await app.stable();
-      expect(spoken(link('alerting'))).toBe('Alerting, 1 alert');
-    });
   });
 
   describe('narrow-screen menu', () => {
@@ -202,7 +178,7 @@ describe('FleetShell navigation', () => {
 
       link('alerting').click();
       await app.stable();
-      expect(url()).toBe('/alerting');
+      expect(url()).toBe('/alerting/history'); // /alerting opens on the History tab
       expect(toggle().getAttribute('aria-expanded')).toBe('false');
       expect(nav().hasAttribute('data-open')).toBe(false);
     });

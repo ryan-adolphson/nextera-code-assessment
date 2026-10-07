@@ -15,7 +15,6 @@ import {
   Telemetry,
   TelemetryStats,
 } from './fleet.model';
-import { alertsOf } from './alerts';
 import { ALERT_CONFIG_CHANGED } from '../alerting/alert-config.model';
 
 /** Every SSE event type the shell's one connection listens for. */
@@ -164,12 +163,6 @@ export class FleetStore {
       };
     }),
   );
-
-  /**
-   * Turbines needing attention now (staleness other than 'ok'), worst first: 60, 30, 15 min, then
-   * never reported (`alerts.ts`). Moves with the clock and live readings like `turbines`.
-   */
-  readonly alerts = computed(() => alertsOf(this.turbines()));
 
   readonly fleet = computed(() => {
     const farms = this.farms();

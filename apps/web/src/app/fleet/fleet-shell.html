@@ -67,17 +67,6 @@
             >
               <mat-icon class="size-5! shrink-0 text-muted!" [svgIcon]="item.icon" />
               <span>{{ item.label }}</span>
-              @if (item.id === 'alerting' && alertCount()) {
-                <span class="sr-only"
-                  >, {{ alertCount() }} {{ alertCount() === 1 ? 'alert' : 'alerts' }}</span
-                >
-                <span
-                  class="ml-auto rounded-full bg-danger px-2 text-xs/5 font-semibold text-on-danger tabular-nums"
-                  aria-hidden="true"
-                  data-testid="alert-count"
-                  >{{ alertCount() }}</span
-                >
-              }
             </a>
           </li>
         }
@@ -90,7 +79,7 @@
     class="min-w-0 flex-1 px-4 py-6 group-data-fill/shell:flex group-data-fill/shell:min-h-0 group-data-fill/shell:flex-col group-data-fill/shell:overflow-y-auto md:px-8 md:py-8"
   >
     <div
-      class="mx-auto max-w-6xl group-data-fill/shell:flex group-data-fill/shell:min-h-0 group-data-fill/shell:w-full group-data-fill/shell:flex-1 group-data-fill/shell:flex-col"
+      class="mx-auto max-w-7xl group-data-fill/shell:flex group-data-fill/shell:min-h-0 group-data-fill/shell:w-full group-data-fill/shell:flex-1 group-data-fill/shell:flex-col"
     >
       @if (store.error(); as error) {
         <p class="mb-4 rounded-lg bg-danger-bg px-4 py-3 text-danger" role="alert">{{ error }}</p>

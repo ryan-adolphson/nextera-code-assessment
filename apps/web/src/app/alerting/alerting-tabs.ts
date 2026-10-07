@@ -3,7 +3,7 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
 
 /** The Alerting section's tabs, in order. `id` is the `alerting-tab-<id>` test hook. */
 export const ALERTING_TABS = [
-  { id: 'active', path: '/alerting', label: 'Active', exact: true },
+  { id: 'history', path: '/alerting/history', label: 'History', exact: false },
   { id: 'rules', path: '/alerting/rules', label: 'Rules', exact: false },
 ] as const;
 

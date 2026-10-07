@@ -1,0 +1,162 @@
+<h1 class="text-3xl font-bold">Alerting</h1>
+<p class="mt-1 text-sm text-muted">
+  Readings that triggered alert rules when they arrived, by turbine. Times are UTC.
+</p>
+
+<app-alerting-tabs />
+
+<!-- The range (UTC, `datetime-local`): defaults to the last 24 hours; any change reloads. -->
+<div class="mt-6 flex flex-wrap items-start gap-3" role="search" aria-label="Alert time range">
+  <mat-form-field appearance="outline" subscriptSizing="dynamic">
+    <mat-label>From (UTC)</mat-label>
+    <input
+      matInput
+      type="datetime-local"
+      data-testid="history-from"
+      [value]="fromInput()"
+      (change)="onFrom($event)"
+    />
+  </mat-form-field>
+  <mat-form-field appearance="outline" subscriptSizing="dynamic">
+    <mat-label>To (UTC)</mat-label>
+    <input
+      matInput
+      type="datetime-local"
+      data-testid="history-to"
+      [value]="toInput()"
+      (change)="onTo($event)"
+    />
+  </mat-form-field>
+  <p class="pt-2.5 text-sm text-muted" role="status" data-testid="history-count">
+    @if (error(); as message) {
+      <span class="text-danger" data-testid="history-range-error">{{ message }}</span>
+    } @else if (loading()) {
+      Loading alerts…
+    } @else if (!failed()) {
+      {{ readings().length }} flagged {{ readings().length === 1 ? 'reading' : 'readings' }} on
+      {{ turbineCount() }} {{ turbineCount() === 1 ? 'turbine' : 'turbines' }}
+    }
+  </p>
+</div>
+
+@if (failed()) {
+  <p
+    class="mt-4 flex items-center gap-3 rounded-lg bg-danger-bg px-4 py-3 text-danger"
+    role="alert"
+    data-testid="history-error"
+  >
+    The alerts could not be loaded.
+    <button
+      type="button"
+      class="cursor-pointer rounded-md border border-line bg-page px-3 py-1 text-ink hover:bg-surface"
+      data-testid="history-retry"
+      (click)="load()"
+    >
+      Retry
+    </button>
+  </p>
+} @else {
+  <!-- The table frame: as tall as its rows, at most the height left in the window (min 12rem).
+       The rows scroll under the sticky header row; the paginator stays below. -->
+  <div
+    class="mt-4 flex min-h-48 flex-col overflow-hidden rounded-lg border border-line"
+    data-testid="history-frame"
+  >
+    <div
+      class="relative min-h-0 flex-1 overflow-auto"
+      role="region"
+      aria-label="Alerts by turbine"
+      tabindex="0"
+      data-testid="history-scroll"
+    >
+      <table
+        mat-table
+        data-testid="alert-history"
+        [dataSource]="rows()"
+        [trackBy]="trackRow"
+        [attr.aria-busy]="loading()"
+      >
+        <!-- Group header: spans the row; links to the turbine. -->
+        <ng-container matColumnDef="group">
+          <td
+            mat-cell
+            *matCellDef="let row"
+            class="bg-surface font-semibold"
+            [attr.colspan]="columns.length"
+          >
+            <a [routerLink]="['/farms', row.farmId, 'turbines', row.turbineId]">{{
+              row.turbineId
+            }}</a>
+            <span class="font-normal text-muted">
+              · {{ row.farmName ?? row.farmId }} {{ row.farmName ? row.farmId : '' }} ·
+              {{ row.count }} flagged {{ row.count === 1 ? 'reading' : 'readings' }}
+              @if (row.continued) {
+                (continued)
+              }
+            </span>
+          </td>
+        </ng-container>
+
+        <ng-container matColumnDef="measured">
+          <th mat-header-cell *matHeaderCellDef>Measured (UTC)</th>
+          <td mat-cell *matCellDef="let row" class="tabular-nums">
+            {{ row.reading.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}
+          </td>
+        </ng-container>
+
+        <!-- Each triggered rule as a chip (level colour + the level in the text), worst first. -->
+        <ng-container matColumnDef="alerts">
+          <th mat-header-cell *matHeaderCellDef>Alerts</th>
+          <td mat-cell *matCellDef="let row" class="py-1!">
+            <mat-chip-set aria-label="Triggered alerts" data-testid="reading-alert-chips">
+              @for (alert of row.reading.alerts; track alert.id) {
+                <mat-chip
+                  class="alert-chip"
+                  disableRipple
+                  data-testid="alert-chip"
+                  [attr.data-level]="alert.alertLevel"
+                  >{{ describe(row.reading, alert) }}</mat-chip
+                >
+              }
+            </mat-chip-set>
+          </td>
+        </ng-container>
+
+        <tr mat-header-row *matHeaderRowDef="columns; sticky: true" class="bg-page"></tr>
+        <tr
+          mat-row
+          *matRowDef="let row; columns: ['group']; when: isGroup"
+          data-testid="history-group"
+          [attr.data-turbine-id]="row.turbineId"
+        ></tr>
+        <tr
+          mat-row
+          *matRowDef="let row; columns: columns"
+          data-testid="history-reading"
+          [attr.data-turbine-id]="row.reading.turbineId"
+        ></tr>
+        <tr class="mat-mdc-no-data-row" *matNoDataRow>
+          <td
+            class="mat-mdc-cell px-3 py-2 text-muted"
+            [attr.colspan]="columns.length"
+            data-testid="history-empty"
+          >
+            @if (!loading()) {
+              No alerts in this range.
+            }
+          </td>
+        </tr>
+      </table>
+    </div>
+    <mat-paginator
+      class="shrink-0 border-t border-line"
+      aria-label="Alert history pages"
+      data-testid="history-paginator"
+      [length]="paging.length()"
+      [pageIndex]="paging.pageIndex()"
+      [pageSize]="paging.pageSize()"
+      [pageSizeOptions]="paging.pageSizeOptions"
+      (page)="paging.onPage($event)"
+    />
+  </div>
+}

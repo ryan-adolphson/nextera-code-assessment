@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AlertConfigsModule } from './alert-configs/alert-configs.module.js';
+import { AlertsModule } from './alerts/alerts.module.js';
 import { ConfigModule } from '@nestjs/config';
 import { validateEnv } from './config/env.validation.js';
 import { EventsModule } from './events/events.module.js';
@@ -21,6 +22,7 @@ import { EventStoreModule, PrismaModule } from '@nextera/shared';
     EventsModule,
     FleetModule,
     AlertConfigsModule,
+    AlertsModule,
     HealthModule,
   ],
 })
