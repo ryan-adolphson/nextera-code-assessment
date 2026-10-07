@@ -114,7 +114,7 @@ jobs:
       # --- 2. Migrations -------------------------------------------------------------------
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
           cache: npm
 
       # Installs the Prisma CLI + migration engine (and builds @nextera/shared via `prepare`).
