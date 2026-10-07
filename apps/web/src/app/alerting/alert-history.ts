@@ -1,5 +1,5 @@
 import { Telemetry } from '../fleet/fleet.model';
-import { AlertLevel } from './alert-config.model';
+import { ALERT_RULE_LEVELS, AlertLevel } from './alert-config.model';
 import { worstLevel } from './alert-text';
 
 /** One turbine's flagged readings in the range: a summary row of the history table. */
@@ -13,8 +13,11 @@ export interface TurbineAlerts {
   latest: string;
   /** The worst level any of its readings triggered (the summary row's `data-level`). */
   worst: AlertLevel;
-  /** Every alert in the range: the rules each flagged reading triggered, summed. */
-  alertCount: number;
+  /**
+   * Its alerts in the range per level (the rules each flagged reading triggered, summed), worst
+   * level first; only the levels it triggered.
+   */
+  levelCounts: { level: AlertLevel; count: number }[];
 }
 
 /**
@@ -34,6 +37,17 @@ export function groupAlertsByTurbine(
     readings: group,
     latest: group[0].timestamp,
     worst: worstLevel(group.flatMap((r) => r.alerts)),
-    alertCount: group.reduce((sum, r) => sum + r.alerts.length, 0),
+    levelCounts: countByLevel(group),
   }));
+}
+
+function countByLevel(readings: readonly Telemetry[]): TurbineAlerts['levelCounts'] {
+  const alerts = readings.flatMap((r) => r.alerts);
+  return [...ALERT_RULE_LEVELS]
+    .reverse()
+    .map(({ value }) => ({
+      level: value,
+      count: alerts.filter((a) => a.alertLevel === value).length,
+    }))
+    .filter(({ count }) => count > 0);
 }

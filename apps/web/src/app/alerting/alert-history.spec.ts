@@ -49,9 +49,14 @@ describe('groupAlertsByTurbine', () => {
     expect([turb1.worst, turb2.worst]).toEqual(['info', 'error']); // TURB002: warn, then error+warn
   });
 
-  it('counts every alert: the rules each reading triggered, summed', () => {
+  it('counts every alert per level, worst first, only the levels triggered', () => {
     const [turb1, turb2] = groupAlertsByTurbine(readings, farm);
-    expect([turb1.alertCount, turb2.alertCount]).toEqual([1, 3]); // TURB002: 1 + 2
+    expect(turb1.levelCounts).toEqual([{ level: 'info', count: 1 }]);
+    // TURB002: warn, then error + warn
+    expect(turb2.levelCounts).toEqual([
+      { level: 'error', count: 1 },
+      { level: 'warn', count: 2 },
+    ]);
   });
 
   it('has no turbines without readings', () => {

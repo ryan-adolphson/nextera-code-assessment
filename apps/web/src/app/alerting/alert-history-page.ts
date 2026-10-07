@@ -23,18 +23,20 @@ import { TurbineAlerts, groupAlertsByTurbine } from './alert-history';
 import { dayOf, dayRange, defaultDays, pickerDate, rangeError } from '../core/utc-days';
 import { AlertingTabs } from './alerting-tabs';
 import { describeTriggerWithLevel } from './alert-text';
+import { AlertLevelBadge } from './alert-level-badge';
 
 /**
  * /alerting/history: the readings that triggered alert rules over whole UTC days chosen with a
  * Material date range picker (GET /api/alerts for [start 00:00, the day after end 00:00)), default
  * yesterday and today. A Material table with expandable rows: one summary row per turbine
- * (latest alert, each distinct rule as a Material chip with its count) that
+ * (latest alert, a pill per level with its alert count) that
  * expands to its flagged readings, newest first, each with its rules as chips. 25 turbines per
  * page. Days are UTC like every time in the app; choosing a valid range reloads.
  */
 @Component({
   selector: 'app-alert-history-page',
   imports: [
+    AlertLevelBadge,
     AlertingTabs,
     DatePipe,
     MatButton,
@@ -95,7 +97,7 @@ export class AlertHistoryPage {
     groupAlertsByTurbine(this.readings(), (farmId) => this.farmName(farmId)),
   );
   protected readonly paging = paginate(this.turbines, 25);
-  protected readonly columns = ['expand', 'turbine', 'farm', 'latest', 'count'];
+  protected readonly columns = ['expand', 'turbine', 'farm', 'latest', 'levels'];
   protected readonly trackTurbine = (_: number, t: TurbineAlerts) => t.turbineId;
   /** The turbines whose rows are expanded (any number at once). */
   protected readonly expanded = signal<ReadonlySet<string>>(new Set());

@@ -125,11 +125,15 @@
         </td>
       </ng-container>
 
-      <!-- How many alerts in the range (every rule each reading triggered); expand for them. -->
-      <ng-container matColumnDef="count">
-        <th mat-header-cell *matHeaderCellDef class="text-right!">Alerts</th>
-        <td mat-cell *matCellDef="let t" class="text-right! tabular-nums" data-testid="alert-count">
-          {{ t.alertCount }}
+      <!-- The alerts in the range per level ("Error: 3"), worst first; expand for them. -->
+      <ng-container matColumnDef="levels">
+        <th mat-header-cell *matHeaderCellDef>Alerts</th>
+        <td mat-cell *matCellDef="let t" data-testid="alert-levels">
+          <span class="flex flex-wrap gap-1.5">
+            @for (l of t.levelCounts; track l.level) {
+              <app-alert-level-badge testId="level-count" [level]="l.level" [count]="l.count" />
+            }
+          </span>
         </td>
       </ng-container>
 

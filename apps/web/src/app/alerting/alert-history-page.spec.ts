@@ -139,19 +139,26 @@ describe('AlertHistoryPage (/alerting/history)', () => {
         'TURB001',
         'Prairie Ridge FARM01',
         'Jan 2, 13:40',
-        '1',
-        [], // no chips in the summary row: a count
+        'Info: 1',
+        [], // no chips in the summary row: a pill per level
       ],
-      // 3 readings × 2 rules
-      ['', 'TURB002', 'High Plains FARM02', 'Jan 2, 03:30', '6', []],
+      // 3 readings × (error + warn), worst level first
+      ['', 'TURB002', 'High Plains FARM02', 'Jan 2, 03:30', 'Error: 3 Warning: 3', []],
     ]);
+    expect(
+      all('history-turbine').map((tr) =>
+        [...tr.querySelectorAll('[data-testid=level-count]')].map((p) =>
+          p.getAttribute('data-level'),
+        ),
+      ),
+    ).toEqual([['info'], ['error', 'warn']]);
     expect(app.text(q('history-count'))).toBe('4 flagged readings on 2 turbines');
     expect(all('history-turbine').map((tr) => tr.getAttribute('data-level'))).toEqual([
       'info',
       'error',
     ]);
 
-    // Material table with multiTemplateDataRows; Alerts is a right-aligned count, not chips.
+    // Material table with multiTemplateDataRows; Alerts is a pill per level, not chips.
     expect(q('alert-history')!.classList).toContain('mat-mdc-table');
     expect([...q('alert-history')!.querySelectorAll('thead th')].map((th) => app.text(th))).toEqual(
       ['Expand', 'Turbine', 'Farm', 'Latest (UTC)', 'Alerts'],
