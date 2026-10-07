@@ -12,6 +12,7 @@ const rule = (overrides: Partial<AlertConfig> = {}): AlertConfig => ({
   comparison: 'above',
   valueMetric: 120,
   alertLevel: 'error',
+  enabled: true,
   ...overrides,
 });
 
@@ -236,7 +237,14 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     await submit('rule-save');
 
     const patch = expectWrite('PATCH', `${URL}/${existing.id}`);
-    expect(patch.request.body).toEqual({ ...existing, id: undefined, valueMetric: 28 });
+    expect(patch.request.body).toEqual({
+      ...existing,
+      id: undefined,
+      enabled: undefined,
+      valueMetric: 28,
+    });
+    // Editing never touches `enabled` (a disabled rule stays disabled).
+    expect(Object.keys(patch.request.body)).not.toContain('enabled');
     patch.flush({ ...existing, valueMetric: 28 });
     await app.stable();
     expect(isOpen('rule-dialog')).toBe(false);

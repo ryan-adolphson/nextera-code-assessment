@@ -400,6 +400,7 @@ describe('TurbineList (/turbines)', () => {
       comparison: 'above',
       valueMetric: 120,
       alertLevel: 'error',
+      enabled: true,
       ...overrides,
     });
     /** In metric order, as the API lists them. */

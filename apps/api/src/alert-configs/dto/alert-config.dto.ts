@@ -1,4 +1,4 @@
-import { IsIn, IsNumber, ValidateIf } from 'class-validator';
+import { IsBoolean, IsIn, IsNumber, ValidateIf } from 'class-validator';
 import {
   AlertComparison,
   AlertLevel,
@@ -11,7 +11,9 @@ const LEVELS = Object.values(AlertLevel);
 
 const FINITE = { allowNaN: false, allowInfinity: false };
 
-/** POST /api/alert-configs: every field is required. */
+const BOOLEAN = { message: 'enabled must be a boolean' };
+
+/** POST /api/alert-configs: every field is required except `enabled` (default true). */
 export class CreateAlertConfigDto {
   @IsIn(METRICS, {
     message: `measurementMetric must be one of: ${METRICS.join(', ')}`,
@@ -29,6 +31,11 @@ export class CreateAlertConfigDto {
 
   @IsIn(LEVELS, { message: `alertLevel must be one of: ${LEVELS.join(', ')}` })
   alertLevel: AlertLevel;
+
+  /** Optional; the database default is true. */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean(BOOLEAN)
+  enabled?: boolean;
 }
 
 /**
@@ -58,4 +65,9 @@ export class UpdateAlertConfigDto {
   @IfPresent()
   @IsIn(LEVELS, { message: `alertLevel must be one of: ${LEVELS.join(', ')}` })
   alertLevel?: AlertLevel;
+
+  /** false disables the rule (the way to retire a rule with alert history). */
+  @IfPresent()
+  @IsBoolean(BOOLEAN)
+  enabled?: boolean;
 }

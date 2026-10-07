@@ -33,6 +33,7 @@ describe('toAlertConfigResponse', () => {
       comparison: AlertComparison.above,
       valueMetric: 120.5,
       alertLevel: AlertLevel.error,
+      enabled: false,
     });
 
     expect(response).toEqual({
@@ -41,8 +42,9 @@ describe('toAlertConfigResponse', () => {
       comparison: 'above',
       valueMetric: 120.5,
       alertLevel: 'error',
+      enabled: false,
     });
-    expect(Object.keys(response)).toHaveLength(5); // nothing else leaks
+    expect(Object.keys(response)).toHaveLength(6); // nothing else leaks
   });
 
   it('names the change event', () => {

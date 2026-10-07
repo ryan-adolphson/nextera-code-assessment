@@ -22,6 +22,7 @@ const row = (overrides: Partial<AlertConfig> = {}): AlertConfig => ({
   comparison: 'above',
   valueMetric: 120,
   alertLevel: 'error',
+  enabled: true,
   ...overrides,
 });
 
@@ -61,6 +62,7 @@ describe('AlertConfigsService', () => {
           comparison: 'above',
           valueMetric: 120,
           alertLevel: 'error',
+          enabled: true,
         },
       ]);
       expect(prisma.alertConfig.findMany).toHaveBeenCalledWith({
@@ -111,13 +113,28 @@ describe('AlertConfigsService', () => {
       const created = await service.create(dto);
 
       expect(prisma.alertConfig.create).toHaveBeenCalledWith({ data: dto });
-      expect(created).toEqual({ id: ID, ...dto });
+      expect(created).toEqual({ id: ID, ...dto, enabled: true });
       expect(events.publish).toHaveBeenCalledWith(ALERT_CONFIG_CHANGED, {
         action: 'created',
         id: ID,
         config: created,
       });
       expect(order).toEqual(['db', 'publish']);
+    });
+
+    it('stores enabled when given, and leaves it to the database default otherwise', async () => {
+      prisma.alertConfig.create.mockResolvedValue(row({ enabled: false }));
+
+      const created = await service.create({ ...dto, enabled: false });
+
+      expect(prisma.alertConfig.create).toHaveBeenCalledWith({
+        data: { ...dto, enabled: false },
+      });
+      expect(created.enabled).toBe(false);
+      await service.create(dto);
+      expect(prisma.alertConfig.create).toHaveBeenLastCalledWith({
+        data: { ...dto, enabled: undefined },
+      });
     });
 
     it('maps a duplicate rule (P2002) to 409 naming it, and publishes nothing', async () => {
@@ -159,6 +176,18 @@ describe('AlertConfigsService', () => {
         id: ID,
         config: updated,
       });
+    });
+
+    it('disables a rule (enabled: false)', async () => {
+      prisma.alertConfig.update.mockResolvedValue(row({ enabled: false }));
+
+      const updated = await service.update(ID, { enabled: false });
+
+      expect(prisma.alertConfig.update).toHaveBeenCalledWith({
+        where: { id: ID },
+        data: { enabled: false },
+      });
+      expect(updated.enabled).toBe(false);
     });
 
     it('rejects an empty change with 400 without touching the database', async () => {
@@ -207,6 +236,17 @@ describe('AlertConfigsService', () => {
         action: 'deleted',
         id: ID,
       });
+    });
+
+    it('maps a rule with alert history (P2003, RESTRICT) to 409 saying to disable it', async () => {
+      prisma.alertConfig.delete.mockRejectedValue(prismaError('P2003'));
+
+      await expect(service.remove(ID)).rejects.toThrow(
+        new ConflictException(
+          `Alert config ${ID} has alert history and cannot be deleted; disable it instead (enabled: false)`,
+        ),
+      );
+      expect(events.publish).not.toHaveBeenCalled();
     });
 
     it('maps an unknown id (P2025) to 404', async () => {

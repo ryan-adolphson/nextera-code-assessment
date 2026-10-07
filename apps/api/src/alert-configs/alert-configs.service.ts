@@ -66,6 +66,7 @@ export class AlertConfigsService {
             comparison: dto.comparison,
             valueMetric: dto.valueMetric,
             alertLevel: dto.alertLevel,
+            enabled: dto.enabled, // undefined: the database default (true)
           },
         })
         .catch((error: unknown) => rethrow(error, dto)),
@@ -98,10 +99,18 @@ export class AlertConfigsService {
     return config;
   }
 
+  /** A rule with alert history cannot be deleted (alert_history RESTRICT): 409, disable it instead. */
   async remove(id: string): Promise<void> {
     await this.prisma.alertConfig
       .delete({ where: { id } })
-      .catch((error: unknown) => rethrow(error, {}, id));
+      .catch((error: unknown) => {
+        if (isPrismaError(error, 'P2003')) {
+          throw new ConflictException(
+            `Alert config ${id} has alert history and cannot be deleted; disable it instead (enabled: false)`,
+          );
+        }
+        return rethrow(error, {}, id);
+      });
     await this.publish({ action: 'deleted', id });
   }
 
@@ -126,6 +135,7 @@ const FIELDS = [
   'comparison',
   'valueMetric',
   'alertLevel',
+  'enabled',
 ] as const;
 
 /** The fields present in a partial update (the DTO is whitelisted; this drops undefined). */

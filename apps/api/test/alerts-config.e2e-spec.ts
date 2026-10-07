@@ -17,7 +17,7 @@ describe('alerts_config (e2e, real Postgres)', () => {
   });
 
   beforeEach(async () => {
-    await t.prisma.$executeRaw`TRUNCATE TABLE alerts_config`;
+    await t.prisma.$executeRaw`TRUNCATE TABLE alert_history, alerts_config`;
   });
 
   it('stores a threshold through Prisma with a database-generated UUID v4', async () => {
@@ -114,7 +114,7 @@ describe('Alert configs API (e2e)', () => {
   });
 
   beforeEach(async () => {
-    await t.prisma.$executeRaw`TRUNCATE TABLE alerts_config`;
+    await t.prisma.$executeRaw`TRUNCATE TABLE alert_history, alerts_config`;
   });
 
   const request = (
@@ -150,6 +150,7 @@ describe('Alert configs API (e2e)', () => {
     expect(created).toEqual({
       id: expect.stringMatching(UUID_V4),
       ...gearboxError,
+      enabled: true, // the database default
     });
 
     expect(await (await request('GET', `/${created.id}`)).json()).toEqual(
@@ -166,6 +167,67 @@ describe('Alert configs API (e2e)', () => {
     expect(deleted.status).toBe(204);
     expect(await deleted.text()).toBe('');
     expect((await request('GET', `/${created.id}`)).status).toBe(404);
+  });
+
+  it('disables and re-enables a rule, and accepts enabled on create', async () => {
+    const created = await create();
+    const disabled = await request('PATCH', `/${created.id}`, {
+      enabled: false,
+    });
+    expect(disabled.status).toBe(200);
+    expect(await disabled.json()).toEqual({ ...created, enabled: false });
+    const enabled = await request('PATCH', `/${created.id}`, { enabled: true });
+    expect(((await enabled.json()) as { enabled: boolean }).enabled).toBe(true);
+
+    const off = await create({
+      ...gearboxError,
+      alertLevel: 'warn',
+      valueMetric: 90,
+      enabled: false,
+    });
+    expect(off.enabled).toBe(false);
+
+    const bad = await request('PATCH', `/${created.id}`, { enabled: 'no' });
+    expect(bad.status).toBe(400);
+    expect(JSON.stringify(await bad.json())).toContain(
+      'enabled must be a boolean',
+    );
+  });
+
+  it('refuses to delete a rule with alert history (409, disable it instead) and keeps both', async () => {
+    const created = await create();
+    await t.prisma.$executeRaw`
+      INSERT INTO farms (id, name, latitude, longitude)
+      VALUES ('FARM-AH', 'History farm', 1, 1) ON CONFLICT DO NOTHING`;
+    const turbine = await t.prisma.turbine.upsert({
+      where: { turbineId: 'TURB-AH' },
+      create: {
+        turbineId: 'TURB-AH',
+        farmId: 'FARM-AH',
+        latitude: 1,
+        longitude: 1,
+      },
+      update: {},
+    });
+    await t.prisma.alertHistory.create({
+      data: { turbineId: turbine.id, alertId: created.id },
+    });
+
+    const res = await request('DELETE', `/${created.id}`);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { message: string }).message).toBe(
+      `Alert config ${created.id} has alert history and cannot be deleted; disable it instead (enabled: false)`,
+    );
+    expect((await request('GET', `/${created.id}`)).status).toBe(200);
+    expect(
+      await t.prisma.alertHistory.count({ where: { alertId: created.id } }),
+    ).toBe(1);
+
+    // Disabling it works.
+    const disabled = await request('PATCH', `/${created.id}`, {
+      enabled: false,
+    });
+    expect(disabled.status).toBe(200);
   });
 
   it('lists rules by metric, then level severity, then value', async () => {

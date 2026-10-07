@@ -182,7 +182,10 @@ describe(`migration ${TARGET} (e2e)`, () => {
     ]);
   });
 
-  it('leaves no drift between the migrated database and schema.prisma', () => {
+  it('leaves no drift between the migrated database and schema.prisma', async () => {
+    // Later migrations too, so the database matches the current schema.prisma.
+    await cp(MIGRATIONS_DIR, join(workDir, 'migrations'), { recursive: true });
+    prisma('migrate', 'deploy');
     // --exit-code: 0 = no difference, 2 = drift (execFileSync throws on non-zero).
     expect(
       prisma(

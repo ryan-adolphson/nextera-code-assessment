@@ -13,8 +13,10 @@ const RULE: AlertConfig = {
   comparison: 'above',
   valueMetric: 120,
   alertLevel: 'error',
+  enabled: true,
 };
-const { id: _, ...INPUT } = RULE;
+// The editor's fields: neither the id nor `enabled` (the API default / left unchanged).
+const { id: _id, enabled: _enabled, ...INPUT } = RULE;
 
 describe('AlertConfigApi', () => {
   let api: AlertConfigApi;

@@ -19,6 +19,8 @@ export interface AlertConfigResponse {
   comparison: AlertComparison;
   valueMetric: number;
   alertLevel: AlertLevel;
+  /** Disabled rules are kept (with their alert history) but not evaluated. */
+  enabled: boolean;
 }
 
 /** Payload of `alert-config.changed`. `config` is the stored rule (absent after a delete). */
@@ -35,5 +37,6 @@ export function toAlertConfigResponse(row: AlertConfig): AlertConfigResponse {
     comparison: row.comparison,
     valueMetric: Number(row.valueMetric),
     alertLevel: row.alertLevel,
+    enabled: row.enabled,
   };
 }

@@ -15,6 +15,7 @@ const rule = (overrides: Partial<AlertConfig> = {}): AlertConfig => ({
   comparison: 'above',
   valueMetric: 120,
   alertLevel: 'error',
+  enabled: true,
   ...overrides,
 });
 
@@ -62,6 +63,13 @@ describe('triggeredRules', () => {
     const cold = rule({ comparison: 'below', valueMetric: -20, alertLevel: 'warn' });
     expect(triggeredRules(reading({ gearboxTempC: -25 }), [cold])).toEqual([cold]);
     expect(triggeredRules(reading({ gearboxTempC: -20 }), [cold])).toEqual([]);
+  });
+
+  it('never triggers a disabled rule', () => {
+    const on = rule({ valueMetric: 90, alertLevel: 'warn' });
+    const off = rule({ valueMetric: 120, alertLevel: 'error', enabled: false });
+    expect(triggeredRules(reading({ gearboxTempC: 130 }), [on, off])).toEqual([on]);
+    expect(triggeredRules(reading({ gearboxTempC: 130 }), [off])).toEqual([]);
   });
 
   it('triggers nothing without a reading or without rules', () => {

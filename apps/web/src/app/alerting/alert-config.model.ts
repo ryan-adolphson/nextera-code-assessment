@@ -10,10 +10,15 @@ export interface AlertConfig {
   comparison: AlertComparison;
   valueMetric: number;
   alertLevel: AlertLevel;
+  /** Disabled rules are kept (with their alert history) but never evaluated. */
+  enabled: boolean;
 }
 
-/** The writable fields (POST body; PATCH sends them all too). */
-export type AlertConfigInput = Omit<AlertConfig, 'id'>;
+/**
+ * The fields the rule editor writes (POST body; PATCH sends them all too). Not `enabled`: a new
+ * rule gets the API default (true) and editing a rule leaves it as it is.
+ */
+export type AlertConfigInput = Omit<AlertConfig, 'id' | 'enabled'>;
 
 /** SSE event the API publishes after every committed alert-config write (ALERT_CONFIG_CHANGED). */
 export const ALERT_CONFIG_CHANGED = 'alert-config.changed';

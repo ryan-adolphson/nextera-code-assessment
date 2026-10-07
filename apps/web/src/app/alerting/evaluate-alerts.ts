@@ -22,6 +22,7 @@ export function triggeredRules(
   if (!reading) return [];
   return rules
     .filter((rule) => {
+      if (!rule.enabled) return false; // disabled rules never fire
       const value = reading[rule.measurementMetric];
       return rule.comparison === 'above' ? value > rule.valueMetric : value < rule.valueMetric;
     })

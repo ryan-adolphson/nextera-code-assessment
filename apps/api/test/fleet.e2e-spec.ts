@@ -8,7 +8,7 @@ describe('Fleet API (e2e, CSV seed data)', () => {
 
   beforeAll(async () => {
     t = await createTestApp();
-    await t.prisma.$executeRaw`TRUNCATE TABLE telemetry, turbines, farms`;
+    await t.prisma.$executeRaw`TRUNCATE TABLE alert_history, telemetry, turbines, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
   });
 
