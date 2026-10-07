@@ -13,7 +13,7 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
-import { LineChart as LineSeries } from 'echarts/charts';
+import { LineChart as LineSeries, ScatterChart as ScatterSeries } from 'echarts/charts';
 import {
   DataZoomInsideComponent,
   DataZoomSliderComponent,
@@ -37,6 +37,7 @@ import {
 // Register only what a line chart needs, so the rest of ECharts is tree-shaken away.
 echarts.use([
   LineSeries,
+  ScatterSeries,
   GridComponent,
   TooltipComponent,
   DataZoomInsideComponent,
@@ -74,6 +75,25 @@ const STAT_LINES = [
   { key: 'low', label: 'Low', position: 'insideEndBottom' },
 ] as const;
 
+/** Severity of a marker (the alert levels); worst first. */
+export type MarkerLevel = 'error' | 'warn' | 'info';
+const MARKER_LEVELS: readonly { level: MarkerLevel; label: string }[] = [
+  { level: 'error', label: 'Error' },
+  { level: 'warn', label: 'Warning' },
+  { level: 'info', label: 'Info' },
+];
+
+/**
+ * A point drawn over the line (scatter overlay), e.g. a reading that triggered alerts: at [t, v],
+ * coloured by `level`; `lines` (text only) are added to the tooltip and the aria-label.
+ */
+export interface ChartMarker {
+  t: number;
+  v: number;
+  level: MarkerLevel;
+  lines: string[];
+}
+
 /** Theme colours, read from the app's CSS variables (re-read when light/dark mode changes). */
 export interface ChartTheme {
   series: string;
@@ -81,6 +101,8 @@ export interface ChartTheme {
   text: string;
   muted: string;
   surface: string;
+  /** Marker colours: the status tokens AlertLevelBadge uses (validated for light and dark). */
+  levels: Record<MarkerLevel, string>;
 }
 
 function readTheme(): ChartTheme {
@@ -92,6 +114,11 @@ function readTheme(): ChartTheme {
     text: get('--text', '#1a1a1a'),
     muted: get('--muted', '#6b6b6b'),
     surface: get('--bg', '#ffffff'),
+    levels: {
+      error: get('--danger', '#c92a2a'),
+      warn: get('--warn', '#e67700'),
+      info: get('--accent', '#3b5bdb'),
+    },
   };
 }
 
@@ -112,6 +139,10 @@ const MIN_X_RANGE_MS = 30 * 60_000;
  * - Time-axis zoom (ECharts dataZoom): a slider under the plot, plus drag to pan and
  *   Ctrl+wheel/pinch to zoom inside it (a plain wheel still scrolls the page). The window is
  *   shared through the `view` input/output pair, so the small multiples stay aligned.
+ * - Optional `markers`: a scatter overlay (10px dots with a surface ring, coloured by level) for
+ *   points of interest such as readings that triggered alerts; a legend names the levels shown,
+ *   and each marker's `lines` join the tooltip and the aria-label (colour is never the only cue).
+ * - With `decimals` 0 (counts), the y-axis ticks are whole numbers.
  * The tooltip content is built with textContent, so labels can never inject markup.
  */
 @Component({
@@ -138,6 +169,8 @@ export class LineChart {
   readonly viewChange = output<TimeRange | null>();
   /** Median/high/low over the whole time range, or null for no reference lines. */
   readonly stats = input<RangeStats | null>(null);
+  /** Scatter overlay over the line (ascending by t), e.g. readings that triggered alerts. */
+  readonly markers = input<ChartMarker[]>([]);
 
   private readonly plot = viewChild.required<ElementRef<HTMLElement>>('plot');
   private readonly destroyRef = inject(DestroyRef);
@@ -161,6 +194,19 @@ export class LineChart {
     return this.points().filter((p) => p.t >= from && p.t <= to);
   });
   private readonly data = computed(() => withGapBreaks(this.visible(), this.gapMs()));
+  protected readonly visibleMarkers = computed(() => {
+    const { from, to } = this.domain();
+    return this.markers().filter((m) => m.t >= from && m.t <= to);
+  });
+  private readonly markerAt = computed(() => new Map(this.visibleMarkers().map((m) => [m.t, m])));
+  /** The marker levels shown, worst first, with their counts (the legend). */
+  protected readonly markerLegend = computed(() =>
+    MARKER_LEVELS.map(({ level, label }) => ({
+      level,
+      label,
+      count: this.visibleMarkers().filter((m) => m.level === level).length,
+    })).filter((entry) => entry.count > 0),
+  );
   /** The reference lines shown: only alongside readings (an empty chart shows no lines). */
   protected readonly shownStats = computed(() => (this.visible().length ? this.stats() : null));
   /** The reference lines with their labels, e.g. "Median 81.9 °C". */
@@ -197,11 +243,17 @@ export class LineChart {
     const stats = lines.length
       ? ` Over the range: ${lines.map((line) => line.text).join(', ')}.`
       : '';
+    const legend = this.markerLegend();
+    const flagged = legend.length
+      ? ` Flagged: ${legend.map((entry) => `${entry.count} ${entry.label}`).join(', ')}.`
+      : '';
     const summary = last
-      ? `${this.title()}: latest ${this.format(last.v)} ${this.unit()} at ${formatTimestamp(last.t)}. ${this.visible().length} readings.${stats}`
+      ? `${this.title()}: latest ${this.format(last.v)} ${this.unit()} at ${formatTimestamp(last.t)}. ${this.visible().length} readings.${stats}${flagged}`
       : `${this.title()}: no readings in this range.`;
+    const marker = hovered ? this.markerAt().get(hovered.t) : undefined;
+    const details = marker?.lines.length ? ` ${marker.lines.join('. ')}.` : '';
     return hovered
-      ? `${summary} Selected: ${this.format(hovered.v)} ${this.unit()} at ${formatTimestamp(hovered.t)}.`
+      ? `${summary} Selected: ${this.format(hovered.v)} ${this.unit()} at ${formatTimestamp(hovered.t)}.${details}`
       : summary;
   });
 
@@ -217,6 +269,7 @@ export class LineChart {
       this.data();
       this.domain();
       this.statLines();
+      this.visibleMarkers();
       this.decimals();
       this.unit();
       untracked(() => this.render());
@@ -327,6 +380,13 @@ export class LineChart {
           ),
           markLine: { data: this.markLineData() },
         },
+        {
+          id: 'markers',
+          data: this.visibleMarkers().map((m) => ({
+            value: [m.t, m.v],
+            itemStyle: { color: this.theme.levels[m.level] },
+          })),
+        },
       ],
     });
     this.applyView();
@@ -379,7 +439,10 @@ export class LineChart {
     const xTicks = timeTicks(from, to, chart.getWidth() || 640);
     this.xLabels = new Map(xTicks.map((tick) => [tick.t, tick.label]));
     const xValues = xTicks.map((tick) => tick.t);
-    const yValues = y ? ticksWithin(y.min, y.max) : [];
+    // Counts (no decimals) get whole-number ticks only.
+    const yValues = (y ? ticksWithin(y.min, y.max) : []).filter(
+      (v) => this.decimals() > 0 || Number.isInteger(v),
+    );
     chart.setOption({
       xAxis: { axisLabel: { customValues: xValues }, axisTick: { customValues: xValues } },
       yAxis: { axisLabel: { customValues: yValues }, axisTick: { customValues: yValues } },
@@ -473,7 +536,11 @@ export class LineChart {
           const [t, v] = first?.value ?? [];
           return t == null || v == null
             ? ''
-            : tooltipContent(`${this.format(v)} ${this.unit()}`, t);
+            : tooltipContent(
+                `${this.format(v)} ${this.unit()}`,
+                t,
+                this.markerAt().get(t)?.lines ?? [],
+              );
         },
       },
       series: [
@@ -512,6 +579,18 @@ export class LineChart {
           emphasis: { disabled: true },
           silent: true,
           z: 3,
+          tooltip: { show: false },
+        },
+        {
+          id: 'markers', // the scatter overlay (last, so series 0/1 stay readings/hover): drawn on top by z
+          type: 'scatter',
+          data: [],
+          symbol: 'circle',
+          symbolSize: 10,
+          itemStyle: { borderWidth: 2 },
+          emphasis: { disabled: true },
+          silent: true,
+          z: 4,
           tooltip: { show: false },
         },
       ],
@@ -584,6 +663,7 @@ export class LineChart {
           id: 'hover',
           itemStyle: { color: theme.series, borderColor: theme.surface, borderWidth: 2 },
         },
+        { id: 'markers', itemStyle: { borderColor: theme.surface } },
       ],
     });
   }
@@ -603,8 +683,11 @@ export class LineChart {
   }
 }
 
-/** Tooltip: the value (bold, text ink) first, then the UTC time. Text only, never HTML. */
-function tooltipContent(value: string, t: number): HTMLElement {
+/**
+ * Tooltip: the value (bold, text ink) first, then the UTC time, then any marker lines (e.g. the
+ * alerts that fired). Text only, never HTML.
+ */
+function tooltipContent(value: string, t: number, lines: readonly string[] = []): HTMLElement {
   const root = document.createElement('div');
   root.className = 'text-xs leading-5';
   const strong = document.createElement('strong');
@@ -614,6 +697,12 @@ function tooltipContent(value: string, t: number): HTMLElement {
   time.className = 'text-muted';
   time.textContent = formatTimestamp(t);
   root.append(strong, time);
+  for (const line of lines) {
+    const item = document.createElement('span');
+    item.className = 'block text-ink';
+    item.textContent = line;
+    root.append(item);
+  }
   return root;
 }
 

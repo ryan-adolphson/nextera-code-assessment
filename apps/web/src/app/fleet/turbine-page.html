@@ -110,6 +110,21 @@
             [stats]="store.stats()?.metrics?.[chart.key] ?? null"
           />
         }
+        <!-- Alerts: rules triggered per reading (line) + the flagged readings (scatter, by level). -->
+        @let alerts = alertChart();
+        <app-line-chart
+          data-metric="alerts"
+          title="Alert rules triggered"
+          [decimals]="0"
+          [points]="alerts.points"
+          [markers]="alerts.markers"
+          [domain]="window"
+          [gapMs]="gapMs"
+          [hoverT]="hoverT()"
+          (hoverTChange)="hoverT.set($event)"
+          [view]="view()"
+          (viewChange)="view.set($event)"
+        />
       </section>
     }
 

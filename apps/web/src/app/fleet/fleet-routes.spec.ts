@@ -327,6 +327,7 @@ describe('Fleet routes', () => {
         'Rotor speed',
         'Blade pitch',
         'Gearbox temperature',
+        'Alert rules triggered',
       ]);
       expect(charts()[0].querySelector('[data-testid=latest]')?.textContent?.trim()).toBe(
         '1,961 kW',
@@ -366,7 +367,45 @@ describe('Fleet routes', () => {
       expect(buttons[3].getAttribute('aria-pressed')).toBe('true');
     });
 
-    it('shares one crosshair across all five charts', async () => {
+    it('charts the alerts: rules triggered per reading as the line, flagged readings as the scatter', async () => {
+      const rule = (alertLevel: 'warn' | 'error', valueMetric: number) => ({
+        id: `rule-${alertLevel}`,
+        measurementMetric: 'gearboxTempC' as const,
+        comparison: 'above' as const,
+        valueMetric,
+        alertLevel,
+        enabled: true,
+      });
+      const [newest, middle, oldest] = history; // newest first
+      await start('/farms/FARM01/turbines/TURB001', [
+        { ...newest, alerts: [rule('error', 75), rule('warn', 70)] },
+        middle,
+        { ...oldest, alerts: [rule('warn', 70)] },
+      ]);
+
+      const chart = fixture()
+        .debugElement.queryAll((d) => d.name === 'app-line-chart')
+        .map((d) => d.componentInstance as LineChart)[5];
+      expect(chart.title()).toBe('Alert rules triggered');
+      expect(chart.decimals()).toBe(0);
+      // The line: rules per reading, oldest first.
+      expect(chart.points().map((p) => p.v)).toEqual([1, 0, 2]);
+      expect(
+        chart.markers().map((m) => [new Date(m.t).toISOString(), m.v, m.level, m.lines]),
+      ).toEqual([
+        ['2026-01-02T23:40:00.000Z', 1, 'warn', ['Warning: Gearbox temperature 81.4 °C > 70']],
+        [
+          '2026-01-02T23:55:00.000Z',
+          2,
+          'error', // the worst level
+          ['Error: Gearbox temperature 79.3 °C > 75', 'Warning: Gearbox temperature 79.3 °C > 70'],
+        ],
+      ]);
+      const legend = charts()[5].querySelector('[data-testid=marker-legend]');
+      expect(legend?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Error 1 Warning 1');
+    });
+
+    it('shares one crosshair across all six charts (five metrics + alerts)', async () => {
       await start('/farms/FARM01/turbines/TURB001', history);
 
       charts()[0].querySelector<HTMLElement>('[role=img]')!.dispatchEvent(new FocusEvent('focus'));
@@ -375,7 +414,7 @@ describe('Fleet routes', () => {
       const instances = fixture()
         .debugElement.queryAll((d) => d.name === 'app-line-chart')
         .map((d) => d.componentInstance as LineChart);
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(6);
       for (const chart of instances) {
         expect(chart.activeIndex).toBe(3); // the latest reading (index 1 is the 23:45 gap)
       }
@@ -400,11 +439,11 @@ describe('Fleet routes', () => {
         await stable();
       }
 
-      it('zooms all five charts to the same time window', async () => {
+      it('zooms all six charts to the same time window', async () => {
         await start('/farms/FARM01/turbines/TURB001', history);
         await zoom(4);
 
-        expect(components()).toHaveLength(5);
+        expect(components()).toHaveLength(6);
         for (const component of components()) {
           const { range, zoomed } = component.visibleRange();
           expect(zoomed).toBe(true);
@@ -498,7 +537,7 @@ describe('Fleet routes', () => {
       it('still draws the charts when the stats fail to load', async () => {
         await start('/farms/FARM01/turbines/TURB001', history);
         // fakes() default: an empty window (null stats per metric) → no lines, no text
-        expect(charts()).toHaveLength(5);
+        expect(charts()).toHaveLength(6);
         expect(el().querySelector('[data-testid=stats]')).toBeNull();
         expect(markLines(0)).toEqual([]);
 
@@ -506,7 +545,7 @@ describe('Fleet routes', () => {
         el().querySelectorAll<HTMLButtonElement>('[data-testid=range] button')[0].click();
         await stable();
 
-        expect(charts()).toHaveLength(5);
+        expect(charts()).toHaveLength(6);
         expect(charts()[0].querySelector('[data-testid=latest]')?.textContent?.trim()).toBe(
           '1,961 kW',
         );
@@ -612,7 +651,7 @@ describe('Fleet routes', () => {
         await stable();
 
         expect(el().querySelector('[data-testid=empty-window]')).toBeNull();
-        expect(charts()).toHaveLength(5);
+        expect(charts()).toHaveLength(6);
         expect(el().querySelectorAll('[data-testid=history] tbody tr')).toHaveLength(1);
       });
     });

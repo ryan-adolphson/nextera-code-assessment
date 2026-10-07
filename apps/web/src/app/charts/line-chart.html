@@ -8,6 +8,24 @@
       >
     }
   </figcaption>
+  @if (markerLegend().length) {
+    <!-- The marker legend: each level shown, with a swatch and its count (never colour alone). -->
+    <ul
+      class="m-0 flex list-none flex-wrap gap-x-3 p-0 text-xs text-muted"
+      data-testid="marker-legend"
+    >
+      @for (entry of markerLegend(); track entry.level) {
+        <li class="flex items-center gap-1" [attr.data-level]="entry.level">
+          <span
+            class="size-2.5 rounded-full data-[level=error]:bg-danger data-[level=info]:bg-accent data-[level=warn]:bg-warn"
+            aria-hidden="true"
+            [attr.data-level]="entry.level"
+          ></span>
+          {{ entry.label }} <span class="text-ink tabular-nums">{{ entry.count }}</span>
+        </li>
+      }
+    </ul>
+  }
   @if (statLines().length) {
     <!-- The reference lines as text: they describe the whole time range, not a zoomed window. -->
     <dl

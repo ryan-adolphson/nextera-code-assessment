@@ -14,7 +14,8 @@ import { MatTooltip } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 import { describeRule, levelLabel } from '../alerting/alert-config.model';
 import { AlertLevelBadge } from '../alerting/alert-level-badge';
-import { LineChart, TimeRange } from '../charts/line-chart';
+import { describeTriggerWithLevel } from '../alerting/evaluate-alerts';
+import { ChartMarker, LineChart, TimeRange } from '../charts/line-chart';
 import { ChartPoint } from '../charts/scales';
 import { DELAYED_AFTER_MS, HISTORY_RANGES, READING_INTERVAL_MS, Telemetry } from './fleet.model';
 import { paginate } from '../ui/paging';
@@ -95,6 +96,28 @@ export class TurbinePage implements OnDestroy {
       ...metric,
       points: ascending.map((r): ChartPoint => ({ t: Date.parse(r.timestamp), v: r[metric.key] })),
     }));
+  });
+
+  /**
+   * The alerts chart: a line of how many rules each reading triggered (0, 1, 2…) with the flagged
+   * readings as a scatter overlay, coloured by their worst level; the tooltip lists the rules.
+   */
+  protected readonly alertChart = computed(() => {
+    const ascending = [...this.store.history()].reverse();
+    return {
+      points: ascending.map((r): ChartPoint => ({
+        t: Date.parse(r.timestamp),
+        v: r.alerts.length,
+      })),
+      markers: ascending
+        .filter((r) => r.alerts.length)
+        .map((r): ChartMarker => ({
+          t: Date.parse(r.timestamp),
+          v: r.alerts.length,
+          level: r.alerts[0].alertLevel, // worst first
+          lines: r.alerts.map((rule) => describeTriggerWithLevel(r, rule)),
+        })),
+    };
   });
 
   protected readonly window = computed(() => this.store.historyWindow());
