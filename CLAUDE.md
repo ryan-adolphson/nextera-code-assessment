@@ -11,9 +11,14 @@ turbines → Pub/Sub "telemetry" ─push→ Ingestion Worker ─→ Postgres + R
                  └─ dead-letter topic after N failed deliveries                 (REST + SSE, CORS, own domain)
 ```
 
-## Specialist agent
+## Specialist agents
 
-Use the `fullstack-architect` subagent ([.claude/agents/fullstack-architect.md](.claude/agents/fullstack-architect.md)) for any work on the services, the Angular app, Docker or infrastructure. It documents the architecture decisions, the patterns to follow and the gotchas already hit.
+Three subagents in `.claude/agents/` hold the patterns to follow and the gotchas already hit. Use them for work in their area:
+- **`angular-engineer`** ([.claude/agents/angular-engineer.md](.claude/agents/angular-engineer.md)): anything in `apps/web` (pages, Material, Tailwind, charts, maps, `FleetStore`, the web image, Angular tests). Preloads the `angular-developer` skill.
+- **`nestjs-engineer`** ([.claude/agents/nestjs-engineer.md](.claude/agents/nestjs-engineer.md)): `apps/api`, `apps/ingestion` and `packages/shared` (endpoints, DTOs, Prisma and migrations, ingestion, `EventStore`/SSE, the service images, backend tests). Preloads the `nestjs-professional-software-engineering` and `nestjs-features-performance` skills.
+- **`fullstack-architect`** ([.claude/agents/fullstack-architect.md](.claude/agents/fullstack-architect.md)): architecture, changes that span the backend and the web app (API/SSE contracts, the data model end to end), docker-compose, Cloud Run, Terraform and CI/CD.
+
+**Skills:** installed with `npx skills` into `.agents/skills/` (pinned in `skills-lock.json`) and symlinked into `.claude/skills/`, where Claude Code discovers them. After `npx skills add`, symlink any new skill the same way. The agent files take precedence over the general skill guidance (e.g. no experimental `resource`/Signal Forms, no component CSS, Cloud Run + Pub/Sub push).
 
 ## Layout
 
@@ -23,6 +28,7 @@ apps/
                         #                     GET /api/turbines/:id/telemetry/stats (median/high/low per metric over the same rows),
                         #                     CRUD /api/alert-configs (alert thresholds; writes are unauthenticated for now),
                         #                     GET /api/alerts?from=&to= (flagged readings + their rules, by turbine; ≤ 31 days),
+                        #                     GET /api/reports/telemetry?farmId=|turbineId=&from=&to= (all readings + alerts; ≤ 31 days),
                         #                     SSE GET /api/events; CORS for the web app. Dockerfile -> image "api"
   ingestion/            # @nextera/ingestion  NestJS 12: Pub/Sub push POST /pubsub/telemetry,
                         #                     CSV upload POST /ingest/telemetry (multipart field "file"). Dockerfile -> image "ingestion"
@@ -72,7 +78,7 @@ There is exactly one local database (the compose Postgres) and one Prisma schema
   - **Turbines** (`/turbines`): every turbine with status, Commissioned (check mark or X), latest values; sortable and filterable (text, status, commissioning). No Alert column: alerts are evaluated at ingestion and shown on the turbine page's alerts chart and the Alerting History tab.
   - **Tables** are Angular Material `mat-table` with a `mat-paginator`, paged client-side from signals (`ui/paging.ts`); the farms table is not paginated.
   - **Alerting**: `/alerting` (redirects to History; tabs History and Rules), `/alerting/history` (History: `GET /api/alerts` for whole UTC days chosen with a Material date range picker (native DateAdapter), default yesterday–today; Material table with expandable rows — one summary row per turbine (farm, latest alert, an Alerts count: every rule each reading triggered) that expands to its readings, each with its rules as level-coloured Material chips; 25 turbines per page) and `/alerting/rules` (Rules: CRUD for `alerts_config`).
-  - **Reporting** (`/reporting`): placeholder.
+  - **Reporting** (`/reporting`, proof of concept): a farm or turbine from a Material autocomplete (Farms / Turbines groups) and a required Material date range (whole UTC days, ≤ 31) → one `GET /api/reports/telemetry` → summary tiles, one `LineChart` per metric (a farm: power summed, the rest averaged per time) + an alerts chart, a paginated readings table, and a CSV download built in the browser (telemetry.csv columns + `alerts`).
   - **Staleness** uses the client clock (`NOW` token, `FleetStore` ticks every minute): more than 15/30/60 min since the latest measurement → "No data in 15/30/60 min" (yellow/orange/red pills, `fleet/staleness.ts`); only `ok` turbines count as reporting.
 - **Containers:** one image per service: `apps/api/Dockerfile` and `apps/ingestion/Dockerfile` (build context = repo root, because both need `packages/shared` and the root lockfile; each installs only its own workspace + `@nextera/shared` via `npm ci -w <app> -w @nextera/shared --include-workspace-root`), and `apps/web/Dockerfile` (build context = `apps/web`; Node build stage, unprivileged nginx runtime). Images are non-root, `linux/amd64` for Cloud Run, listen on `$PORT`, and contain no dev packages or secrets. The web image has no API URL baked in: it refuses to start unless `API_BASE_URL` is `https://…/api` (http only for localhost). Tags: `$REGISTRY/api:$TAG`, `$REGISTRY/ingestion:$TAG`, `$REGISTRY/web:$TAG`.
 - **Infrastructure:** change GCP only through `infra/terraform`. Run `terraform fmt -check` + `validate` before committing.
