@@ -1,6 +1,6 @@
 import { Telemetry } from '../fleet/fleet.model';
-import { AlertConfig, AlertLevel } from './alert-config.model';
-import { LEVEL_SEVERITY } from './alert-text';
+import { AlertLevel } from './alert-config.model';
+import { worstLevel } from './alert-text';
 
 /** One turbine's flagged readings in the range: a summary row of the history table. */
 export interface TurbineAlerts {
@@ -36,13 +36,4 @@ export function groupAlertsByTurbine(
     worst: worstLevel(group.flatMap((r) => r.alerts)),
     alertCount: group.reduce((sum, r) => sum + r.alerts.length, 0),
   }));
-}
-
-/** The most severe level among `rules` (info when there are none). */
-function worstLevel(rules: readonly AlertConfig[]): AlertLevel {
-  return rules.reduce<AlertLevel>(
-    (worst, rule) =>
-      LEVEL_SEVERITY[rule.alertLevel] > LEVEL_SEVERITY[worst] ? rule.alertLevel : worst,
-    'info',
-  );
 }

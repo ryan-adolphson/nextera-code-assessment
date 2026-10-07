@@ -1,5 +1,4 @@
-import { AlertConfig, AlertLevel } from '../alerting/alert-config.model';
-import { LEVEL_SEVERITY, describeTriggerWithLevel } from '../alerting/alert-text';
+import { alertSeries } from '../charts/alert-series';
 import { ChartMarker } from '../charts/line-chart';
 import { ChartPoint } from '../charts/scales';
 import { Telemetry } from '../fleet/fleet.model';
@@ -70,36 +69,9 @@ export function reportSeries(report: TelemetryReport): ReportSeries {
     ]),
   ) as Record<Metric, ChartPoint[]>;
 
-  const alerts = times.map((t): ChartPoint => ({
-    t,
-    v: byTime.get(t)!.reduce((n, r) => n + r.alerts.length, 0),
-  }));
-  const markers = times.flatMap((t): ChartMarker[] => {
-    const flagged = byTime.get(t)!.filter((r) => r.alerts.length);
-    if (!flagged.length) return [];
-    const rules = flagged.flatMap((r) => r.alerts);
-    return [
-      {
-        t,
-        v: rules.length,
-        level: worstLevel(rules),
-        lines: flagged.flatMap((r) =>
-          r.alerts.map(
-            (rule) => `${farm ? `${r.turbineId}: ` : ''}${describeTriggerWithLevel(r, rule)}`,
-          ),
-        ),
-      },
-    ];
-  });
+  // A farm: alerts summed per time, each line naming its turbine.
+  const { points: alerts, markers } = alertSeries(report.readings, { prefixTurbine: farm });
   return { metrics, alerts, markers };
-}
-
-function worstLevel(rules: readonly AlertConfig[]): AlertLevel {
-  return rules.reduce<AlertLevel>(
-    (worst, rule) =>
-      LEVEL_SEVERITY[rule.alertLevel] > LEVEL_SEVERITY[worst] ? rule.alertLevel : worst,
-    'info',
-  );
 }
 
 /** The telemetry.csv column of each metric (the CSV and the alerts column use them). */

@@ -1,7 +1,6 @@
-import { describeRuleWithLevel } from './alert-config.model';
 import { reading } from '../fleet/testing';
 import { AlertConfig } from './alert-config.model';
-import { describeTrigger, describeTriggerWithLevel } from './alert-text';
+import { describeTrigger, describeTriggerWithLevel, worstLevel } from './alert-text';
 
 let n = 0;
 const rule = (overrides: Partial<AlertConfig> = {}): AlertConfig => ({
@@ -34,15 +33,11 @@ describe('describeTrigger', () => {
   });
 });
 
-describe('describeRuleWithLevel', () => {
-  it('prefixes the rule with its level', () => {
-    expect(
-      describeRuleWithLevel({
-        measurementMetric: 'gearboxTempC',
-        comparison: 'above',
-        valueMetric: 120,
-        alertLevel: 'error',
-      }),
-    ).toBe('Error: Gearbox temperature above 120 °C');
+describe('worstLevel', () => {
+  it('picks the most severe level, info when there are no rules', () => {
+    const level = (alertLevel: AlertConfig['alertLevel']) => rule({ alertLevel });
+    expect(worstLevel([level('info'), level('error'), level('warn')])).toBe('error');
+    expect(worstLevel([level('warn'), level('info')])).toBe('warn');
+    expect(worstLevel([])).toBe('info');
   });
 });

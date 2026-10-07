@@ -1,6 +1,6 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import {
   AbstractControl,
   FormControl,
@@ -21,13 +21,14 @@ import {
 } from '@angular/material/datepicker';
 import { MatError, MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
-import { MatTooltip } from '@angular/material/tooltip';
-import { Subject, catchError, map, of, startWith, switchMap, tap } from 'rxjs';
-import { AlertLevelBadge } from '../alerting/alert-level-badge';
-import { describeTriggerWithLevel } from '../alerting/alert-text';
-import { LineChart, TimeRange } from '../charts/line-chart';
+import { map, startWith } from 'rxjs';
+import { AlertsCell } from '../alerting/alerts-cell';
+import { AlertSeries } from '../charts/alert-series';
+import { ChartGroup } from '../charts/chart-group';
+import { TimeRange } from '../charts/line-chart';
 import { NOW } from '../core/clock';
 import {
+  dayOf,
   dayRange,
   defaultDays,
   lastUtcDay,
@@ -38,6 +39,7 @@ import {
 import { Telemetry } from '../fleet/fleet.model';
 import { FleetStore } from '../fleet/fleet.store';
 import { METRICS } from '../fleet/metrics';
+import { latestLoad } from '../ui/latest-load';
 import { paginate } from '../ui/paging';
 import { StatTile } from '../ui/stat-tile';
 import { TABLE_IMPORTS } from '../ui/table';
@@ -50,7 +52,7 @@ import {
   scopeOptions,
   toCsv,
 } from './report';
-import { ReportApi, ReportRequest, TelemetryReport } from './report-api.service';
+import { ReportApi, ReportRequest } from './report-api.service';
 
 /** The scope field holds the chosen option, or the text typed so far (not a choice yet). */
 type ScopeValue = ScopeOption | string | null;
@@ -79,10 +81,10 @@ function validRange(group: AbstractControl): ValidationErrors | null {
 @Component({
   selector: 'app-reporting-page',
   imports: [
-    AlertLevelBadge,
+    AlertsCell,
     DatePipe,
     DecimalPipe,
-    LineChart,
+    ChartGroup,
     MatAutocomplete,
     MatAutocompleteTrigger,
     MatButton,
@@ -98,7 +100,6 @@ function validRange(group: AbstractControl): ValidationErrors | null {
     MatOption,
     MatStartDate,
     MatSuffix,
-    MatTooltip,
     ReactiveFormsModule,
     StatTile,
     TABLE_IMPORTS,
@@ -141,11 +142,14 @@ export class ReportingPage {
   protected readonly displayOption = (value: ScopeValue): string =>
     typeof value === 'string' ? value : (value?.label ?? '');
 
-  protected readonly report = signal<TelemetryReport | null>(null);
-  protected readonly loading = signal(false);
-  protected readonly failed = signal(false);
-  private lastRequest: ReportRequest | null = null;
-  private readonly requests = new Subject<ReportRequest>();
+  /** The latest run's report (an earlier run's late answer is dropped); kept when a run fails. */
+  private readonly reportLoad = latestLoad(
+    (request: ReportRequest) => this.api.telemetry(request),
+    () => this.paging.reset(), // a new report: the chart group resets its zoom too
+  );
+  protected readonly report = this.reportLoad.value;
+  protected readonly loading = this.reportLoad.loading;
+  protected readonly failed = this.reportLoad.failed;
 
   // --- What the report shows ---------------------------------------------------------------
   protected readonly readings = computed(() => this.report()?.readings ?? []);
@@ -157,7 +161,10 @@ export class ReportingPage {
     const series = this.series();
     return series ? METRICS.map((m) => ({ ...m, points: series.metrics[m.key] })) : [];
   });
-  protected readonly alertChart = computed(() => this.series());
+  protected readonly alertChart = computed((): AlertSeries | null => {
+    const series = this.series();
+    return series ? { points: series.alerts, markers: series.markers } : null;
+  });
   protected readonly domain = computed((): TimeRange | null => {
     const report = this.report();
     return report ? { from: Date.parse(report.from), to: Date.parse(report.to) } : null;
@@ -175,9 +182,6 @@ export class ReportingPage {
     const report = this.report();
     return report ? lastUtcDay(report.to) : null;
   });
-  /** Shared crosshair and zoom across the charts, like the turbine page. */
-  protected readonly hoverT = signal<number | null>(null);
-  protected readonly view = signal<TimeRange | null>(null);
 
   protected readonly paging = paginate(this.readings, 50, [25, 50, 100, 250]);
   protected readonly columns = computed(() => [
@@ -189,35 +193,6 @@ export class ReportingPage {
   protected readonly metrics = METRICS;
   protected readonly trackById = (_: number, r: Telemetry) => r.id;
 
-  constructor() {
-    this.requests
-      .pipe(
-        tap((request) => {
-          this.lastRequest = request;
-          this.loading.set(true);
-          this.failed.set(false);
-        }),
-        switchMap((request) =>
-          this.api.telemetry(request).pipe(
-            map((report): TelemetryReport | null => report),
-            catchError(() => of(null)),
-          ),
-        ),
-        takeUntilDestroyed(),
-      )
-      .subscribe((report) => {
-        if (report) {
-          this.report.set(report);
-          this.view.set(null);
-          this.hoverT.set(null);
-          this.paging.reset();
-        } else {
-          this.failed.set(true);
-        }
-        this.loading.set(false);
-      });
-  }
-
   /** Runs the report for the chosen scope and days (or shows what is missing). */
   protected run(): void {
     if (this.form.invalid) {
@@ -226,7 +201,7 @@ export class ReportingPage {
     }
     const { scope, start, end } = this.form.getRawValue();
     const option = scope as ScopeOption;
-    this.requests.next({
+    this.reportLoad.run({
       kind: option.kind,
       id: option.id,
       ...dayRange(utcDayOf(start!), utcDayOf(end!)),
@@ -234,21 +209,11 @@ export class ReportingPage {
   }
 
   protected retry(): void {
-    if (this.lastRequest) this.requests.next(this.lastRequest);
+    this.reportLoad.retry();
   }
 
   protected download(): void {
     const report = this.report();
     if (report) downloadCsv(csvFileName(report), toCsv(report));
   }
-
-  /** The rules a reading triggered, one per line (the alerts cell's tooltip). */
-  protected alertLines(reading: Telemetry): string {
-    return reading.alerts.map((rule) => describeTriggerWithLevel(reading, rule)).join('\n');
-  }
-}
-
-/** A picked Date as its UTC day, or null (not chosen, or an invalid typed date). */
-function dayOf(date: Date | null): number | null {
-  return date && !Number.isNaN(date.getTime()) ? utcDayOf(date) : null;
 }

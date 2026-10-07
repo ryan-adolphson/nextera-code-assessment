@@ -1,5 +1,6 @@
 import { DatePipe } from '@angular/common';
 import {
+  dayOf,
   dayRange,
   defaultDays,
   isoDay,
@@ -65,5 +66,13 @@ describe('lastUtcDay and isoDay', () => {
   it('formats right with DatePipe in UTC (a UTCDate would be shifted a second time)', () => {
     const day = lastUtcDay('2026-01-03T00:00:00.000Z');
     expect(new DatePipe('en-US').transform(day, 'MMM d, y', 'UTC')).toBe('Jan 2, 2026');
+  });
+});
+
+describe('dayOf', () => {
+  it('reads a picked Date as its UTC day, and gives null for none or an invalid typed date', () => {
+    expect(dayOf(new Date(2026, 0, 2))).toBe(Date.parse('2026-01-02T00:00:00Z'));
+    expect(dayOf(null)).toBeNull();
+    expect(dayOf(new Date('not a date'))).toBeNull();
   });
 });

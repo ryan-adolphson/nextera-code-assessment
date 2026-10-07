@@ -7,19 +7,16 @@ import {
   effect,
   inject,
   input,
-  signal,
   untracked,
 } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { differenceInMinutes } from 'date-fns';
 import { millisecondsInHour } from 'date-fns/constants';
 import { MatButtonToggle, MatButtonToggleGroup } from '@angular/material/button-toggle';
-import { MatTooltip } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
-import { describeRuleWithLevel } from '../alerting/alert-config.model';
-import { AlertLevelBadge } from '../alerting/alert-level-badge';
-import { describeTriggerWithLevel } from '../alerting/alert-text';
-import { ChartMarker, LineChart, TimeRange } from '../charts/line-chart';
+import { AlertsCell } from '../alerting/alerts-cell';
+import { alertSeries } from '../charts/alert-series';
+import { ChartGroup, ChartSeries } from '../charts/chart-group';
 import { ChartPoint } from '../charts/scales';
 import { DELAYED_AFTER_MS, HISTORY_RANGES, READING_INTERVAL_MS, Telemetry } from './fleet.model';
 import { paginate } from '../ui/paging';
@@ -32,15 +29,14 @@ import { StalenessBadge } from './staleness-badge';
 @Component({
   selector: 'app-turbine-page',
   imports: [
-    AlertLevelBadge,
+    AlertsCell,
     DatePipe,
     DecimalPipe,
     RouterLink,
-    LineChart,
+    ChartGroup,
     MatButton,
     MatButtonToggle,
     MatButtonToggleGroup,
-    MatTooltip,
     StalenessBadge,
     TABLE_IMPORTS,
   ],
@@ -55,10 +51,6 @@ export class TurbinePage implements OnDestroy {
   protected readonly store = inject(FleetStore);
   protected readonly ranges = HISTORY_RANGES;
   protected readonly gapMs = READING_INTERVAL_MS * 1.5; // one missing reading breaks the line
-  /** Shared crosshair across all charts (epoch ms). */
-  protected readonly hoverT = signal<number | null>(null);
-  /** Shared zoomed time window across all charts (ECharts dataZoom), or null for all of it. */
-  protected readonly view = signal<TimeRange | null>(null);
 
   /** The readings table: newest first, 50 per page (Material paginator). */
   protected readonly readingColumns: { key: Metric; label: string }[] = [
@@ -87,11 +79,13 @@ export class TurbinePage implements OnDestroy {
   private readonly ascending = computed(() => [...this.store.history()].reverse());
 
   /** One series per metric. */
-  protected readonly charts = computed(() => {
+  protected readonly charts = computed((): ChartSeries[] => {
     const ascending = this.ascending();
+    const stats = this.store.stats()?.metrics;
     return METRICS.map((metric) => ({
       ...metric,
       points: ascending.map((r): ChartPoint => ({ t: Date.parse(r.timestamp), v: r[metric.key] })),
+      stats: stats?.[metric.key] ?? null,
     }));
   });
 
@@ -99,23 +93,11 @@ export class TurbinePage implements OnDestroy {
    * The alerts chart: a line of how many rules each reading triggered (0, 1, 2…) with the flagged
    * readings as a scatter overlay, coloured by their worst level; the tooltip lists the rules.
    */
-  protected readonly alertChart = computed(() => {
-    const ascending = this.ascending();
-    return {
-      points: ascending.map((r): ChartPoint => ({
-        t: Date.parse(r.timestamp),
-        v: r.alerts.length,
-      })),
-      markers: ascending
-        .filter((r) => r.alerts.length)
-        .map((r): ChartMarker => ({
-          t: Date.parse(r.timestamp),
-          v: r.alerts.length,
-          level: r.alerts[0].alertLevel, // worst first
-          lines: r.alerts.map((rule) => describeTriggerWithLevel(r, rule)),
-        })),
-    };
-  });
+  protected readonly alertChart = computed(() => alertSeries(this.ascending()));
+  /** Another turbine or range: the chart group clears its crosshair and zoom. */
+  protected readonly chartResetKey = computed(
+    () => `${this.turbineId()}:${this.store.historyRangeMs()}`,
+  );
 
   protected readonly window = computed(() => this.store.historyWindow());
 
@@ -141,11 +123,7 @@ export class TurbinePage implements OnDestroy {
     // Load this turbine's readings; reloads if the route switches to another turbine.
     effect(() => {
       const id = this.turbineId();
-      untracked(() => {
-        this.hoverT.set(null);
-        this.view.set(null);
-        this.store.select(id);
-      });
+      untracked(() => this.store.select(id));
     });
   }
 
@@ -154,14 +132,8 @@ export class TurbinePage implements OnDestroy {
   }
 
   protected setRange(ms: number): void {
-    this.view.set(null);
     this.historyPaging.reset();
     this.store.select(this.turbineId(), ms);
-  }
-
-  /** Tooltip of a reading's Alerts cell: one line per triggered rule, worst first. */
-  protected alertLines(reading: Telemetry): string {
-    return reading.alerts.map(describeRuleWithLevel).join('\n');
   }
 
   protected delayMinutes(reading: Telemetry): number {

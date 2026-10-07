@@ -87,57 +87,16 @@
   } @else {
     @if (window(); as window) {
       <!-- Refetch keeps the frame: previous charts stay, dimmed, until new data arrives. -->
-      <!-- Zoomed (brush, slider or Ctrl+wheel): one button brings every chart back to the range. -->
-      @if (view()) {
-        <div class="mb-2 flex justify-end">
-          <button
-            matButton="outlined"
-            type="button"
-            data-testid="reset-zoom"
-            (click)="view.set(null)"
-          >
-            Reset zoom
-          </button>
-        </div>
-      }
-      <section
-        class="grid gap-3 transition-opacity data-refreshing:opacity-50"
-        aria-label="Telemetry charts"
-        [attr.data-refreshing]="store.historyLoading() ? '' : null"
-      >
-        @for (chart of charts(); track chart.key) {
-          <app-line-chart
-            kind="candlestick"
-            [attr.data-metric]="chart.key"
-            [title]="chart.title"
-            [unit]="chart.unit"
-            [decimals]="chart.decimals"
-            [points]="chart.points"
-            [domain]="window"
-            [gapMs]="gapMs"
-            [hoverT]="hoverT()"
-            (hoverTChange)="hoverT.set($event)"
-            [view]="view()"
-            (viewChange)="view.set($event)"
-            [stats]="store.stats()?.metrics?.[chart.key] ?? null"
-          />
-        }
-        <!-- Alerts: rules triggered per reading (line) + the flagged readings (scatter, by level). -->
-        @let alerts = alertChart();
-        <app-line-chart
-          data-metric="alerts"
-          title="Alert rules triggered"
-          [decimals]="0"
-          [points]="alerts.points"
-          [markers]="alerts.markers"
-          [domain]="window"
-          [gapMs]="gapMs"
-          [hoverT]="hoverT()"
-          (hoverTChange)="hoverT.set($event)"
-          [view]="view()"
-          (viewChange)="view.set($event)"
-        />
-      </section>
+      <app-chart-group
+        kind="candlestick"
+        label="Telemetry charts"
+        [charts]="charts()"
+        [alerts]="alertChart()"
+        [domain]="window"
+        [gapMs]="gapMs"
+        [refreshing]="store.historyLoading()"
+        [resetKey]="chartResetKey()"
+      />
     }
 
     <h2 class="mt-8 mb-3 text-lg font-semibold">Readings</h2>
@@ -182,28 +141,11 @@
           </ng-container>
         }
 
-        <!-- The rules the reading triggered when it arrived (stored, not re-evaluated): the worst
-             level's pill; every rule, worst first, is in its tooltip (also the button's
-             accessible description). A click/tap shows the tooltip. -->
+        <!-- The rules the reading triggered when it arrived (stored, not re-evaluated). -->
         <ng-container matColumnDef="alerts">
           <th mat-header-cell *matHeaderCellDef>Alerts</th>
           <td mat-cell *matCellDef="let r" data-testid="reading-alerts">
-            @if (r.alerts.length) {
-              <button
-                #tip="matTooltip"
-                type="button"
-                class="inline-flex cursor-default rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                data-testid="reading-alerts-trigger"
-                matTooltipClass="app-tooltip"
-                matTooltipPosition="above"
-                [matTooltip]="alertLines(r)"
-                (click)="tip.show()"
-              >
-                <app-alert-level-badge [level]="r.alerts[0].alertLevel" />
-              </button>
-            } @else {
-              <span class="text-muted">–</span>
-            }
+            <app-alerts-cell [reading]="r" />
           </td>
         </ng-container>
 

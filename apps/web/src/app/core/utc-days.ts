@@ -18,6 +18,11 @@ export function utcDayOf(date: Date): number {
   return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
+/** A picked Date as its UTC day, or null (not chosen, or an invalid typed date). */
+export function dayOf(date: Date | null): number | null {
+  return date && !Number.isNaN(date.getTime()) ? utcDayOf(date) : null;
+}
+
 /** The calendar date the datepicker shows for a UTC day (the inverse of `utcDayOf`). */
 export function pickerDate(utcDay: number): Date {
   const d = new Date(utcDay);

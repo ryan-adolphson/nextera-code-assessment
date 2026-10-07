@@ -712,19 +712,19 @@ describe('Fleet routes', () => {
       expect(header.at(-1)).toBe('Alerts');
       const cells = [...el().querySelectorAll('[data-testid=reading-alerts]')];
       expect(cells.map((c) => c.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
-        'Error',
+        'Error 2', // the shared AlertsCell: worst level + count
         '–',
         '–',
       ]);
       const trigger = cells[0].querySelector<HTMLButtonElement>(
-        '[data-testid=reading-alerts-trigger]',
+        '[data-testid=alerts-cell-trigger]',
       )!;
       expect(trigger.querySelector('[data-testid=alert-level]')!.getAttribute('data-level')).toBe(
         'error',
       );
       // Every rule, worst first: the tooltip and the button's accessible description.
       expect(document.getElementById(trigger.getAttribute('aria-describedby')!)?.textContent).toBe(
-        'Error: Gearbox temperature above 75 °C\nWarning: Gearbox temperature above 70 °C',
+        'Error: Gearbox temperature 79.3 °C > 75\nWarning: Gearbox temperature 79.3 °C > 70',
       );
     });
 

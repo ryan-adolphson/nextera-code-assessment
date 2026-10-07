@@ -1,6 +1,5 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButton, MatIconButton } from '@angular/material/button';
 import { MatChip, MatChipSet } from '@angular/material/chips';
 import { provideNativeDateAdapter } from '@angular/material/core';
@@ -14,15 +13,14 @@ import {
 import { MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
 import { MatIcon } from '@angular/material/icon';
 import { RouterLink } from '@angular/router';
-import { Subject, catchError, map, of, switchMap, tap } from 'rxjs';
 import { NOW } from '../core/clock';
-import { Telemetry } from '../fleet/fleet.model';
 import { FleetStore } from '../fleet/fleet.store';
+import { latestLoad } from '../ui/latest-load';
 import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
 import { AlertHistoryApi } from './alert-history-api.service';
 import { TurbineAlerts, groupAlertsByTurbine } from './alert-history';
-import { dayRange, defaultDays, pickerDate, rangeError, utcDayOf } from '../core/utc-days';
+import { dayOf, dayRange, defaultDays, pickerDate, rangeError } from '../core/utc-days';
 import { AlertingTabs } from './alerting-tabs';
 import { describeTriggerWithLevel } from './alert-text';
 
@@ -77,9 +75,17 @@ export class AlertHistoryPage {
   private readonly endDay = computed(() => dayOf(this.end()));
   protected readonly error = computed(() => rangeError(this.startDay(), this.endDay()));
 
-  protected readonly readings = signal<Telemetry[]>([]);
-  protected readonly loading = signal(false);
-  protected readonly failed = signal(false);
+  /** The latest range's answer (an earlier range's late answer is dropped); keeps it on failure. */
+  private readonly alerts = latestLoad(
+    ({ from, to }: { from: string; to: string }) => this.api.list(from, to),
+    () => {
+      this.expanded.set(new Set());
+      this.paging.reset();
+    },
+  );
+  protected readonly readings = computed(() => this.alerts.value() ?? []);
+  protected readonly loading = this.alerts.loading;
+  protected readonly failed = this.alerts.failed;
   protected readonly turbineCount = computed(
     () => new Set(this.readings().map((r) => r.turbineId)).size,
   );
@@ -95,38 +101,7 @@ export class AlertHistoryPage {
   protected readonly expanded = signal<ReadonlySet<string>>(new Set());
   protected readonly describe = describeTriggerWithLevel;
 
-  /**
-   * Range requests: `switchMap` keeps only the latest range's answer (like AlertRulesStore); a
-   * failed load keeps the last results and shows the error with a retry.
-   */
-  private readonly requests = new Subject<{ from: string; to: string }>();
-
   constructor() {
-    this.requests
-      .pipe(
-        tap(() => {
-          this.loading.set(true);
-          this.failed.set(false);
-        }),
-        switchMap(({ from, to }) =>
-          this.api.list(from, to).pipe(
-            map((readings): Telemetry[] | null => readings),
-            catchError(() => of(null)),
-          ),
-        ),
-        takeUntilDestroyed(),
-      )
-      .subscribe((readings) => {
-        if (readings) {
-          this.readings.set(readings);
-          this.expanded.set(new Set());
-          this.paging.reset();
-        } else {
-          this.failed.set(true);
-        }
-        this.loading.set(false);
-      });
-
     const { start, end } = defaultDays(this.now());
     this.start.set(pickerDate(start));
     this.end.set(pickerDate(end));
@@ -160,7 +135,7 @@ export class AlertHistoryPage {
   /** Loads the chosen days (an incomplete or invalid range keeps the last results and says why). */
   protected load(): void {
     if (this.error()) return;
-    this.requests.next(dayRange(this.startDay()!, this.endDay()!));
+    this.alerts.run(dayRange(this.startDay()!, this.endDay()!));
   }
 
   private readonly farmNames = computed(
@@ -170,9 +145,4 @@ export class AlertHistoryPage {
   private farmName(farmId: string): string | null {
     return this.farmNames().get(farmId) ?? null;
   }
-}
-
-/** A picked Date as its UTC day, or null (not chosen, or an invalid typed date). */
-function dayOf(date: Date | null): number | null {
-  return date && !Number.isNaN(date.getTime()) ? utcDayOf(date) : null;
 }

@@ -13,6 +13,15 @@ import {
  */
 export const LEVEL_SEVERITY: Record<AlertLevel, number> = { info: 1, warn: 2, error: 3 };
 
+/** The most severe level among `rules` (info when there are none). */
+export function worstLevel(rules: readonly AlertConfig[]): AlertLevel {
+  return rules.reduce<AlertLevel>(
+    (worst, rule) =>
+      LEVEL_SEVERITY[rule.alertLevel] > LEVEL_SEVERITY[worst] ? rule.alertLevel : worst,
+    'info',
+  );
+}
+
 /** "Gearbox temperature 126.5 °C > 120": the reading's value against the rule's threshold. */
 export function describeTrigger(reading: Telemetry, rule: AlertConfig): string {
   const metric = metricOf(rule.measurementMetric);

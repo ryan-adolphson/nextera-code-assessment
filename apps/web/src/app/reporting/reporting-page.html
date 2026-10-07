@@ -142,49 +142,16 @@
         Every reading of {{ r.scope.id }}.
       }
     </p>
-    @if (view()) {
-      <div class="mb-2 flex justify-end">
-        <button
-          matButton="outlined"
-          type="button"
-          data-testid="report-reset-zoom"
-          (click)="view.set(null)"
-        >
-          Reset zoom
-        </button>
-      </div>
-    }
     @if (domain(); as window) {
-      <section class="grid gap-3" aria-label="Report charts" data-testid="report-charts">
-        @for (chart of charts(); track chart.key) {
-          <app-line-chart
-            [attr.data-metric]="chart.key"
-            [title]="chart.title"
-            [unit]="chart.unit"
-            [decimals]="chart.decimals"
-            [points]="chart.points"
-            [domain]="window"
-            [hoverT]="hoverT()"
-            (hoverTChange)="hoverT.set($event)"
-            [view]="view()"
-            (viewChange)="view.set($event)"
-          />
-        }
-        @if (alertChart(); as alerts) {
-          <app-line-chart
-            data-metric="alerts"
-            title="Alert rules triggered"
-            [decimals]="0"
-            [points]="alerts.alerts"
-            [markers]="alerts.markers"
-            [domain]="window"
-            [hoverT]="hoverT()"
-            (hoverTChange)="hoverT.set($event)"
-            [view]="view()"
-            (viewChange)="view.set($event)"
-          />
-        }
-      </section>
+      <app-chart-group
+        label="Report charts"
+        testId="report-charts"
+        resetTestId="report-reset-zoom"
+        [charts]="charts()"
+        [alerts]="alertChart()"
+        [domain]="window"
+        [resetKey]="report()"
+      />
     }
 
     <h2 class="mt-8 mb-3 text-lg font-semibold">Readings</h2>
@@ -223,19 +190,7 @@
         <ng-container matColumnDef="alerts">
           <th mat-header-cell *matHeaderCellDef>Alerts</th>
           <td mat-cell *matCellDef="let row" data-testid="report-row-alerts">
-            @if (row.alerts.length) {
-              <button
-                type="button"
-                class="inline-flex cursor-default items-center gap-1.5 rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                matTooltipClass="app-tooltip"
-                [matTooltip]="alertLines(row)"
-              >
-                <app-alert-level-badge [level]="row.alerts[0].alertLevel" />
-                <span>{{ row.alerts.length }}</span>
-              </button>
-            } @else {
-              <span class="text-muted">–</span>
-            }
+            <app-alerts-cell [reading]="row" />
           </td>
         </ng-container>
 
