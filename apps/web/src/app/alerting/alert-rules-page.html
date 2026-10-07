@@ -6,11 +6,13 @@
       next.
     </p>
   </div>
-  <div class="flex flex-wrap items-center gap-2">
-    <button matButton="filled" type="button" data-testid="add-rule" (click)="openAdd()">
-      Add rule
-    </button>
-  </div>
+  @if (canEdit()) {
+    <div class="flex flex-wrap items-center gap-2">
+      <button matButton="filled" type="button" data-testid="add-rule" (click)="openAdd()">
+        Add rule
+      </button>
+    </div>
+  }
 </div>
 
 <app-alerting-tabs />
@@ -36,7 +38,11 @@
   <div class="mt-2 rounded-lg border border-line bg-surface px-4 py-6" data-testid="no-rules">
     <p class="font-medium">No alert rules yet.</p>
     <p class="mt-1 text-sm text-muted">
-      Add one, for example “Gearbox temperature above 120 °C → Error”.
+      @if (canEdit()) {
+        Add one, for example “Gearbox temperature above 120 °C → Error”.
+      } @else {
+        An owner or admin can add them.
+      }
     </p>
   </div>
 } @else if (store.rules().length) {
@@ -90,10 +96,10 @@
         </td>
       </ng-container>
 
-      <tr mat-header-row *matHeaderRowDef="columns"></tr>
+      <tr mat-header-row *matHeaderRowDef="columns()"></tr>
       <tr
         mat-row
-        *matRowDef="let rule; columns: columns"
+        *matRowDef="let rule; columns: columns()"
         data-testid="rule"
         [attr.data-rule-id]="rule.id"
         [attr.data-level]="rule.alertLevel"

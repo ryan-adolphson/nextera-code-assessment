@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { Component, input } from '@angular/core';
 
 /**
  * The frame of a table on a window-high page (route data `fillViewport`): a bordered column as
@@ -33,7 +33,6 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
     </div>
     <ng-content select="mat-paginator, [table-footer]" />
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TableFrame {
   /** Accessible name of the scrolling region, e.g. "Turbines". */

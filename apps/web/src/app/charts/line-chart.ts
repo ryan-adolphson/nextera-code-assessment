@@ -1,5 +1,4 @@
 import {
-  ChangeDetectionStrategy,
   Component,
   DestroyRef,
   ElementRef,
@@ -146,7 +145,6 @@ export interface ChartMarker {
   selector: 'app-line-chart',
   host: { class: 'block' },
   templateUrl: './line-chart.html',
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class LineChart {
   readonly title = input.required<string>();

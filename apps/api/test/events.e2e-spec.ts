@@ -1,5 +1,6 @@
 import {
   createTestApp,
+  eventsUrl,
   openSse,
   publishReading,
   type TestApp,
@@ -17,7 +18,7 @@ describe('SSE events (e2e, real Redis)', () => {
   });
 
   it('streams text/event-stream with proxy buffering disabled', async () => {
-    const sse = await openSse(`${t.url}/api/events`);
+    const sse = await openSse(eventsUrl(t));
     try {
       expect(sse.response.status).toBe(200);
       expect(sse.response.headers.get('content-type')).toContain(
@@ -30,7 +31,7 @@ describe('SSE events (e2e, real Redis)', () => {
   });
 
   it('serves the stream cross-origin to the Angular app (CORS on SSE)', async () => {
-    const sse = await openSse(`${t.url}/api/events`, {
+    const sse = await openSse(eventsUrl(t), {
       Origin: 'http://localhost:4200',
     });
     try {
@@ -43,7 +44,7 @@ describe('SSE events (e2e, real Redis)', () => {
   });
 
   it('pushes telemetry.received with the Redis stream id', async () => {
-    const sse = await openSse(`${t.url}/api/events`);
+    const sse = await openSse(eventsUrl(t));
     try {
       const reading = await publishReading(t, { gearboxTempC: 126.5 });
       const event = await sse.nextEvent('telemetry.received');
@@ -55,7 +56,7 @@ describe('SSE events (e2e, real Redis)', () => {
   });
 
   it('replays events missed while disconnected (Last-Event-ID), then continues live without duplicates', async () => {
-    const first = await openSse(`${t.url}/api/events`);
+    const first = await openSse(eventsUrl(t));
     await publishReading(t);
     const lastSeen = await first.nextEvent('telemetry.received');
     first.close();
@@ -66,7 +67,7 @@ describe('SSE events (e2e, real Redis)', () => {
     });
     const missedB = await publishReading(t);
 
-    const resumed = await openSse(`${t.url}/api/events`, {
+    const resumed = await openSse(eventsUrl(t), {
       'Last-Event-ID': lastSeen.id!,
     });
     try {
@@ -90,7 +91,7 @@ describe('SSE events (e2e, real Redis)', () => {
   });
 
   it('ignores a malformed Last-Event-ID and streams live', async () => {
-    const sse = await openSse(`${t.url}/api/events`, {
+    const sse = await openSse(eventsUrl(t), {
       'Last-Event-ID': 'garbage',
     });
     try {
@@ -105,8 +106,8 @@ describe('SSE events (e2e, real Redis)', () => {
 
   it('fans out across API instances: an event published via Redis reaches clients on every instance', async () => {
     const instanceB = await createTestApp();
-    const sseA = await openSse(`${t.url}/api/events`);
-    const sseB = await openSse(`${instanceB.url}/api/events`);
+    const sseA = await openSse(eventsUrl(t));
+    const sseB = await openSse(eventsUrl(instanceB));
     try {
       const reading = await publishReading(t);
       for (const sse of [sseA, sseB]) {

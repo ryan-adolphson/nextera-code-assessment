@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, signal, viewChild } from '@angular/core';
+import { Component, signal, viewChild } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MatPaginator } from '@angular/material/paginator';
 import { PagingDirective, paginate } from './paging';
@@ -44,7 +44,6 @@ describe('paginate', () => {
 @Component({
   imports: [MatPaginator, PagingDirective],
   template: `<mat-paginator [appPaging]="paging" aria-label="Pages" />`,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 class PagingHost {
   readonly rows = signal(Array.from({ length: 12 }, (_, i) => i + 1));
@@ -73,5 +72,20 @@ describe('PagingDirective', () => {
     rows.set([1, 2, 3]); // the rows shrink: the clamped index flows back to the paginator
     await fixture.whenStable();
     expect(state()).toEqual([3, 0, 5, [5, 10]]);
+  });
+
+  it('stops listening to the paginator when it is destroyed', async () => {
+    const fixture = TestBed.createComponent(PagingHost);
+    await fixture.whenStable();
+    const paginator = fixture.componentInstance.paginator();
+    const onPage = vi.spyOn(fixture.componentInstance.paging, 'onPage');
+
+    paginator.page.emit({ pageIndex: 1, pageSize: 5, length: 12 });
+    expect(onPage).toHaveBeenCalledOnce();
+
+    fixture.destroy();
+    paginator.page.emit({ pageIndex: 2, pageSize: 5, length: 12 });
+    expect(onPage).toHaveBeenCalledOnce(); // not again
+    expect(paginator.page.observed).toBe(false);
   });
 });

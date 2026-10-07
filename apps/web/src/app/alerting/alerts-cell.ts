@@ -1,14 +1,22 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { Component, computed, input } from '@angular/core';
 import { MatTooltip } from '@angular/material/tooltip';
 import { Telemetry } from '../fleet/fleet.model';
 import { AlertLevelBadge } from './alert-level-badge';
-import { describeTriggerWithLevel } from './alert-text';
+import { countByLevel, describeTriggerWithLevel } from './alert-text';
+
+/** How the cell sums up a reading's alerts. */
+export type AlertsCellFormat =
+  /** The worst level's pill and the total count, "Error 2" (Reporting). */
+  | 'worst'
+  /** One "Level: count" pill per level triggered, worst first, like /alerting/history (turbine page). */
+  | 'levels';
 
 /**
- * A readings-table cell for the rules a reading triggered: the worst level's pill and the count,
- * with every rule (worst first, with the reading's value) in a Material tooltip that is also the
- * button's accessible description; a click/tap shows it. "–" when the reading triggered nothing.
- * Test hooks: `alerts-cell-trigger` on the button.
+ * A readings-table cell for the rules a reading triggered, summed up as `format` says, with every
+ * rule (worst first, with the reading's value) in a Material tooltip that is also the button's
+ * accessible description; a click/tap shows it. "–" when the reading triggered nothing.
+ * Test hooks: `alerts-cell-trigger` on the button; `alert-level` (worst) or `level-count`
+ * (levels) on the pills.
  */
 @Component({
   selector: 'app-alerts-cell',
@@ -25,17 +33,25 @@ import { describeTriggerWithLevel } from './alert-text';
         [matTooltip]="lines()"
         (click)="tip.show()"
       >
-        <app-alert-level-badge [level]="reading().alerts[0].alertLevel" />
-        <span class="tabular-nums">{{ reading().alerts.length }}</span>
+        @if (format() === 'levels') {
+          @for (l of levelCounts(); track l.level) {
+            <app-alert-level-badge testId="level-count" [level]="l.level" [count]="l.count" />
+          }
+        } @else {
+          <app-alert-level-badge [level]="reading().alerts[0].alertLevel" />
+          <span class="tabular-nums">{{ reading().alerts.length }}</span>
+        }
       </button>
     } @else {
       <span class="text-muted">–</span>
     }
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AlertsCell {
   readonly reading = input.required<Telemetry>();
+  readonly format = input<AlertsCellFormat>('worst');
+  /** The levels triggered with their counts, worst first (the `levels` format). */
+  protected readonly levelCounts = computed(() => countByLevel(this.reading().alerts));
   /** One line per triggered rule, e.g. "Error: Gearbox temperature 126.5 °C > 120". */
   protected readonly lines = computed(() => {
     const reading = this.reading();

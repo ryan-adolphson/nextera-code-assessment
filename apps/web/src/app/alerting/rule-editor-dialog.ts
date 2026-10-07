@@ -1,20 +1,6 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  DestroyRef,
-  computed,
-  inject,
-  signal,
-} from '@angular/core';
-import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
-import {
-  AbstractControl,
-  FormControl,
-  FormGroup,
-  ReactiveFormsModule,
-  ValidationErrors,
-  Validators,
-} from '@angular/forms';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { FormField, FormRoot, form, required, validate } from '@angular/forms/signals';
 import { MatButton } from '@angular/material/button';
 import {
   MAT_DIALOG_DATA,
@@ -58,15 +44,19 @@ const DEFAULTS = {
   level: 'warn',
 } as const satisfies Record<string, string>;
 
-/** A finite number (a number input yields null for anything else, so this guards the API). */
-function finite(control: AbstractControl<number | null>): ValidationErrors | null {
-  const value = control.value;
-  return value === null || Number.isFinite(value) ? null : { finite: true };
+/** The editor's model: what the fields show (the threshold is null while empty). */
+interface RuleModel {
+  metric: TelemetryMetric;
+  comparison: AlertComparison;
+  threshold: number | null;
+  level: AlertLevel;
 }
 
 /**
- * Add or edit an alert rule (opened by the Rules page with MatDialog). A typed Reactive Form on
- * Material fields; the native selects stay native (`matNativeControl`). Saving writes through
+ * Add or edit an alert rule (opened by the Rules page with MatDialog). A Signal Form on Material
+ * fields (`[formField]`; Material reads the field's state for its error state and `required`); the
+ * native selects stay native (`matNativeControl`). `[formRoot]` submits it: every field is marked
+ * touched (so `<mat-error>` shows), and only a valid form runs the save action. Saving writes through
  * AlertConfigApi here, so a duplicate (409) or another failure is shown in the open dialog; it
  * closes with a `RuleEditorResult` only on success. MatDialog provides the role, the title as
  * `aria-labelledby`, Esc, focus trapping, focus on the first field and focus return.
@@ -84,11 +74,11 @@ function finite(control: AbstractControl<number | null>): ValidationErrors | nul
     MatInput,
     MatLabel,
     MatSuffix,
-    ReactiveFormsModule,
+    FormField,
+    FormRoot,
   ],
   templateUrl: './rule-editor-dialog.html',
   host: { 'data-testid': 'rule-dialog' },
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class RuleEditorDialog {
   private readonly api = inject(AlertConfigApi);
@@ -102,63 +92,76 @@ export class RuleEditorDialog {
   protected readonly comparisons = ALERT_COMPARISONS;
   protected readonly levels = ALERT_RULE_LEVELS;
 
-  protected readonly form = new FormGroup({
-    metric: new FormControl<TelemetryMetric>(this.editing?.measurementMetric ?? DEFAULTS.metric, {
-      nonNullable: true,
-    }),
-    comparison: new FormControl<AlertComparison>(this.editing?.comparison ?? DEFAULTS.comparison, {
-      nonNullable: true,
-    }),
-    value: new FormControl<number | null>(this.editing?.valueMetric ?? null, [
-      Validators.required,
-      finite,
-    ]),
-    level: new FormControl<AlertLevel>(this.editing?.alertLevel ?? DEFAULTS.level, {
-      nonNullable: true,
-    }),
+  private readonly model = signal<RuleModel>({
+    metric: this.editing?.measurementMetric ?? DEFAULTS.metric,
+    comparison: this.editing?.comparison ?? DEFAULTS.comparison,
+    threshold: this.editing?.valueMetric ?? null,
+    level: this.editing?.alertLevel ?? DEFAULTS.level,
   });
+  protected readonly ruleForm = form(
+    this.model,
+    (rule) => {
+      required(rule.threshold);
+      // A finite number (a number input yields null for anything else, so this guards the API).
+      validate(rule.threshold, ({ value }) => {
+        const threshold = value();
+        return threshold === null || Number.isFinite(threshold) ? undefined : { kind: 'finite' };
+      });
+    },
+    {
+      submission: {
+        action: () => this.save(),
+        onInvalid: () => this.error.set(null),
+      },
+    },
+  );
 
-  private readonly metric = toSignal(this.form.controls.metric.valueChanges, {
-    initialValue: this.form.controls.metric.value,
-  });
-  protected readonly unit = computed(() => metricOf(this.metric()).unit);
-  protected readonly saving = signal(false);
+  protected readonly unit = computed(() => metricOf(this.model().metric).unit);
+  /** A save is in flight (`submit()` also ignores a second submit meanwhile). */
+  protected readonly saving = computed(() => this.ruleForm().submitting());
   protected readonly error = signal<string | null>(null);
 
-  /** The threshold's message (shown by `<mat-error>` once the form was submitted). */
+  /** The threshold's message (shown by `<mat-error>` once the field was touched or submitted). */
   protected valueError(): string {
-    return this.form.controls.value.hasError('required')
+    return this.ruleForm.threshold().getError('required')
       ? 'Enter a threshold value.'
       : 'Enter a number, e.g. 120 or -5.5.';
   }
 
-  protected save(): void {
+  /**
+   * The submit action (valid form only): POST or PATCH, then close with the result. Resolves when
+   * the request ends; failures are shown in the dialog (`error`), not as field errors.
+   */
+  private save(): Promise<undefined> {
     this.error.set(null);
-    if (this.form.invalid || this.saving()) return;
-    const { metric, comparison, value, level } = this.form.getRawValue();
+    const { metric, comparison, threshold, level } = this.model();
     const rule: AlertConfigInput = {
       measurementMetric: metric,
       comparison,
-      valueMetric: value!,
+      valueMetric: threshold!,
       alertLevel: level,
     };
     const editing = this.editing;
-    this.saving.set(true);
-    (editing ? this.api.update(editing.id, rule) : this.api.create(rule))
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        complete: () => this.dialog.close({ action: editing ? 'updated' : 'added', rule }),
-        error: (e: unknown) => {
-          this.saving.set(false);
-          // One rule per metric, condition and level (unique in the database): say so in words,
-          // and reload the list behind the dialog (it may be stale: changed in another browser).
-          if (statusOf(e) === 409) {
-            this.error.set(duplicateMessage(rule));
-            this.rules?.reload();
-          } else {
-            this.error.set(errorMessage(e));
-          }
-        },
-      });
+    return new Promise((resolve) =>
+      (editing ? this.api.update(editing.id, rule) : this.api.create(rule))
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          complete: () => {
+            this.dialog.close({ action: editing ? 'updated' : 'added', rule });
+            resolve(undefined);
+          },
+          error: (e: unknown) => {
+            // One rule per metric, condition and level (unique in the database): say so in words,
+            // and reload the list behind the dialog (it may be stale: changed in another browser).
+            if (statusOf(e) === 409) {
+              this.error.set(duplicateMessage(rule));
+              this.rules?.reload();
+            } else {
+              this.error.set(errorMessage(e));
+            }
+            resolve(undefined);
+          },
+        }),
+    );
   }
 }

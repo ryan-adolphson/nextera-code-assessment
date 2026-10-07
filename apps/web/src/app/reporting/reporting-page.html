@@ -6,11 +6,10 @@
 <!-- The report: a farm or turbine (autocomplete) and the days (required); Run sends one request. -->
 <form
   class="mt-6 flex flex-wrap items-start gap-3"
-  novalidate
   aria-label="Report"
   data-testid="report-form"
-  [formGroup]="form"
-  (ngSubmit)="run()"
+  [formRoot]="reportForm"
+  (submit)="run()"
 >
   <mat-form-field appearance="outline" subscriptSizing="dynamic" class="w-72 max-w-full">
     <mat-label>Farm or turbine</mat-label>
@@ -19,7 +18,7 @@
       type="text"
       placeholder="e.g. Prairie Ridge or TURB001"
       data-testid="report-scope"
-      formControlName="scope"
+      [formField]="reportForm.scope"
       [matAutocomplete]="scopes"
     />
     <mat-autocomplete #scopes="matAutocomplete" [displayWith]="displayOption">
@@ -38,7 +37,7 @@
         </mat-optgroup>
       }
     </mat-autocomplete>
-    @if (form.controls.scope.hasError('chooseOption')) {
+    @if (reportForm.scope().getError('chooseOption')) {
       <mat-error>Choose a farm or turbine from the list.</mat-error>
     } @else {
       <mat-error>Choose a farm or turbine.</mat-error>
@@ -52,9 +51,14 @@
         matStartDate
         placeholder="Start date"
         data-testid="report-from"
-        formControlName="start"
+        [formField]="reportForm.start"
       />
-      <input matEndDate placeholder="End date" data-testid="report-to" formControlName="end" />
+      <input
+        matEndDate
+        placeholder="End date"
+        data-testid="report-to"
+        [formField]="reportForm.end"
+      />
     </mat-date-range-input>
     <mat-datepicker-toggle matIconSuffix [for]="picker" />
     <mat-date-range-picker #picker />
@@ -77,9 +81,9 @@
   </div>
 </form>
 
-@if (form.errors?.['range'] && (form.touched || form.dirty)) {
+@if (rangeMessage(); as message) {
   <p class="mt-2 text-sm text-danger" role="alert" data-testid="report-range-error">
-    {{ form.errors?.['range'] }}
+    {{ message }}
   </p>
 }
 

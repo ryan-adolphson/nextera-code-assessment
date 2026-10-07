@@ -5,7 +5,11 @@ import helmet from 'helmet';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter.js';
 
 export const CORS_METHODS = ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'];
-export const CORS_ALLOWED_HEADERS = ['Content-Type', 'Last-Event-ID'];
+export const CORS_ALLOWED_HEADERS = [
+  'Authorization',
+  'Content-Type',
+  'Last-Event-ID',
+];
 
 /** Global app setup, shared by main.ts and the e2e tests so both behave identically. */
 export function configureApp(
@@ -16,6 +20,7 @@ export function configureApp(
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.enableCors({
     origin: corsOrigins(app.get(ConfigService).get<string>('CORS_ORIGINS', '')),
+    // Authorization: the Bearer access token (a header, not a cookie, so no `credentials`).
     // Writes: alert configs (JSON bodies, so preflighted for Content-Type). Last-Event-ID:
     // EventSource reconnects. Telemetry itself arrives through the ingestion worker.
     methods: CORS_METHODS,

@@ -8,7 +8,9 @@ describe('Reports API (e2e, CSV seed data)', () => {
   let gearboxError: string;
 
   const get = (query: string) =>
-    fetch(`${t.url}/api/reports/telemetry${query}`);
+    fetch(`${t.url}/api/reports/telemetry${query}`, {
+      headers: t.auth('owner'), // reports need owner or above
+    });
   const TWO_DAYS = 'from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z';
 
   beforeAll(async () => {
@@ -135,7 +137,7 @@ describe('Reports API (e2e, CSV seed data)', () => {
   it('allows the Angular origin (CORS)', async () => {
     const res = await fetch(
       `${t.url}/api/reports/telemetry?turbineId=TURB002&${TWO_DAYS}`,
-      { headers: { Origin: 'http://localhost:4200' } },
+      { headers: { Origin: 'http://localhost:4200', ...t.auth('owner') } },
     );
     expect(res.headers.get('access-control-allow-origin')).toBe(
       'http://localhost:4200',

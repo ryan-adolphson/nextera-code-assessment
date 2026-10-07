@@ -85,6 +85,24 @@ resource "google_cloud_run_v2_service" "api" {
         name  = "CORS_ORIGINS"
         value = join(",", local.web_origins) # the web app's origins; see locals above
       }
+      env {
+        name  = "JWT_ISSUER"
+        value = var.jwt_issuer
+      }
+      env {
+        name  = "JWT_AUDIENCE"
+        value = var.jwt_audience
+      }
+      # API only. The secret needs a version before this revision can start (CLAUDE.md, "Auth secrets").
+      env {
+        name = "JWT_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.jwt.secret_id
+            version = "latest"
+          }
+        }
+      }
       dynamic "env" {
         for_each = local.secret_env
         content {
@@ -128,6 +146,7 @@ resource "google_cloud_run_v2_service" "api" {
   depends_on = [
     google_project_iam_member.cloudsql_client,
     google_secret_manager_secret_iam_member.access,
+    google_secret_manager_secret_iam_member.api_jwt,
     google_secret_manager_secret_version.app,
   ]
 }

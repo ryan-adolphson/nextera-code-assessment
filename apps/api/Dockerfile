@@ -6,7 +6,7 @@
 # Only this workspace and @nextera/shared are installed: the other service's dependencies never
 # enter this image.
 
-ARG NODE_IMAGE=node:24.14-alpine
+ARG NODE_IMAGE=node:24.15-alpine
 
 # --- manifests (dependency layers stay cached until one of these changes) --------------------
 FROM ${NODE_IMAGE} AS manifests

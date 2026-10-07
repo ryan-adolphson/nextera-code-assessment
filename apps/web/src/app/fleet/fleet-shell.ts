@@ -1,18 +1,11 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  ElementRef,
-  OnInit,
-  computed,
-  inject,
-  signal,
-  viewChild,
-} from '@angular/core';
+import { Component, ElementRef, OnInit, computed, inject, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { MatIconButton } from '@angular/material/button';
+import { MatButton, MatIconButton } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
+import { AuthStore } from '../core/auth/auth.store';
+import { ROLE_LABELS, Role } from '../core/auth/roles';
 import { IconName } from '../ui/icons';
 import { FleetStore, LiveStatus } from './fleet.store';
 
@@ -23,13 +16,28 @@ const LIVE_LABELS: Record<LiveStatus, string> = {
   offline: 'Offline',
 };
 
-/** The main navigation, in order. `id` is the `nav-<id>` test hook; `icon` a Material Symbol. */
+/**
+ * The main navigation, in order. `id` is the `nav-<id>` test hook; `icon` a Material Symbol;
+ * `minRole` the role that sees it (the route has the same guard, and the API enforces it).
+ */
 export const NAV_ITEMS = [
-  { id: 'farms', path: '/farms', label: 'Farms', icon: 'map' },
-  { id: 'turbines', path: '/turbines', label: 'Turbines', icon: 'wind-power' },
-  { id: 'alerting', path: '/alerting', label: 'Alerting', icon: 'notifications' },
-  { id: 'reporting', path: '/reporting', label: 'Reporting', icon: 'bar-chart' },
-] as const satisfies readonly { id: string; path: string; label: string; icon: IconName }[];
+  { id: 'farms', path: '/farms', label: 'Farms', icon: 'map', minRole: 'viewer' },
+  { id: 'turbines', path: '/turbines', label: 'Turbines', icon: 'wind-power', minRole: 'viewer' },
+  {
+    id: 'alerting',
+    path: '/alerting',
+    label: 'Alerting',
+    icon: 'notifications',
+    minRole: 'viewer',
+  },
+  { id: 'reporting', path: '/reporting', label: 'Reporting', icon: 'bar-chart', minRole: 'owner' },
+] as const satisfies readonly {
+  id: string;
+  path: string;
+  label: string;
+  icon: IconName;
+  minRole: Role;
+}[];
 
 /**
  * Parent of every page: the side navigation and the page region. Owns the FleetStore (provided
@@ -44,16 +52,23 @@ export const NAV_ITEMS = [
  */
 @Component({
   selector: 'app-fleet-shell',
-  imports: [MatIcon, MatIconButton, RouterLink, RouterLinkActive, RouterOutlet],
+  imports: [MatButton, MatIcon, MatIconButton, RouterLink, RouterLinkActive, RouterOutlet],
   providers: [FleetStore],
   templateUrl: './fleet-shell.html',
   host: { '(document:keydown.escape)': 'closeMenu()' },
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class FleetShell implements OnInit {
   protected readonly store = inject(FleetStore);
   protected readonly liveLabel = computed(() => LIVE_LABELS[this.store.liveStatus()]);
-  protected readonly navItems = NAV_ITEMS;
+  protected readonly auth = inject(AuthStore);
+  /** The sections the user's role may open (Reporting: owner and up). */
+  protected readonly navItems = computed(() =>
+    NAV_ITEMS.filter((item) => this.auth.can(item.minRole)),
+  );
+  protected readonly roleLabel = computed(() => {
+    const role = this.auth.role();
+    return role ? ROLE_LABELS[role] : '';
+  });
   /** The narrow-screen menu (always shown from md up). */
   protected readonly menuOpen = signal(false);
   /** The current route asks for a window-high page (route data `fillViewport`). */
@@ -84,6 +99,11 @@ export class FleetShell implements OnInit {
     let route = this.router.routerState.snapshot.root;
     while (route.firstChild) route = route.firstChild;
     return route.data;
+  }
+
+  /** Sign out: forgets the session and goes to /login (which closes the live connection). */
+  protected signOut(): void {
+    this.auth.logout();
   }
 
   protected toggleMenu(): void {

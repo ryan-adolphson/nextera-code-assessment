@@ -18,3 +18,5 @@ github_repository = "my-org/nextera-code-assessment"
 # web_max_instances       = 3
 # ingestion_invokers      = ["group:wind-ops@example.com"]   # may upload CSVs to the worker
 # db_pool_max             = 4
+# jwt_issuer              = "nextera-api"   # JWT iss/aud the API signs and requires
+# jwt_audience            = "nextera-web"

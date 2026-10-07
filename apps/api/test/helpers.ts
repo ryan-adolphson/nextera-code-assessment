@@ -5,16 +5,28 @@ import { configureApp } from '../src/app.setup.js';
 import {
   EventStore,
   PrismaService,
+  SEED_USERS,
   TELEMETRY_RECEIVED,
+  seedUsers,
+  type Role,
   type TelemetryResponse,
 } from '@nextera/shared';
 import { randomUUID } from 'node:crypto';
+import { PasswordService } from '../src/auth/password.service.js';
+import { TokenService } from '../src/auth/token.service.js';
+
+/** Password of the seeded test users (viewer@, owner@, admin@nextera.local) in e2e tests. */
+export const TEST_PASSWORD = 'e2e-test-password';
 
 export interface TestApp {
   app: NestExpressApplication;
   url: string;
   prisma: PrismaService;
   events: EventStore;
+  /** A valid access token per role, for the seeded test users. */
+  tokens: Record<Role, string>;
+  /** `Authorization: Bearer …` headers for a role. */
+  auth(role: Role): Record<string, string>;
 }
 
 /** Boots the real AppModule with the same global setup as main.ts, on a random port. */
@@ -28,12 +40,30 @@ export async function createTestApp(): Promise<TestApp> {
   });
   configureApp(app);
   await app.listen(0, '127.0.0.1'); // a real port: SSE needs streaming over HTTP
+
+  // The seed's test users (idempotent), and a token for each, like POST /api/auth/login returns.
+  const prisma = app.get(PrismaService);
+  const passwords = app.get(PasswordService);
+  await seedUsers(prisma, TEST_PASSWORD, (pw) => passwords.hash(pw));
+  const tokens = {} as Record<Role, string>;
+  for (const { email, role } of SEED_USERS) {
+    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    tokens[role] = (await app.get(TokenService).sign(user)).token;
+  }
+
   return {
     app,
     url: await app.getUrl(),
-    prisma: app.get(PrismaService),
+    prisma,
     events: app.get(EventStore),
+    tokens,
+    auth: (role) => ({ Authorization: `Bearer ${tokens[role]}` }),
   };
+}
+
+/** The SSE URL with the access token as a query parameter (EventSource can't send headers). */
+export function eventsUrl(t: TestApp, role: Role = 'viewer'): string {
+  return `${t.url}/api/events?access_token=${encodeURIComponent(t.tokens[role])}`;
 }
 
 /**

@@ -3,9 +3,11 @@ import type {
   TelemetryResponse,
   TelemetryStatsResponse,
 } from '@nextera/shared';
+import { Roles } from '../auth/auth.decorators.js';
 import { TelemetryQueryDto } from './dto/telemetry-query.dto.js';
 import { FarmOverview, FleetService } from './fleet.service.js';
 
+@Roles('viewer')
 @Controller()
 export class FleetController {
   constructor(private readonly fleet: FleetService) {}

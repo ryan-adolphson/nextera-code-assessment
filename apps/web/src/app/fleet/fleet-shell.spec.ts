@@ -1,6 +1,7 @@
-import { Title } from '@angular/platform-browser';
 import { TestBed } from '@angular/core/testing';
-import { Router } from '@angular/router';
+import { Title } from '@angular/platform-browser';
+import { NavigationEnd, Router } from '@angular/router';
+import { filter, firstValueFrom } from 'rxjs';
 import { openFleet } from './testing';
 
 /** The shell's side navigation, driven through the real routes. */
@@ -170,7 +171,15 @@ describe('FleetShell navigation', () => {
       toggle().click();
       await app.stable();
 
+      const router = TestBed.inject(Router);
+      const navigated = firstValueFrom(
+        router.events.pipe(filter((e) => e instanceof NavigationEnd)),
+      );
       link('alerting').click();
+      await navigated;
+      // The History page's resource is a pending task until its first request is answered.
+      TestBed.tick();
+      app.http.expectOne((r) => r.url.endsWith('/alerts')).flush([]);
       await app.stable();
       expect(url()).toBe('/alerting/history'); // /alerting opens on the History tab
       expect(toggle().getAttribute('aria-expanded')).toBe('false');

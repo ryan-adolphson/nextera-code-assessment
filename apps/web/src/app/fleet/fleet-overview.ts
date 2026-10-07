@@ -1,5 +1,5 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { Component, computed, inject } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { MapView } from '../map/map-view';
 import { StatTile } from '../ui/stat-tile';
@@ -12,7 +12,6 @@ import { FarmSummary, FleetStore } from './fleet.store';
   selector: 'app-fleet-overview',
   imports: [DatePipe, DecimalPipe, RouterLink, MapView, StatTile, TABLE_IMPORTS],
   templateUrl: './fleet-overview.html',
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class FleetOverview {
   protected readonly store = inject(FleetStore);

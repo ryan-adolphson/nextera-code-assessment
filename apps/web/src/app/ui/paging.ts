@@ -1,5 +1,5 @@
 import { Directive, Signal, computed, effect, inject, input, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { outputToObservable } from '@angular/core/rxjs-interop';
 import { MatPaginator, PageEvent } from '@angular/material/paginator';
 
 /** One page of `rows` for a `<mat-paginator>`, driven by signals. */
@@ -59,7 +59,9 @@ export function paginate<T>(
 
 /**
  * Binds a `<mat-paginator>` to a `Paging`: pushes its length, page index, page size and size
- * options into the paginator, and its `page` events back (`[appPaging]="paging"`).
+ * options into the paginator, and its `page` events back (`[appPaging]="paging"`). The `page`
+ * output is read with `outputToObservable`, which completes when the paginator is destroyed (a
+ * `(page)` host listener would be typed as a DOM `Event`).
  */
 @Directive({ selector: 'mat-paginator[appPaging]' })
 export class PagingDirective {
@@ -75,8 +77,8 @@ export class PagingDirective {
       paginator.length = paging.length();
       paginator.pageIndex = paging.pageIndex();
     });
-    this.paginator.page
-      .pipe(takeUntilDestroyed())
-      .subscribe((event) => this.appPaging().onPage(event));
+    outputToObservable<PageEvent>(this.paginator.page).subscribe((event) =>
+      this.appPaging().onPage(event),
+    );
   }
 }

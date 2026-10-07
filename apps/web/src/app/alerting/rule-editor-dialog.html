@@ -1,10 +1,10 @@
 <h2 mat-dialog-title>{{ editing ? 'Edit alert rule' : 'Add alert rule' }}</h2>
-<form novalidate [formGroup]="form" (ngSubmit)="save()">
+<form [formRoot]="ruleForm">
   <mat-dialog-content class="grid gap-4">
     <!-- Material outline fields; the selects stay native (matNativeControl). -->
     <mat-form-field appearance="outline" subscriptSizing="dynamic">
       <mat-label>Metric</mat-label>
-      <select matNativeControl data-testid="rule-metric" formControlName="metric">
+      <select matNativeControl data-testid="rule-metric" [formField]="ruleForm.metric">
         @for (m of metrics; track m.value) {
           <option [value]="m.value">{{ m.label }} ({{ m.unit }})</option>
         }
@@ -14,14 +14,14 @@
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
         <mat-label>Condition</mat-label>
-        <select matNativeControl data-testid="rule-comparison" formControlName="comparison">
+        <select matNativeControl data-testid="rule-comparison" [formField]="ruleForm.comparison">
           @for (c of comparisons; track c.value) {
             <option [value]="c.value">{{ c.label }}</option>
           }
         </select>
       </mat-form-field>
 
-      <!-- Material's default error state: invalid and (touched or the form was submitted). -->
+      <!-- Material's default error state: invalid and touched (submitting marks every field touched). -->
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
         <mat-label>Threshold</mat-label>
         <input
@@ -31,7 +31,7 @@
           inputmode="decimal"
           data-testid="rule-value"
           aria-describedby="rule-value-unit"
-          formControlName="value"
+          [formField]="ruleForm.threshold"
         />
         <span matTextSuffix class="pl-1 text-muted" id="rule-value-unit">{{ unit() }}</span>
         <mat-error data-testid="rule-value-error">{{ valueError() }}</mat-error>
@@ -40,7 +40,7 @@
 
     <mat-form-field appearance="outline" subscriptSizing="dynamic">
       <mat-label>Level</mat-label>
-      <select matNativeControl data-testid="rule-level-select" formControlName="level">
+      <select matNativeControl data-testid="rule-level-select" [formField]="ruleForm.level">
         @for (l of levels; track l.value) {
           <option [value]="l.value">{{ l.label }}</option>
         }

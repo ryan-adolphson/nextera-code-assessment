@@ -4,7 +4,7 @@
 # (.github/workflows/deploy.yml), so this image is never pushed.
 # Build context = repo root (needs the root package-lock.json).
 
-ARG NODE_IMAGE=node:24.14-alpine
+ARG NODE_IMAGE=node:24.15-alpine
 
 FROM ${NODE_IMAGE}
 ENV NODE_ENV=production

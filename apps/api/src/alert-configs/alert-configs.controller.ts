@@ -11,6 +11,7 @@ import {
   Post,
 } from '@nestjs/common';
 import type { AlertConfigResponse } from '@nextera/shared';
+import { Roles } from '../auth/auth.decorators.js';
 import { AlertConfigsService } from './alert-configs.service.js';
 import {
   CreateAlertConfigDto,
@@ -19,8 +20,9 @@ import {
 
 /**
  * /api/alert-configs: alert thresholds. `:id` must be a UUID (else 400).
- * Known gap: writes are unauthenticated, like the rest of the API; add auth before production use.
+ * Every signed-in user reads them; creating, editing and deleting needs owner (a viewer gets 404).
  */
+@Roles('viewer')
 @Controller('alert-configs')
 export class AlertConfigsController {
   constructor(private readonly alertConfigs: AlertConfigsService) {}
@@ -35,11 +37,13 @@ export class AlertConfigsController {
     return this.alertConfigs.get(id);
   }
 
+  @Roles('owner')
   @Post()
   create(@Body() dto: CreateAlertConfigDto): Promise<AlertConfigResponse> {
     return this.alertConfigs.create(dto);
   }
 
+  @Roles('owner')
   @Patch(':id')
   update(
     @Param('id', ParseUUIDPipe) id: string,
@@ -48,6 +52,7 @@ export class AlertConfigsController {
     return this.alertConfigs.update(id, dto);
   }
 
+  @Roles('owner')
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {

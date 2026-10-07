@@ -1,5 +1,4 @@
 import {
-  ChangeDetectionStrategy,
   Component,
   DestroyRef,
   ElementRef,
@@ -74,7 +73,6 @@ const CONTIGUOUS_US: L.LatLngTuple = [39.5, -98.35];
       </ul>
     }
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class MapView {
   readonly markers = input.required<MapMarker[]>();

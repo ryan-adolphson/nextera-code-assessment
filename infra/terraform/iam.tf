@@ -47,6 +47,13 @@ resource "google_secret_manager_secret_iam_member" "access" {
   member    = "serviceAccount:${each.value.sa}"
 }
 
+# Only the API signs and verifies JWTs: the worker, the web app and the deployer never read the key.
+resource "google_secret_manager_secret_iam_member" "api_jwt" {
+  secret_id = google_secret_manager_secret.jwt.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.api.email}"
+}
+
 # The Pub/Sub push identity may invoke the (private) ingestion worker; see also ingestion_csv_uploaders.
 resource "google_cloud_run_v2_service_iam_member" "ingestion_invoker" {
   name     = google_cloud_run_v2_service.ingestion.name

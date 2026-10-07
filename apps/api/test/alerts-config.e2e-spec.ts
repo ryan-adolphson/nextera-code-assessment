@@ -1,5 +1,5 @@
 import { ALERT_CONFIG_CHANGED } from '@nextera/shared';
-import { createTestApp, openSse, type TestApp } from './helpers.js';
+import { createTestApp, eventsUrl, openSse, type TestApp } from './helpers.js';
 
 const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -127,6 +127,7 @@ describe('Alert configs API (e2e)', () => {
       method,
       headers: {
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...t.auth('owner'), // writes need owner or above
         ...headers,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -275,12 +276,27 @@ describe('Alert configs API (e2e)', () => {
     ]);
   });
 
-  it('accepts writes without credentials (known gap: no auth yet)', async () => {
-    const created = await create(); // no Authorization header
+  it('lets viewers read rules but not write them (404), and nobody without a token (401)', async () => {
+    const created = await create(); // as owner
+    const viewer = t.auth('viewer');
+    expect((await request('GET', '', undefined, viewer)).status).toBe(200);
     expect(
-      (await request('PATCH', `/${created.id}`, { valueMetric: 1 })).status,
+      (await request('GET', `/${created.id}`, undefined, viewer)).status,
     ).toBe(200);
-    expect((await request('DELETE', `/${created.id}`)).status).toBe(204);
+    for (const [method, path, body] of [
+      ['POST', '', { ...gearboxError, alertLevel: 'warn' }],
+      ['PATCH', `/${created.id}`, { valueMetric: 1 }],
+      ['DELETE', `/${created.id}`, undefined],
+    ] as const) {
+      expect((await request(method, path, body, viewer)).status).toBe(404);
+      expect(
+        (await request(method, path, body, { Authorization: '' })).status,
+      ).toBe(401);
+    }
+    expect(await (await request('GET', `/${created.id}`)).json()).toEqual(
+      created,
+    ); // unchanged
+    expect(await t.prisma.alertConfig.count()).toBe(1);
   });
 
   describe('validation', () => {
@@ -404,7 +420,7 @@ describe('Alert configs API (e2e)', () => {
           headers: {
             Origin: ORIGIN,
             'Access-Control-Request-Method': method,
-            'Access-Control-Request-Headers': 'content-type',
+            'Access-Control-Request-Headers': 'authorization,content-type',
           },
         });
         expect(res.status).toBe(204);
@@ -412,9 +428,13 @@ describe('Alert configs API (e2e)', () => {
         expect(res.headers.get('access-control-allow-methods')).toContain(
           method,
         );
-        expect(
-          res.headers.get('access-control-allow-headers')?.toLowerCase(),
-        ).toContain('content-type');
+        const allowed = res.headers
+          .get('access-control-allow-headers')
+          ?.toLowerCase();
+        expect(allowed).toContain('content-type');
+        expect(allowed).toContain('authorization');
+        // The token is a header, not a cookie: no credentialed CORS.
+        expect(res.headers.get('access-control-allow-credentials')).toBeNull();
       },
     );
 
@@ -438,7 +458,7 @@ describe('Alert configs API (e2e)', () => {
   });
 
   it('pushes alert-config.changed over SSE after each committed write', async () => {
-    const sse = await openSse(`${t.url}/api/events`);
+    const sse = await openSse(eventsUrl(t));
     try {
       const created = await create();
       const createdEvent = await sse.nextEvent(ALERT_CONFIG_CHANGED);

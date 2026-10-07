@@ -8,7 +8,7 @@
 # API_BASE_URL at startup (docker/40-runtime-config.sh; it refuses to start on a bad value) and
 # serves it as /config.json, which src/main.ts loads before bootstrapping.
 
-ARG NODE_IMAGE=node:24.14-alpine
+ARG NODE_IMAGE=node:24.15-alpine
 ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.29-alpine
 
 # --- build: platform-independent static files, so it runs natively on the build machine ---------

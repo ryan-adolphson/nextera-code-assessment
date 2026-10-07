@@ -42,6 +42,7 @@
     "@nestjs/config": "^12.0.1",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.23.1",
+    "argon2": "^0.45.1",
     "oxlint": "^1.58.0",
     "prettier": "^3.4.2",
     "prisma": "^7.10.0",

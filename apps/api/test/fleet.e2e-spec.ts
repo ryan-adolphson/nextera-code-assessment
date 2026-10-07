@@ -18,7 +18,9 @@ describe('Fleet API (e2e, CSV seed data)', () => {
   });
 
   const get = (path: string, headers: Record<string, string> = {}) =>
-    fetch(`${t.url}/api${path}`, { headers });
+    fetch(`${t.url}/api${path}`, {
+      headers: { ...t.auth('viewer'), ...headers },
+    });
 
   describe('GET /api/farms', () => {
     it('returns every farm with its turbines and their latest reading', async () => {

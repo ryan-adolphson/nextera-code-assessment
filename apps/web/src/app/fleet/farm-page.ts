@@ -1,18 +1,21 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
+import { DecimalPipe } from '@angular/common';
+import { Component, computed, inject, input } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { MapMarker, MapView } from '../map/map-view';
 import { StatTile } from '../ui/stat-tile';
 import { TURBINE_LEGEND, turbineMarkers } from './fleet-markers';
 import { FleetStore } from './fleet.store';
-import { StalenessBadge } from './staleness-badge';
+import { TurbineSortKey, TurbineTable } from './turbine-table';
 
-/** /farms/:farmId: one farm's totals and a map and cards of its turbines (each opens the turbine page). */
+/**
+ * /farms/:farmId: one farm's totals, a map of its turbines and the shared turbines table (as on
+ * /turbines, scoped to this farm, without the Farm column); a marker or a turbine id opens the
+ * turbine page.
+ */
 @Component({
   selector: 'app-farm-page',
-  imports: [DatePipe, DecimalPipe, RouterLink, MapView, StatTile, StalenessBadge],
+  imports: [DecimalPipe, RouterLink, MapView, StatTile, TurbineTable],
   templateUrl: './farm-page.html',
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class FarmPage {
   /** Bound from the route parameter (withComponentInputBinding). */
@@ -27,6 +30,8 @@ export class FarmPage {
     this.store.turbines().filter((t) => t.farmId === this.farmId()),
   );
   protected readonly legend = TURBINE_LEGEND;
+  /** Every turbine here is on this farm. */
+  protected readonly hiddenColumns: readonly TurbineSortKey[] = ['farm'];
   /** Turbines at their coordinates; a farm without turbines shows its own location instead. */
   protected readonly markers = computed<MapMarker[]>(() => {
     const farm = this.farm();

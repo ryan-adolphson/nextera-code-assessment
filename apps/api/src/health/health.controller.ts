@@ -5,8 +5,11 @@ import {
   PrismaHealthIndicator,
 } from '@nestjs/terminus';
 import { PrismaService } from '@nextera/shared';
+import { Public } from '../auth/auth.decorators.js';
 import { RedisHealthIndicator } from './redis.health.js';
 
+/** Cloud Run / compose probes: public. */
+@Public()
 @Controller('health')
 export class HealthController {
   constructor(

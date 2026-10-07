@@ -1,5 +1,6 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { TestRequest } from '@angular/common/http/testing';
+import { TestBed } from '@angular/core/testing';
 import { MatAutocompleteHarness } from '@angular/material/autocomplete/testing';
 import { MatDateRangeInputHarness } from '@angular/material/datepicker/testing';
 import { AlertConfig } from '../alerting/alert-config.model';
@@ -60,12 +61,19 @@ describe('ReportingPage (/reporting)', () => {
     await (await range.getEndInput()).setValue(end);
     await app.stable();
   }
-  async function run() {
+  /**
+   * Clicks Run and renders. A tick, not `whenStable()`: a valid form starts the report resource,
+   * a pending task until the test flushes its request.
+   */
+  function run() {
     q<HTMLButtonElement>('run-report')!.click();
-    await app.stable();
+    TestBed.tick();
   }
-  const expectReport = (): TestRequest =>
-    app.http.expectOne((r) => r.method === 'GET' && r.url === REPORT_URL);
+  /** The pending report request (the resource sends it on change detection). */
+  const expectReport = (): TestRequest => {
+    TestBed.tick();
+    return app.http.expectOne((r) => r.method === 'GET' && r.url === REPORT_URL);
+  };
   async function respond(report: TelemetryReport) {
     expectReport().flush(report);
     await app.stable();
@@ -79,7 +87,7 @@ describe('ReportingPage (/reporting)', () => {
     expect(app.text(app.root().querySelector('h1'))).toBe('Reporting');
     expect(q<HTMLButtonElement>('download-csv')!.disabled).toBe(true); // nothing to download yet
 
-    await run();
+    run();
 
     app.http.expectNone(REPORT_URL);
     const errors = [...app.root().querySelectorAll('mat-error')].map((e) => app.text(e));
@@ -107,7 +115,7 @@ describe('ReportingPage (/reporting)', () => {
     await choose('TURB002', 'TURB002 · High Plains');
     expect(q<HTMLInputElement>('report-scope')!.value).toBe('TURB002 · High Plains');
     await setDays('1/1/2026', '1/2/2026');
-    await run();
+    run();
 
     const req = expectReport();
     expect(req.request.params.get('turbineId')).toBe('TURB002');
@@ -173,7 +181,7 @@ describe('ReportingPage (/reporting)', () => {
   it('runs a farm report: one request by farm id, farm totals in the charts, a turbine column', async () => {
     await choose('prairie', 'Prairie Ridge (FARM01)');
     await setDays('1/2/2026', '1/2/2026');
-    await run();
+    run();
 
     const req = expectReport();
     expect(req.request.params.get('farmId')).toBe('FARM01');
@@ -199,7 +207,7 @@ describe('ReportingPage (/reporting)', () => {
     const scope = await loader().getHarness(MatAutocompleteHarness);
     await scope.enterText('somewhere');
     await setDays('12/1/2025', '1/2/2026');
-    await run();
+    run();
 
     app.http.expectNone(REPORT_URL);
     expect(app.text(app.root().querySelector('mat-error'))).toBe(
@@ -208,16 +216,27 @@ describe('ReportingPage (/reporting)', () => {
     expect(app.text(q('report-range-error'))).toBe('Choose at most 31 days.');
   });
 
+  it("keeps the date picker's own checks: a day after today (max) is not sent", async () => {
+    await choose('TURB002', 'TURB002 · High Plains');
+    await setDays('1/1/2026', '1/10/2026'); // today is Jan 3
+    run();
+
+    app.http.expectNone(REPORT_URL);
+    expect(q('report-to')!.closest('mat-form-field')!.classList).toContain(
+      'mat-form-field-invalid',
+    );
+    expect(app.text(app.root().querySelector('mat-error'))).toBe('Choose the start and end dates.');
+  });
+
   it('shows a load error with a retry, and an empty range', async () => {
     await choose('TURB002', 'TURB002 · High Plains');
     await setDays('1/1/2026', '1/2/2026');
-    await run();
+    run();
     expectReport().flush('boom', { status: 500, statusText: 'Server Error' });
     await app.stable();
     expect(app.text(q('report-error'))).toContain('The report could not be loaded.');
 
     q<HTMLButtonElement>('report-retry')!.click();
-    await app.stable();
     await respond({
       scope: { kind: 'turbine', id: 'TURB002', name: 'High Plains', farmId: 'FARM02' },
       from: '2026-01-01T00:00:00.000Z',
@@ -232,7 +251,7 @@ describe('ReportingPage (/reporting)', () => {
   it('downloads the report as CSV, built in the browser', async () => {
     await choose('TURB002', 'TURB002 · High Plains');
     await setDays('1/1/2026', '1/2/2026');
-    await run();
+    run();
     await respond({
       scope: { kind: 'turbine', id: 'TURB002', name: 'High Plains', farmId: 'FARM02' },
       from: '2026-01-01T00:00:00.000Z',

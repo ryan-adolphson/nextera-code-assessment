@@ -1,7 +1,10 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { Roles } from '../auth/auth.decorators.js';
 import { ReportQueryDto } from './dto/report-query.dto.js';
 import { ReportsService, type TelemetryReport } from './reports.service.js';
 
+/** Reports are for owners and admins (a viewer gets 404). */
+@Roles('owner')
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly reports: ReportsService) {}
