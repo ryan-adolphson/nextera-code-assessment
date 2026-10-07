@@ -57,55 +57,73 @@
   <!-- relative: contains the buttons' absolutely positioned sr-only text, which would otherwise
        widen the page on phones when the table scrolls -->
   <div class="relative overflow-x-auto">
-    <table class="data-table" data-testid="rules">
-      <thead>
-        <tr>
-          <th scope="col">Metric</th>
-          <th scope="col">Condition</th>
-          <th scope="col" class="text-right!">Threshold</th>
-          <th scope="col">Level</th>
-          <th scope="col"><span class="sr-only">Actions</span></th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (rule of store.rules(); track rule.id) {
+    <table mat-table data-testid="rules" [dataSource]="paging.page()" [trackBy]="trackById">
+      <ng-container matColumnDef="metric">
+        <th mat-header-cell *matHeaderCellDef>Metric</th>
+        <td mat-cell *matCellDef="let rule">
           @let metric = metricOf(rule.measurementMetric);
-          <tr data-testid="rule" [attr.data-rule-id]="rule.id" [attr.data-level]="rule.alertLevel">
-            <td>
-              {{ metric.label }} <span class="text-muted">({{ metric.unit }})</span>
-            </td>
-            <td>{{ rule.comparison }}</td>
-            <td class="text-right! tabular-nums">
-              {{ formatThreshold(rule.valueMetric, metric.unit) }}
-            </td>
-            <td>
-              <app-alert-level-badge testId="rule-level" [level]="rule.alertLevel" />
-            </td>
-            <td class="text-right!">
-              <div class="inline-flex gap-1">
-                <button
-                  type="button"
-                  class="cursor-pointer rounded-md px-2 py-1 text-sm text-accent hover:bg-surface"
-                  data-testid="edit-rule"
-                  (click)="openEdit(rule)"
-                >
-                  Edit<span class="sr-only"> rule: {{ describeRule(rule) }}</span>
-                </button>
-                <button
-                  type="button"
-                  class="cursor-pointer rounded-md px-2 py-1 text-sm text-danger hover:bg-surface"
-                  data-testid="delete-rule"
-                  (click)="confirmDelete(rule)"
-                >
-                  Delete<span class="sr-only"> rule: {{ describeRule(rule) }}</span>
-                </button>
-              </div>
-            </td>
-          </tr>
-        }
-      </tbody>
+          {{ metric.label }} <span class="text-muted">({{ metric.unit }})</span>
+        </td>
+      </ng-container>
+      <ng-container matColumnDef="comparison">
+        <th mat-header-cell *matHeaderCellDef>Condition</th>
+        <td mat-cell *matCellDef="let rule">{{ rule.comparison }}</td>
+      </ng-container>
+      <ng-container matColumnDef="threshold">
+        <th mat-header-cell *matHeaderCellDef class="text-right!">Threshold</th>
+        <td mat-cell *matCellDef="let rule" class="text-right! tabular-nums">
+          {{ formatThreshold(rule.valueMetric, metricOf(rule.measurementMetric).unit) }}
+        </td>
+      </ng-container>
+      <ng-container matColumnDef="level">
+        <th mat-header-cell *matHeaderCellDef>Level</th>
+        <td mat-cell *matCellDef="let rule">
+          <app-alert-level-badge testId="rule-level" [level]="rule.alertLevel" />
+        </td>
+      </ng-container>
+      <ng-container matColumnDef="actions">
+        <th mat-header-cell *matHeaderCellDef><span class="sr-only">Actions</span></th>
+        <td mat-cell *matCellDef="let rule" class="text-right!">
+          <div class="inline-flex gap-1">
+            <button
+              type="button"
+              class="cursor-pointer rounded-md px-2 py-1 text-sm text-accent hover:bg-surface"
+              data-testid="edit-rule"
+              (click)="openEdit(rule)"
+            >
+              Edit<span class="sr-only"> rule: {{ describeRule(rule) }}</span>
+            </button>
+            <button
+              type="button"
+              class="cursor-pointer rounded-md px-2 py-1 text-sm text-danger hover:bg-surface"
+              data-testid="delete-rule"
+              (click)="confirmDelete(rule)"
+            >
+              Delete<span class="sr-only"> rule: {{ describeRule(rule) }}</span>
+            </button>
+          </div>
+        </td>
+      </ng-container>
+
+      <tr mat-header-row *matHeaderRowDef="columns"></tr>
+      <tr
+        mat-row
+        *matRowDef="let rule; columns: columns"
+        data-testid="rule"
+        [attr.data-rule-id]="rule.id"
+        [attr.data-level]="rule.alertLevel"
+      ></tr>
     </table>
   </div>
+  <mat-paginator
+    aria-label="Alert rule pages"
+    data-testid="rules-paginator"
+    [length]="paging.length()"
+    [pageIndex]="paging.pageIndex()"
+    [pageSize]="paging.pageSize()"
+    [pageSizeOptions]="paging.pageSizeOptions"
+    (page)="paging.onPage($event)"
+  />
 }
 
 <!-- Add / edit -->

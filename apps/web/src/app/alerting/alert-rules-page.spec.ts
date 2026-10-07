@@ -91,6 +91,11 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     expect(q('alerting-tab-active')!.getAttribute('aria-current')).toBeNull();
     expect(q('alerting-tab-active')!.getAttribute('href')).toBe('/alerting');
     expect(q('nav-alerting')!.getAttribute('aria-current')).toBe('page');
+    // Material table, 25 rules per page.
+    expect(q('rules')!.classList).toContain('mat-mdc-table');
+    expect(app.text(q('rules-paginator')!.querySelector('.mat-mdc-paginator-range-label'))).toBe(
+      '1 – 3 of 3',
+    );
   });
 
   it('shows an empty state without rules', async () => {

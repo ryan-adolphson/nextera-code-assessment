@@ -1,4 +1,6 @@
-import { farmsFixture, mixedFleetFixture, openFleet, reading } from './testing';
+import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
+import { MatPaginatorHarness } from '@angular/material/paginator/testing';
+import { farmsFixture, largeFleetFixture, mixedFleetFixture, openFleet, reading } from './testing';
 
 /** /alerting through the real routes. */
 describe('AlertsPage (/alerting)', () => {
@@ -35,6 +37,19 @@ describe('AlertsPage (/alerting)', () => {
       'empty',
     ]);
     expect(app.text(app.root().querySelector('h2'))).toBe('5 turbines need attention');
+  });
+
+  it('pages the list 25 at a time with a Material paginator', async () => {
+    clockNow = Date.parse('2026-01-03T02:00:00.000Z'); // every reading 2 h 5 min old
+    await open(largeFleetFixture(30));
+    expect(app.text(app.root().querySelector('h2'))).toBe('30 turbines need attention');
+    expect(rows()).toHaveLength(25);
+    const pages = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatPaginatorHarness.with({ selector: '[data-testid=alerts-paginator]' }),
+    );
+    expect(await pages.getRangeLabel()).toBe('1 – 25 of 30');
+    await pages.goToNextPage();
+    expect(rows()).toHaveLength(5);
   });
 
   it('shows the Active and Rules tabs, with Active current', async () => {

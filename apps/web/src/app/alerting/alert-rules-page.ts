@@ -17,6 +17,8 @@ import { MatInput } from '@angular/material/input';
 import { Observable } from 'rxjs';
 import { TelemetryMetric } from '../fleet/fleet.model';
 import { ModalDialog } from '../ui/modal-dialog';
+import { paginate } from '../ui/paging';
+import { TABLE_IMPORTS } from '../ui/table';
 import { AlertConfigApi } from './alert-config-api.service';
 import {
   ALERT_COMPARISONS,
@@ -58,6 +60,7 @@ const DEFAULT_RULE: AlertConfigInput = {
     MatLabel,
     MatSuffix,
     ModalDialog,
+    TABLE_IMPORTS,
   ],
   templateUrl: './alert-rules-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -74,6 +77,10 @@ export class AlertRulesPage {
   protected readonly levelLabel = levelLabel;
   protected readonly formatThreshold = formatThreshold;
   protected readonly describeRule = describeRule;
+  protected readonly columns = ['metric', 'comparison', 'threshold', 'level', 'actions'];
+  /** The rules, 25 per page (Material paginator). */
+  protected readonly paging = paginate(this.store.rules, 25);
+  protected readonly trackById = (_: number, rule: AlertConfig) => rule.id;
 
   // --- List -------------------------------------------------------------------------------
   /** Last outcome, announced politely ("Rule added." …). */

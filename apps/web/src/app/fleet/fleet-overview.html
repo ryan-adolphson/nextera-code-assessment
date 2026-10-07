@@ -25,43 +25,54 @@
   (markerClick)="open($event)"
 />
 
+<!-- Every farm is on the map above, so the table is not paginated. -->
 <div class="mt-6 overflow-x-auto">
-  <table class="data-table" data-testid="farms">
-    <thead>
-      <tr>
-        <th scope="col">Farm</th>
-        <th scope="col">Location</th>
-        <th scope="col" class="text-right!">Turbines</th>
-        <th scope="col" class="text-right!">Reporting</th>
-        <th scope="col" class="text-right!">Output (kW)</th>
-        <th scope="col" class="text-right!">Avg wind (m/s)</th>
-      </tr>
-    </thead>
-    <tbody>
-      @for (farm of store.farms(); track farm.id) {
-        <!-- Row click for mouse users; the link keeps it keyboard- and screen-reader-accessible. -->
-        <tr class="cursor-pointer hover:bg-surface" (click)="open(farm.id)">
-          <td>
-            <a [routerLink]="['/farms', farm.id]" (click)="$event.stopPropagation()">{{
-              farm.name
-            }}</a>
-            <span class="text-muted"> {{ farm.id }}</span>
-          </td>
-          <td class="text-muted">
-            {{ farm.latitude | number: '1.2-2' }}, {{ farm.longitude | number: '1.2-2' }}
-          </td>
-          <td class="text-right! tabular-nums">{{ farm.turbineCount }}</td>
-          <td class="text-right! tabular-nums">
-            {{ farm.turbineCount ? farm.reporting : '–' }}
-          </td>
-          <td class="text-right! tabular-nums">
-            {{ farm.turbineCount ? (farm.powerKw | number: '1.0-0') : '–' }}
-          </td>
-          <td class="text-right! tabular-nums">
-            {{ farm.avgWindMs === null ? '–' : (farm.avgWindMs | number: '1.1-1') }}
-          </td>
-        </tr>
-      }
-    </tbody>
+  <table mat-table data-testid="farms" [dataSource]="store.farms()" [trackBy]="trackById">
+    <ng-container matColumnDef="farm">
+      <th mat-header-cell *matHeaderCellDef>Farm</th>
+      <td mat-cell *matCellDef="let farm">
+        <a [routerLink]="['/farms', farm.id]" (click)="$event.stopPropagation()">{{ farm.name }}</a>
+        <span class="text-muted"> {{ farm.id }}</span>
+      </td>
+    </ng-container>
+    <ng-container matColumnDef="location">
+      <th mat-header-cell *matHeaderCellDef>Location</th>
+      <td mat-cell *matCellDef="let farm" class="text-muted">
+        {{ farm.latitude | number: '1.2-2' }}, {{ farm.longitude | number: '1.2-2' }}
+      </td>
+    </ng-container>
+    <ng-container matColumnDef="turbines">
+      <th mat-header-cell *matHeaderCellDef class="text-right!">Turbines</th>
+      <td mat-cell *matCellDef="let farm" class="text-right! tabular-nums">
+        {{ farm.turbineCount }}
+      </td>
+    </ng-container>
+    <ng-container matColumnDef="reporting">
+      <th mat-header-cell *matHeaderCellDef class="text-right!">Reporting</th>
+      <td mat-cell *matCellDef="let farm" class="text-right! tabular-nums">
+        {{ farm.turbineCount ? farm.reporting : '–' }}
+      </td>
+    </ng-container>
+    <ng-container matColumnDef="power">
+      <th mat-header-cell *matHeaderCellDef class="text-right!">Output (kW)</th>
+      <td mat-cell *matCellDef="let farm" class="text-right! tabular-nums">
+        {{ farm.turbineCount ? (farm.powerKw | number: '1.0-0') : '–' }}
+      </td>
+    </ng-container>
+    <ng-container matColumnDef="wind">
+      <th mat-header-cell *matHeaderCellDef class="text-right!">Avg wind (m/s)</th>
+      <td mat-cell *matCellDef="let farm" class="text-right! tabular-nums">
+        {{ farm.avgWindMs === null ? '–' : (farm.avgWindMs | number: '1.1-1') }}
+      </td>
+    </ng-container>
+
+    <tr mat-header-row *matHeaderRowDef="columns"></tr>
+    <!-- Row click for mouse users; the link keeps it keyboard- and screen-reader-accessible. -->
+    <tr
+      mat-row
+      *matRowDef="let farm; columns: columns"
+      class="cursor-pointer hover:bg-surface"
+      (click)="open(farm.id)"
+    ></tr>
   </table>
 </div>

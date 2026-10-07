@@ -37,37 +37,62 @@
     attention
   </h2>
   <div class="overflow-x-auto">
-    <table class="data-table" data-testid="alerts">
-      <thead>
-        <tr>
-          <th scope="col">Turbine</th>
-          <th scope="col">Farm</th>
-          <th scope="col">Status</th>
-          <th scope="col">Last reading (UTC)</th>
-          <th scope="col">Silent for</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (t of store.alerts(); track t.id) {
-          <tr data-testid="alert" [attr.data-turbine-id]="t.id" [attr.data-staleness]="t.staleness">
-            <td>
-              <a [routerLink]="['/farms', t.farmId, 'turbines', t.id]">{{ t.id }}</a>
-            </td>
-            <td>
-              <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a>
-              <span class="text-muted"> {{ t.farmId }}</span>
-            </td>
-            <td><app-staleness-badge [staleness]="t.staleness" /></td>
-            @if (t.latest; as r) {
-              <td class="tabular-nums">{{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}</td>
-              <td class="tabular-nums" data-testid="alert-age">{{ age(r.timestamp) }}</td>
-            } @else {
-              <td class="text-muted">Never reported</td>
-              <td class="text-muted" data-testid="alert-age">–</td>
-            }
-          </tr>
-        }
-      </tbody>
+    <table mat-table data-testid="alerts" [dataSource]="paging.page()" [trackBy]="trackById">
+      <ng-container matColumnDef="turbine">
+        <th mat-header-cell *matHeaderCellDef>Turbine</th>
+        <td mat-cell *matCellDef="let t">
+          <a [routerLink]="['/farms', t.farmId, 'turbines', t.id]">{{ t.id }}</a>
+        </td>
+      </ng-container>
+      <ng-container matColumnDef="farm">
+        <th mat-header-cell *matHeaderCellDef>Farm</th>
+        <td mat-cell *matCellDef="let t">
+          <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a>
+          <span class="text-muted"> {{ t.farmId }}</span>
+        </td>
+      </ng-container>
+      <ng-container matColumnDef="status">
+        <th mat-header-cell *matHeaderCellDef>Status</th>
+        <td mat-cell *matCellDef="let t"><app-staleness-badge [staleness]="t.staleness" /></td>
+      </ng-container>
+      <ng-container matColumnDef="last">
+        <th mat-header-cell *matHeaderCellDef>Last reading (UTC)</th>
+        <td mat-cell *matCellDef="let t" class="tabular-nums">
+          @if (t.latest; as r) {
+            {{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}
+          } @else {
+            <span class="text-muted">Never reported</span>
+          }
+        </td>
+      </ng-container>
+      <ng-container matColumnDef="age">
+        <th mat-header-cell *matHeaderCellDef>Silent for</th>
+        <td mat-cell *matCellDef="let t" class="tabular-nums" data-testid="alert-age">
+          @if (t.latest; as r) {
+            {{ age(r.timestamp) }}
+          } @else {
+            <span class="text-muted">–</span>
+          }
+        </td>
+      </ng-container>
+
+      <tr mat-header-row *matHeaderRowDef="columns"></tr>
+      <tr
+        mat-row
+        *matRowDef="let t; columns: columns"
+        data-testid="alert"
+        [attr.data-turbine-id]="t.id"
+        [attr.data-staleness]="t.staleness"
+      ></tr>
     </table>
   </div>
+  <mat-paginator
+    aria-label="Active alert pages"
+    data-testid="alerts-paginator"
+    [length]="paging.length()"
+    [pageIndex]="paging.pageIndex()"
+    [pageSize]="paging.pageSize()"
+    [pageSizeOptions]="paging.pageSizeOptions"
+    (page)="paging.onPage($event)"
+  />
 }

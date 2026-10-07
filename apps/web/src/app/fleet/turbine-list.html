@@ -16,13 +16,30 @@
     >
       <mat-label>Turbine or farm</mat-label>
       <input
+        #queryInput
         matInput
         type="search"
+        class="[&::-webkit-search-cancel-button]:appearance-none"
         placeholder="e.g. TURB001 or FARM01"
         data-testid="turbine-filter"
         [value]="query()"
         (input)="onQuery($event)"
       />
+      <!-- Our clear button replaces the browser's own (hidden above), only while there is text.
+           It returns focus to the field. -->
+      @if (query()) {
+        <button
+          matIconButton
+          matSuffix
+          type="button"
+          class="mr-1 [--mat-icon-button-icon-size:20px] [--mat-icon-button-state-layer-size:32px]"
+          aria-label="Clear search"
+          data-testid="turbine-filter-clear"
+          (click)="clearQuery(queryInput)"
+        >
+          <mat-icon class="size-5!" svgIcon="close" />
+        </button>
+      }
     </mat-form-field>
     <mat-form-field appearance="outline" subscriptSizing="dynamic">
       <mat-label>Status</mat-label>
@@ -68,117 +85,163 @@
 
   <!-- relative: contains the cells' absolutely positioned sr-only text (no page overflow) -->
   <div class="relative mt-4 overflow-x-auto">
-    <table class="data-table" data-testid="turbines">
-      <thead>
-        <tr>
-          @for (col of columns; track col.key) {
-            <th scope="col" class="p-0!" [attr.aria-sort]="ariaSort(col.key)">
+    <!-- Sorting: MatSort (two states, aria-sort on the header) drives the `sort` signal; the
+         order itself (no reading last, ties by id) is computed in the component. -->
+    <table
+      mat-table
+      matSort
+      matSortDisableClear
+      data-testid="turbines"
+      [dataSource]="paging.page()"
+      [trackBy]="trackById"
+      [matSortActive]="sort().key"
+      [matSortDirection]="sort().dir"
+      (matSortChange)="onSort($event)"
+    >
+      <ng-container matColumnDef="id">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-id">Turbine</th>
+        <td mat-cell *matCellDef="let t">
+          <a [routerLink]="['/farms', t.farmId, 'turbines', t.id]">{{ t.id }}</a>
+        </td>
+      </ng-container>
+
+      <ng-container matColumnDef="farm">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-farm">Farm</th>
+        <td mat-cell *matCellDef="let t">
+          <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a>
+          <span class="text-muted"> {{ t.farmId }}</span>
+        </td>
+      </ng-container>
+
+      <ng-container matColumnDef="status">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-status">Status</th>
+        <td mat-cell *matCellDef="let t"><app-staleness-badge [staleness]="t.staleness" /></td>
+      </ng-container>
+
+      <ng-container matColumnDef="commissioned">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-commissioned">
+          Commissioned
+        </th>
+        <td
+          mat-cell
+          *matCellDef="let t"
+          data-testid="commissioned-cell"
+          [attr.data-commissioned]="t.commissioned"
+        >
+          <!-- check mark (green) when commissioned, X (muted: a state, not an error) when not.
+               `!` utilities: mat-icon's own size/colour rules are unlayered. -->
+          <mat-icon
+            class="size-5! align-middle"
+            [class]="t.commissioned ? 'text-ok!' : 'text-muted!'"
+            data-testid="commissioned-icon"
+            [attr.data-icon]="t.commissioned ? 'check' : 'x'"
+            [svgIcon]="t.commissioned ? 'check' : 'close'"
+          />
+          <span class="sr-only">{{ t.commissioned ? 'Commissioned' : 'Not commissioned' }}</span>
+        </td>
+      </ng-container>
+
+      <ng-container matColumnDef="alert">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-alert">Alert</th>
+        <td
+          mat-cell
+          *matCellDef="let t"
+          data-testid="alert-cell"
+          [attr.data-alert]="alertOf(t).state === 'triggered' ? alertOf(t).level : alertOf(t).state"
+        >
+          @let alert = alertOf(t);
+          @switch (alert.state) {
+            @case ('triggered') {
+              <!-- Only the pill; every triggered rule (worst first) is in its Material tooltip,
+                   which is also the button's accessible description. A button so it is
+                   focusable and named by the pill ("Error"); a click/tap shows the tooltip. -->
               <button
+                #tip="matTooltip"
                 type="button"
-                class="inline-flex w-full cursor-pointer items-center gap-1 px-3 py-2 font-semibold hover:text-accent"
-                [class.justify-end]="col.numeric"
-                [attr.data-testid]="'sort-' + col.key"
-                (click)="sortBy(col.key)"
+                class="inline-flex cursor-default rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                data-testid="alert-tooltip-trigger"
+                matTooltipClass="app-tooltip"
+                matTooltipPosition="above"
+                [matTooltip]="alert.details.join('\n')"
+                (click)="tip.show()"
               >
-                {{ col.label }}
-                <span class="w-3 text-muted" aria-hidden="true">{{
-                  ariaSort(col.key) === 'ascending'
-                    ? '▲'
-                    : ariaSort(col.key) === 'descending'
-                      ? '▼'
-                      : ''
-                }}</span>
+                <app-alert-level-badge [level]="alert.level!" />
               </button>
-            </th>
-          }
-        </tr>
-      </thead>
-      <tbody>
-        @for (t of rows(); track t.id) {
-          <tr
-            class="data-updated:animate-flash"
-            [attr.data-turbine-id]="t.id"
-            [attr.data-updated]="t.id === store.recentlyUpdated() ? '' : null"
-          >
-            <td>
-              <a [routerLink]="['/farms', t.farmId, 'turbines', t.id]">{{ t.id }}</a>
-            </td>
-            <td>
-              <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a>
-              <span class="text-muted"> {{ t.farmId }}</span>
-            </td>
-            <td><app-staleness-badge [staleness]="t.staleness" /></td>
-            <td data-testid="commissioned-cell" [attr.data-commissioned]="t.commissioned">
-              <!-- check mark (green) when commissioned, X (muted: a state, not an error) when not.
-                   `!` utilities: mat-icon's own size/colour rules are unlayered. -->
-              <mat-icon
-                class="size-5! align-middle"
-                [class]="t.commissioned ? 'text-ok!' : 'text-muted!'"
-                data-testid="commissioned-icon"
-                [attr.data-icon]="t.commissioned ? 'check' : 'x'"
-                [svgIcon]="t.commissioned ? 'check' : 'close'"
-              />
-              <span class="sr-only">{{
-                t.commissioned ? 'Commissioned' : 'Not commissioned'
-              }}</span>
-            </td>
-            @let alert = alerts().get(t.id)!;
-            <td
-              data-testid="alert-cell"
-              [attr.data-alert]="alert.state === 'triggered' ? alert.level : alert.state"
-            >
-              @switch (alert.state) {
-                @case ('triggered') {
-                  <!-- Only the pill; every triggered rule (worst first) is in its Material tooltip,
-                       which is also the button's accessible description. A button so it is
-                       focusable and named by the pill ("Error"); a click/tap shows the tooltip. -->
-                  <button
-                    #tip="matTooltip"
-                    type="button"
-                    class="inline-flex cursor-default rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                    data-testid="alert-tooltip-trigger"
-                    matTooltipClass="app-tooltip"
-                    matTooltipPosition="above"
-                    [matTooltip]="alert.details.join('\n')"
-                    (click)="tip.show()"
-                  >
-                    <app-alert-level-badge [level]="alert.level!" />
-                  </button>
-                }
-                @case ('none') {
-                  <span class="text-muted">None</span>
-                }
-                @case ('no-reading') {
-                  <span class="text-muted">—</span>
-                }
-                @default {
-                  <span class="text-muted" aria-hidden="true">—</span>
-                  <span class="sr-only">{{
-                    alert.state === 'loading' ? 'Loading alert rules' : 'Alert rules unavailable'
-                  }}</span>
-                }
-              }
-            </td>
-            @if (t.latest; as r) {
-              <td class="text-right! tabular-nums">{{ r.powerOutputKw | number: '1.0-0' }}</td>
-              <td class="text-right! tabular-nums">{{ r.windSpeedMs | number: '1.1-1' }}</td>
-              <td class="text-right! tabular-nums">{{ r.gearboxTempC | number: '1.1-1' }}</td>
-              <td class="tabular-nums">{{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}</td>
-            } @else {
-              <td class="text-right! text-muted">–</td>
-              <td class="text-right! text-muted">–</td>
-              <td class="text-right! text-muted">–</td>
-              <td class="text-muted">No readings yet</td>
             }
-          </tr>
-        } @empty {
-          <tr>
-            <td colspan="9" class="text-muted" data-testid="no-matches">
-              No turbines match the filters.
-            </td>
-          </tr>
-        }
-      </tbody>
+            @case ('none') {
+              <span class="text-muted">None</span>
+            }
+            @case ('no-reading') {
+              <span class="text-muted">—</span>
+            }
+            @default {
+              <span class="text-muted" aria-hidden="true">—</span>
+              <span class="sr-only">{{
+                alert.state === 'loading' ? 'Loading alert rules' : 'Alert rules unavailable'
+              }}</span>
+            }
+          }
+        </td>
+      </ng-container>
+
+      <!-- Numeric columns: right-aligned, arrow before the label. -->
+      @for (col of numericColumns; track col.key) {
+        <ng-container [matColumnDef]="col.key">
+          <th
+            mat-header-cell
+            *matHeaderCellDef
+            mat-sort-header
+            arrowPosition="before"
+            class="[&_.mat-sort-header-container]:justify-end"
+            [attr.data-testid]="'sort-' + col.key"
+          >
+            {{ col.label }}
+          </th>
+          <td mat-cell *matCellDef="let t" class="text-right! tabular-nums">
+            @if (t.latest; as r) {
+              {{ r[col.reading.field] | number: col.reading.format }}
+            } @else {
+              <span class="text-muted">–</span>
+            }
+          </td>
+        </ng-container>
+      }
+
+      <ng-container matColumnDef="time">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-time">
+          Last reading (UTC)
+        </th>
+        <td mat-cell *matCellDef="let t" class="tabular-nums">
+          @if (t.latest; as r) {
+            {{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}
+          } @else {
+            <span class="text-muted">No readings yet</span>
+          }
+        </td>
+      </ng-container>
+
+      <tr mat-header-row *matHeaderRowDef="columnKeys"></tr>
+      <tr
+        mat-row
+        *matRowDef="let t; columns: columnKeys"
+        class="data-updated:animate-flash"
+        [attr.data-turbine-id]="t.id"
+        [attr.data-updated]="t.id === store.recentlyUpdated() ? '' : null"
+      ></tr>
+      <tr class="mat-mdc-no-data-row" *matNoDataRow>
+        <td class="mat-mdc-cell px-3 py-2 text-muted" colspan="9" data-testid="no-matches">
+          No turbines match the filters.
+        </td>
+      </tr>
     </table>
   </div>
+  <mat-paginator
+    aria-label="Turbine table pages"
+    data-testid="turbines-paginator"
+    [length]="paging.length()"
+    [pageIndex]="paging.pageIndex()"
+    [pageSize]="paging.pageSize()"
+    [pageSizeOptions]="paging.pageSizeOptions"
+    (page)="paging.onPage($event)"
+  />
 }

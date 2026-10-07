@@ -1,10 +1,13 @@
+import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { TestBed } from '@angular/core/testing';
+import { MatPaginatorHarness } from '@angular/material/paginator/testing';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { of, throwError } from 'rxjs';
 import { routes } from '../app.routes';
 import { NOW } from '../core/clock';
 import { SseService } from '../core/sse.service';
+import { provideIcons } from '../ui/icons';
 import { LineChart } from '../charts/line-chart';
 import { FleetApi } from './fleet-api.service';
 import { FarmOverview, TelemetryStats } from './fleet.model';
@@ -35,6 +38,7 @@ describe('Fleet routes', () => {
         { provide: FleetApi, useValue: api },
         { provide: SseService, useValue: sse },
         { provide: NOW, useValue: () => clockNow },
+        provideIcons(),
       ],
     });
     harness = await RouterTestingHarness.create(url);
@@ -629,6 +633,44 @@ describe('Fleet routes', () => {
       expect(region.getAttribute('tabindex')).toBe('0');
       expect(region.classList).toContain('max-h-[500px]');
       expect(region.classList).toContain('overflow-auto');
+    });
+
+    it('pages the readings, newest first, 50 at a time with a sticky header row', async () => {
+      // 60 readings every 5 minutes, newest (23:55) first.
+      const many = Array.from({ length: 60 }, (_, i) =>
+        reading({
+          id: `m${i}`,
+          timestamp: new Date(Date.parse('2026-01-02T23:55:00.000Z') - i * 300_000).toISOString(),
+          receivedAt: new Date(Date.parse('2026-01-02T23:56:00.000Z') - i * 300_000).toISOString(),
+        }),
+      );
+      await start('/farms/FARM01/turbines/TURB001', many);
+      await stable();
+      const rows = () => [...el().querySelectorAll('[data-testid=history] tbody tr')];
+      const firstTime = () => rows()[0].querySelector('td')!.textContent!.trim();
+      const pages = await TestbedHarnessEnvironment.loader(harness.fixture).getHarness(
+        MatPaginatorHarness.with({ selector: '[data-testid=history-paginator]' }),
+      );
+
+      expect(rows()).toHaveLength(50);
+      expect(firstTime()).toBe('Jan 2, 23:55');
+      expect(await pages.getRangeLabel()).toBe('1 – 50 of 60');
+      // Material makes each header cell sticky (position: sticky; top: 0).
+      const headers = [...el().querySelectorAll<HTMLElement>('[data-testid=history] thead th')];
+      expect(headers).toHaveLength(7);
+      for (const th of headers) {
+        expect(th.classList).toContain('mat-mdc-table-sticky');
+        expect(th.style.top).toBe('0px');
+      }
+
+      await pages.goToNextPage();
+      expect(rows()).toHaveLength(10);
+      expect(firstTime()).toBe('Jan 2, 19:45'); // the 51st reading
+
+      // Another time range starts on the first page again.
+      el().querySelectorAll<HTMLButtonElement>('[data-testid=range] button')[0].click();
+      await stable();
+      expect(await pages.getRangeLabel()).toBe('1 – 50 of 60');
     });
 
     it('adds live readings to the charts and the table', async () => {

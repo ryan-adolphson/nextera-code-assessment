@@ -14,6 +14,8 @@ import { RouterLink } from '@angular/router';
 import { LineChart, TimeRange } from '../charts/line-chart';
 import { ChartPoint } from '../charts/scales';
 import { DELAYED_AFTER_MS, HISTORY_RANGES, READING_INTERVAL_MS, Telemetry } from './fleet.model';
+import { paginate } from '../ui/paging';
+import { TABLE_IMPORTS } from '../ui/table';
 import { FleetStore } from './fleet.store';
 import { StalenessBadge } from './staleness-badge';
 
@@ -34,7 +36,7 @@ export const METRICS: { key: Metric; title: string; unit: string; decimals: numb
 /** /farms/:farmId/turbines/:turbineId: one turbine's status, charts per metric and readings. */
 @Component({
   selector: 'app-turbine-page',
-  imports: [DatePipe, DecimalPipe, RouterLink, LineChart, StalenessBadge],
+  imports: [DatePipe, DecimalPipe, RouterLink, LineChart, StalenessBadge, TABLE_IMPORTS],
   templateUrl: './turbine-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -50,6 +52,22 @@ export class TurbinePage implements OnDestroy {
   protected readonly hoverT = signal<number | null>(null);
   /** Shared zoomed time window across all charts (ECharts dataZoom), or null for all of it. */
   protected readonly view = signal<TimeRange | null>(null);
+
+  /** The readings table: newest first, 50 per page (Material paginator). */
+  protected readonly readingColumns: { key: Metric; label: string }[] = [
+    { key: 'powerOutputKw', label: 'Power (kW)' },
+    { key: 'windSpeedMs', label: 'Wind (m/s)' },
+    { key: 'rotorRpm', label: 'Rotor (rpm)' },
+    { key: 'bladePitchDeg', label: 'Pitch (°)' },
+    { key: 'gearboxTempC', label: 'Gearbox (°C)' },
+  ];
+  protected readonly historyColumns = [
+    'measured',
+    'delay',
+    ...this.readingColumns.map((c) => c.key),
+  ];
+  protected readonly historyPaging = paginate(this.store.history, 50, [25, 50, 100, 250]);
+  protected readonly trackById = (_: number, r: Telemetry) => r.id;
 
   protected readonly turbine = computed(
     () =>
@@ -104,6 +122,7 @@ export class TurbinePage implements OnDestroy {
 
   protected setRange(ms: number): void {
     this.view.set(null);
+    this.historyPaging.reset();
     this.store.select(this.turbineId(), ms);
   }
 

@@ -130,6 +130,34 @@
   --mat-sys-body-small-line-height: 1.25rem;
   --mat-sys-body-small-weight: 400;
   --mat-sys-body-small-tracking: normal;
+  --mat-sys-body-medium-font: inherit;
+  --mat-sys-body-medium-size: 0.9375rem;
+  --mat-sys-body-medium-line-height: 1.5rem;
+  --mat-sys-body-medium-weight: 400;
+  --mat-sys-body-medium-tracking: normal;
+  --mat-sys-label-large-font: inherit;
+  --mat-sys-label-large-line-height: 1.25rem;
+  --mat-sys-label-large-tracking: normal;
+  --mat-sys-title-small-font: inherit;
+  --mat-sys-title-small-size: 0.9375rem;
+  --mat-sys-title-small-line-height: 1.5rem;
+  --mat-sys-title-small-weight: 600;
+  --mat-sys-title-small-tracking: normal;
+  --mat-sys-secondary-container: var(--surface);
+  --mat-sys-on-secondary-container: var(--text);
+
+  /* Tables (`mat-table`): compact 40px rows, hairline row dividers, transparent background. */
+  --mat-table-background-color: transparent;
+  --mat-table-header-container-height: 40px;
+  --mat-table-row-item-container-height: 40px;
+  --mat-table-row-item-outline-color: var(--border);
+  --mat-table-header-headline-color: var(--text);
+  --mat-table-row-item-label-text-color: var(--text);
+  --mat-sort-arrow-color: var(--muted);
+  --mat-paginator-container-background-color: transparent;
+  --mat-paginator-container-text-color: var(--muted);
+  --mat-paginator-enabled-icon-color: var(--text);
+  --mat-paginator-disabled-icon-color: var(--border);
 
   /* Form fields (outline): compact 40px controls, hairline outline like the tables. */
   --mat-form-field-container-height: 40px;
@@ -148,16 +176,8 @@
   @apply max-w-[min(20rem,calc(100vw-16px))] border border-line px-3 py-2 text-left whitespace-pre-line shadow-md;
 }
 
-/* Data tables (farm comparison, turbine readings): hairline rows, compact cells. */
-@utility data-table {
-  @apply w-full border-collapse;
-
-  & th,
-  & td {
-    @apply border-b border-line px-3 py-2 text-left whitespace-nowrap;
-  }
-
-  & th {
-    @apply font-semibold;
-  }
+/* mat-table cells: tighter than Material's 16px, and never wrapped (the wrappers scroll). */
+.mat-mdc-table .mat-mdc-header-cell,
+.mat-mdc-table .mat-mdc-cell {
+  @apply px-3 whitespace-nowrap;
 }

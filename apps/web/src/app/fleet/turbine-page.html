@@ -123,40 +123,51 @@
       data-testid="history-scroll"
     >
       <!-- Every column after the first is numeric: right-aligned, aligned digits.
-           The header row sticks to the top while scrolling; an inset shadow draws its divider,
-           since a collapsed border on a sticky cell scrolls away with the rows. -->
+           The header row sticks to the top while scrolling (bg-page, since Material's rows are
+           transparent here); an inset shadow draws its divider, since a collapsed border on a
+           sticky cell scrolls away with the rows. -->
       <table
-        class="data-table [&_td]:tabular-nums [&_td:not(:first-child)]:text-right [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-page [&_th]:shadow-[inset_0_-1px_0_var(--border)] [&_th:not(:first-child)]:text-right"
+        mat-table
+        class="[&_td]:tabular-nums [&_td:not(:first-child)]:text-right [&_th]:shadow-[inset_0_-1px_0_var(--border)] [&_th:not(:first-child)]:text-right"
         data-testid="history"
+        [dataSource]="historyPaging.page()"
+        [trackBy]="trackById"
       >
-        <thead>
-          <tr>
-            <th scope="col">Measured (UTC)</th>
-            <th scope="col">Arrived after</th>
-            <th scope="col">Power (kW)</th>
-            <th scope="col">Wind (m/s)</th>
-            <th scope="col">Rotor (rpm)</th>
-            <th scope="col">Pitch (°)</th>
-            <th scope="col">Gearbox (°C)</th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (r of store.history(); track r.id) {
-            <tr>
-              <td>{{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}</td>
-              <td class="data-delayed:text-warn" [attr.data-delayed]="isDelayed(r) ? '' : null">
-                {{ delayMinutes(r) }} min
-              </td>
-              <td>{{ r.powerOutputKw | number: '1.1-1' }}</td>
-              <td>{{ r.windSpeedMs | number: '1.1-1' }}</td>
-              <td>{{ r.rotorRpm | number: '1.1-1' }}</td>
-              <td>{{ r.bladePitchDeg | number: '1.1-1' }}</td>
-              <td>{{ r.gearboxTempC | number: '1.1-1' }}</td>
-            </tr>
-          }
-        </tbody>
+        <ng-container matColumnDef="measured">
+          <th mat-header-cell *matHeaderCellDef>Measured (UTC)</th>
+          <td mat-cell *matCellDef="let r">{{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}</td>
+        </ng-container>
+        <ng-container matColumnDef="delay">
+          <th mat-header-cell *matHeaderCellDef>Arrived after</th>
+          <td
+            mat-cell
+            *matCellDef="let r"
+            class="data-delayed:text-warn"
+            [attr.data-delayed]="isDelayed(r) ? '' : null"
+          >
+            {{ delayMinutes(r) }} min
+          </td>
+        </ng-container>
+        @for (col of readingColumns; track col.key) {
+          <ng-container [matColumnDef]="col.key">
+            <th mat-header-cell *matHeaderCellDef>{{ col.label }}</th>
+            <td mat-cell *matCellDef="let r">{{ r[col.key] | number: '1.1-1' }}</td>
+          </ng-container>
+        }
+
+        <tr mat-header-row *matHeaderRowDef="historyColumns; sticky: true" class="bg-page"></tr>
+        <tr mat-row *matRowDef="let r; columns: historyColumns"></tr>
       </table>
     </div>
+    <mat-paginator
+      aria-label="Reading pages"
+      data-testid="history-paginator"
+      [length]="historyPaging.length()"
+      [pageIndex]="historyPaging.pageIndex()"
+      [pageSize]="historyPaging.pageSize()"
+      [pageSizeOptions]="historyPaging.pageSizeOptions"
+      (page)="historyPaging.onPage($event)"
+    />
   }
 } @else {
   <nav class="text-sm"><a [routerLink]="['/farms', farmId()]">← Back to the farm</a></nav>

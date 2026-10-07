@@ -1,8 +1,10 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { MatIcon } from '@angular/material/icon';
-import { MatFormField, MatLabel } from '@angular/material/form-field';
+import { MatIconButton } from '@angular/material/button';
+import { MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
+import { MatSort, MatSortHeader, Sort } from '@angular/material/sort';
 import { MatTooltip } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 import { AlertLevel, ALERT_RULE_LEVELS } from '../alerting/alert-config.model';
@@ -15,6 +17,8 @@ import {
 } from '../alerting/evaluate-alerts';
 import { FleetStore, FleetTurbine } from './fleet.store';
 import { STALENESS_LABELS, STALENESS_ORDER, Staleness } from './staleness';
+import { paginate } from '../ui/paging';
+import { TABLE_IMPORTS } from '../ui/table';
 import { StalenessBadge } from './staleness-badge';
 
 export type TurbineSortKey =
@@ -40,53 +44,58 @@ export type AlertFilter = 'all' | 'none' | AlertLevel;
 
 export type CommissionedFilter = 'all' | 'yes' | 'no';
 
-/** The sortable columns, in table order; `value` is null for a turbine without a value. */
-const COLUMNS: {
+interface Column {
   key: TurbineSortKey;
   label: string;
-  numeric: boolean;
   value: (t: FleetTurbine, alert: AlertCell) => SortValue;
-}[] = [
-  { key: 'id', label: 'Turbine', numeric: false, value: (t) => t.id },
-  { key: 'farm', label: 'Farm', numeric: false, value: (t) => t.farmName },
+  /** Numeric columns: the latest reading's field and its number format. */
+  reading?: { field: 'powerOutputKw' | 'windSpeedMs' | 'gearboxTempC'; format: string };
+}
+type NumericColumn = Column & { reading: NonNullable<Column['reading']> };
+
+/** The sortable columns, in table order; `value` is null for a turbine without a value. */
+const COLUMNS: Column[] = [
+  { key: 'id', label: 'Turbine', value: (t) => t.id },
+  { key: 'farm', label: 'Farm', value: (t) => t.farmName },
   {
     key: 'status',
     label: 'Status',
-    numeric: false,
     value: (t) => STALENESS_ORDER.indexOf(t.staleness),
   },
   {
     // Commissioned (check mark) first, like Status: in service first.
     key: 'commissioned',
     label: 'Commissioned',
-    numeric: false,
     value: (t) => (t.commissioned ? 0 : 1),
   },
   {
     // None, then Info, Warning, Error (like Status: best first); no reading or no rules: last.
     key: 'alert',
     label: 'Alert',
-    numeric: false,
     value: (_, a) =>
       a.state === 'none' ? 0 : a.state === 'triggered' ? LEVEL_SEVERITY[a.level!] : null,
   },
   {
     key: 'power',
     label: 'Power (kW)',
-    numeric: true,
     value: (t) => t.latest?.powerOutputKw ?? null,
+    reading: { field: 'powerOutputKw', format: '1.0-0' },
   },
-  { key: 'wind', label: 'Wind (m/s)', numeric: true, value: (t) => t.latest?.windSpeedMs ?? null },
+  {
+    key: 'wind',
+    label: 'Wind (m/s)',
+    value: (t) => t.latest?.windSpeedMs ?? null,
+    reading: { field: 'windSpeedMs', format: '1.1-1' },
+  },
   {
     key: 'gearbox',
     label: 'Gearbox (°C)',
-    numeric: true,
     value: (t) => t.latest?.gearboxTempC ?? null,
+    reading: { field: 'gearboxTempC', format: '1.1-1' },
   },
   {
     key: 'time',
     label: 'Last reading (UTC)',
-    numeric: false,
     value: (t) => t.latest?.timestamp ?? null,
   },
 ];
@@ -105,11 +114,16 @@ const COLUMNS: {
     DecimalPipe,
     MatFormField,
     MatIcon,
+    MatIconButton,
     MatInput,
     MatLabel,
+    MatSort,
+    MatSortHeader,
+    MatSuffix,
     MatTooltip,
     RouterLink,
     StalenessBadge,
+    TABLE_IMPORTS,
   ],
   templateUrl: './turbine-list.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -117,7 +131,9 @@ const COLUMNS: {
 export class TurbineList {
   protected readonly store = inject(FleetStore);
   protected readonly rulesStore = inject(AlertRulesStore);
-  protected readonly columns = COLUMNS;
+  protected readonly columnKeys = COLUMNS.map((c) => c.key);
+  protected readonly numericColumns = COLUMNS.filter((c): c is NumericColumn => !!c.reading);
+  protected readonly trackById = (_: number, t: FleetTurbine) => t.id;
   protected readonly alertFilters: { value: AlertFilter; label: string }[] = [
     { value: 'all', label: 'Any' },
     ...[...ALERT_RULE_LEVELS].reverse(),
@@ -191,33 +207,47 @@ export class TurbineList {
       .sort((a, b) => compare(value(a), value(b), dir) || a.id.localeCompare(b.id));
   });
 
-  /** Same column: reverse the order; another column: sort by it, ascending. */
-  protected sortBy(key: TurbineSortKey): void {
-    this.sort.update((s) =>
-      s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' },
-    );
+  /** Rows on the current page (Material paginator; 25 per page by default). */
+  protected readonly paging = paginate(this.rows, 25);
+
+  protected alertOf(t: FleetTurbine): AlertCell {
+    return this.alerts().get(t.id)!;
   }
 
-  protected ariaSort(key: TurbineSortKey): 'ascending' | 'descending' | null {
-    const s = this.sort();
-    if (s.key !== key) return null;
-    return s.dir === 'asc' ? 'ascending' : 'descending';
+  /**
+   * MatSort with `matSortDisableClear`: the same column reverses the order, another column sorts
+   * by it ascending. Back to the first page.
+   */
+  protected onSort(sort: Sort): void {
+    this.sort.set({ key: sort.active as TurbineSortKey, dir: sort.direction || 'asc' });
+    this.paging.reset();
   }
 
   protected onQuery(event: Event): void {
     this.query.set((event.target as HTMLInputElement).value);
+    this.paging.reset();
+  }
+
+  /** The search field's clear button: empty the text filter and keep typing where it was. */
+  protected clearQuery(input: HTMLInputElement): void {
+    this.query.set('');
+    this.paging.reset();
+    input.focus();
   }
 
   protected onStatus(event: Event): void {
     this.status.set((event.target as HTMLSelectElement).value as Staleness | 'all');
+    this.paging.reset();
   }
 
   protected onCommissionedFilter(event: Event): void {
     this.commissionedFilter.set((event.target as HTMLSelectElement).value as CommissionedFilter);
+    this.paging.reset();
   }
 
   protected onAlertFilter(event: Event): void {
     this.alertFilter.set((event.target as HTMLSelectElement).value as AlertFilter);
+    this.paging.reset();
   }
 }
 

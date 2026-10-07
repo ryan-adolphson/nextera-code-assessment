@@ -2,9 +2,11 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AlertingTabs } from '../alerting/alerting-tabs';
+import { paginate } from '../ui/paging';
 import { StatTile } from '../ui/stat-tile';
+import { TABLE_IMPORTS } from '../ui/table';
 import { ALERT_LABELS, ALERT_LEVELS, alertCounts, formatAge } from './alerts';
-import { FleetStore } from './fleet.store';
+import { FleetStore, FleetTurbine } from './fleet.store';
 import { StalenessBadge } from './staleness-badge';
 
 /**
@@ -14,7 +16,7 @@ import { StalenessBadge } from './staleness-badge';
  */
 @Component({
   selector: 'app-alerts-page',
-  imports: [AlertingTabs, DatePipe, RouterLink, StalenessBadge, StatTile],
+  imports: [AlertingTabs, DatePipe, RouterLink, StalenessBadge, StatTile, TABLE_IMPORTS],
   templateUrl: './alerts-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -23,6 +25,10 @@ export class AlertsPage {
   protected readonly levels = ALERT_LEVELS;
   protected readonly labels = ALERT_LABELS;
   protected readonly counts = computed(() => alertCounts(this.store.turbines()));
+  protected readonly columns = ['turbine', 'farm', 'status', 'last', 'age'];
+  /** The list, 25 per page (Material paginator); stays on its page as alerts come and go. */
+  protected readonly paging = paginate(this.store.alerts, 25);
+  protected readonly trackById = (_: number, t: FleetTurbine) => t.id;
 
   /** How long ago the turbine's latest reading was measured, on the client clock. */
   protected age(timestamp: string): string {

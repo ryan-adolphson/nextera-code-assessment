@@ -163,6 +163,27 @@ export const mixedFleetFixture = (): FarmOverview[] => {
   ];
 };
 
+/** One farm of `count` reporting turbines TURB001…, for pagination (latest reading 23:55). */
+export const largeFleetFixture = (count: number): FarmOverview[] => [
+  {
+    id: 'FARM01',
+    name: 'Prairie Ridge',
+    latitude: 41.25,
+    longitude: -96.53,
+    turbines: Array.from({ length: count }, (_, i) => {
+      const id = `TURB${String(i + 1).padStart(3, '0')}`;
+      return {
+        id,
+        farmId: 'FARM01',
+        latitude: 41.25,
+        longitude: -96.53,
+        commissioned: true,
+        latest: reading({ id: `${id}-latest`, turbineId: id, powerOutputKw: 100 + i }),
+      };
+    }),
+  },
+];
+
 /** Test doubles for FleetApi and SseService: push SSE events with `sse.push(...)`. */
 export function fakes(farms: FarmOverview[] = farmsFixture()) {
   const events = new Subject<SseEvent<unknown>>();

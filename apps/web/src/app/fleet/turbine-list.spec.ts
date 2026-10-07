@@ -1,7 +1,14 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
+import { MatPaginatorHarness } from '@angular/material/paginator/testing';
 import { MatTooltipHarness } from '@angular/material/tooltip/testing';
 import { AlertConfig } from '../alerting/alert-config.model';
-import { TEST_API_BASE_URL, mixedFleetFixture, openFleet, reading } from './testing';
+import {
+  TEST_API_BASE_URL,
+  largeFleetFixture,
+  mixedFleetFixture,
+  openFleet,
+  reading,
+} from './testing';
 
 const RULES_URL = `${TEST_API_BASE_URL}/alert-configs`;
 
@@ -25,10 +32,11 @@ describe('TurbineList (/turbines)', () => {
   const ids = () => rows().map((r) => r.getAttribute('data-turbine-id'));
   const cells = (row: Element) => [...row.querySelectorAll('td')].map((td) => app.text(td));
   const sortButton = (key: string) =>
-    app.root().querySelector<HTMLButtonElement>(`[data-testid=sort-${key}]`)!;
+    app.root().querySelector<HTMLElement>(`[data-testid=sort-${key}]`)!;
+  /** The sorted header (MatSort marks the others aria-sort="none"). */
   const sortedColumns = () =>
-    [...table().querySelectorAll('th[aria-sort]')].map((th) => [
-      app.text(th.querySelector('button')),
+    [...table().querySelectorAll('th[aria-sort]:not([aria-sort=none])')].map((th) => [
+      app.text(th),
       th.getAttribute('aria-sort'),
     ]);
   async function sortBy(key: string) {
@@ -61,6 +69,32 @@ describe('TurbineList (/turbines)', () => {
     ).toEqual(['Turbine or farm', 'Status', 'Commissioned', 'Alert']);
     // The selects stay native, so they keep the platform pickers (and the tests' change events).
     expect(app.root().querySelector('[data-testid=status-filter]')!.tagName).toBe('SELECT');
+  });
+
+  it('clears the turbine and farm search with the clear button in the field', async () => {
+    const input = () => app.root().querySelector<HTMLInputElement>('[data-testid=turbine-filter]')!;
+    const clear = () =>
+      app.root().querySelector<HTMLButtonElement>('[data-testid=turbine-filter-clear]');
+    // Only while there is something to clear.
+    expect(clear()).toBeNull();
+
+    await filter('farm01');
+    expect(ids()).toEqual(['TURB001', 'TURB003', 'TURB005']);
+    const button = clear()!;
+    expect([button.type, button.getAttribute('aria-label')]).toEqual(['button', 'Clear search']);
+    expect(button.hasAttribute('matsuffix')).toBe(true);
+    expect(button.closest('.mat-mdc-form-field-icon-suffix')).not.toBeNull();
+    expect(button.querySelector('mat-icon')!.getAttribute('data-mat-icon-name')).toBe('close');
+
+    button.click();
+    await app.stable();
+    expect(input().value).toBe('');
+    expect(ids()).toHaveLength(7);
+    expect(app.text(app.root().querySelector('[data-testid=turbine-count]'))).toBe(
+      '7 of 7 turbines',
+    );
+    expect(document.activeElement).toBe(input());
+    expect(clear()).toBeNull();
   });
 
   it('lists every turbine of every farm by turbine id, with status and latest reading', () => {
@@ -100,7 +134,7 @@ describe('TurbineList (/turbines)', () => {
     expect(rows()[5].querySelector('[data-testid=staleness]')!.getAttribute('data-staleness')).toBe(
       'stale-30',
     );
-    expect(sortedColumns()).toEqual([['Turbine ▲', 'ascending']]);
+    expect(sortedColumns()).toEqual([['Turbine', 'ascending']]);
     expect(app.text(app.root().querySelector('[data-testid=turbine-count]'))).toBe(
       '7 of 7 turbines',
     );
@@ -112,8 +146,16 @@ describe('TurbineList (/turbines)', () => {
   });
 
   it('sorts by a column from its header button, and reverses on a second click', async () => {
+    // Every header is a Material sort header: a focusable role=button, aria-sort on the <th>.
+    const headers = [...table().querySelectorAll('thead th')];
+    expect(headers).toHaveLength(9);
+    for (const th of headers) {
+      expect(th.classList).toContain('mat-sort-header');
+      const button = th.querySelector('[role=button]')!;
+      expect(button.getAttribute('tabindex')).toBe('0');
+    }
     await sortBy('power');
-    expect(sortedColumns()).toEqual([['Power (kW) ▲', 'ascending']]);
+    expect(sortedColumns()).toEqual([['Power (kW)', 'ascending']]);
     // No reading (TURB004) always goes last.
     expect(ids()).toEqual([
       'TURB005',
@@ -126,7 +168,7 @@ describe('TurbineList (/turbines)', () => {
     ]);
 
     await sortBy('power');
-    expect(sortedColumns()).toEqual([['Power (kW) ▼', 'descending']]);
+    expect(sortedColumns()).toEqual([['Power (kW)', 'descending']]);
     expect(ids()).toEqual([
       'TURB002',
       'TURB001',
@@ -246,7 +288,7 @@ describe('TurbineList (/turbines)', () => {
 
     it('sorts commissioned first, then reversed, ties by turbine id', async () => {
       await sortBy('commissioned');
-      expect(sortedColumns()).toEqual([['Commissioned ▲', 'ascending']]);
+      expect(sortedColumns()).toEqual([['Commissioned', 'ascending']]);
       expect(ids()).toEqual([
         'TURB001',
         'TURB002',
@@ -257,7 +299,7 @@ describe('TurbineList (/turbines)', () => {
         'TURB007',
       ]);
       await sortBy('commissioned');
-      expect(sortedColumns()).toEqual([['Commissioned ▼', 'descending']]);
+      expect(sortedColumns()).toEqual([['Commissioned', 'descending']]);
       expect(ids().slice(0, 2)).toEqual(['TURB004', 'TURB007']);
     });
 
@@ -461,7 +503,7 @@ describe('TurbineList (/turbines)', () => {
     it('sorts by alert (None, Info, Warning, Error; no reading last), ties by turbine id', async () => {
       await rulesChanged(RULES());
       await sortBy('alert');
-      expect(sortedColumns()).toEqual([['Alert ▲', 'ascending']]);
+      expect(sortedColumns()).toEqual([['Alert', 'ascending']]);
       expect(ids()).toEqual([
         'TURB001',
         'TURB002',
@@ -473,7 +515,7 @@ describe('TurbineList (/turbines)', () => {
       ]);
 
       await sortBy('alert');
-      expect(sortedColumns()).toEqual([['Alert ▼', 'descending']]);
+      expect(sortedColumns()).toEqual([['Alert', 'descending']]);
       expect(ids()).toEqual([
         'TURB006',
         'TURB003',
@@ -583,5 +625,68 @@ describe('TurbineList without turbines', () => {
     expect(app.text(app.root().querySelector('[data-testid=no-turbines]'))).toBe(
       'No turbines are registered yet.',
     );
+  });
+});
+
+/** /turbines with more turbines than fit on a page. */
+describe('TurbineList pagination', () => {
+  const CLOCK = Date.parse('2026-01-03T00:00:00.000Z');
+  let app: Awaited<ReturnType<typeof openFleet>>;
+  beforeEach(async () => {
+    app = await openFleet('/turbines', () => CLOCK, largeFleetFixture(30));
+    app.http.expectOne({ method: 'GET', url: RULES_URL }).flush([]);
+    await app.stable();
+  });
+  afterEach(() => app.http.verify());
+
+  const ids = () =>
+    [...app.root().querySelectorAll('[data-testid=turbines] tbody tr[data-turbine-id]')].map((r) =>
+      r.getAttribute('data-turbine-id'),
+    );
+  const paginator = () =>
+    TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatPaginatorHarness.with({ selector: '[data-testid=turbines-paginator]' }),
+    );
+
+  it('shows 25 turbines per page with a Material paginator, and pages through the rest', async () => {
+    const pages = await paginator();
+    expect(ids()).toHaveLength(25);
+    expect([ids()[0], ids()[24]]).toEqual(['TURB001', 'TURB025']);
+    expect(await pages.getRangeLabel()).toBe('1 – 25 of 30');
+    expect(await pages.isPreviousPageDisabled()).toBe(true);
+    // The count above the table is every match, not the page.
+    expect(app.text(app.root().querySelector('[data-testid=turbine-count]'))).toBe(
+      '30 of 30 turbines',
+    );
+
+    await pages.goToNextPage();
+    expect(ids()).toEqual(['TURB026', 'TURB027', 'TURB028', 'TURB029', 'TURB030']);
+    expect(await pages.getRangeLabel()).toBe('26 – 30 of 30');
+    expect(await pages.isNextPageDisabled()).toBe(true);
+
+    await pages.setPageSize(10);
+    expect(await pages.getPageSize()).toBe(10);
+    expect(ids()).toHaveLength(10);
+  });
+
+  it('pages the sorted, filtered rows and goes back to the first page on a sort or filter', async () => {
+    const pages = await paginator();
+    await pages.goToNextPage();
+
+    // Sorting by power descending: the first page holds the 25 highest.
+    const power = app.root().querySelector<HTMLElement>('[data-testid=sort-power]')!;
+    power.click();
+    power.click();
+    await app.stable();
+    expect(await pages.getRangeLabel()).toBe('1 – 25 of 30');
+    expect([ids()[0], ids()[24]]).toEqual(['TURB030', 'TURB006']);
+
+    await pages.goToNextPage();
+    const input = app.root().querySelector<HTMLInputElement>('[data-testid=turbine-filter]')!;
+    input.value = 'TURB01';
+    input.dispatchEvent(new Event('input'));
+    await app.stable();
+    expect(await pages.getRangeLabel()).toBe('1 – 10 of 10');
+    expect(ids()).toHaveLength(10);
   });
 });
