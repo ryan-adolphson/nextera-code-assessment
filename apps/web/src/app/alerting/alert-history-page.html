@@ -5,27 +5,29 @@
 
 <app-alerting-tabs />
 
-<!-- The range (UTC, `datetime-local`): defaults to the last 24 hours; any change reloads. -->
-<div class="mt-6 flex flex-wrap items-start gap-3" role="search" aria-label="Alert time range">
-  <mat-form-field appearance="outline" subscriptSizing="dynamic">
-    <mat-label>From (UTC)</mat-label>
-    <input
-      matInput
-      type="datetime-local"
-      data-testid="history-from"
-      [value]="fromInput()"
-      (change)="onFrom($event)"
-    />
-  </mat-form-field>
-  <mat-form-field appearance="outline" subscriptSizing="dynamic">
-    <mat-label>To (UTC)</mat-label>
-    <input
-      matInput
-      type="datetime-local"
-      data-testid="history-to"
-      [value]="toInput()"
-      (change)="onTo($event)"
-    />
+<!-- The days (UTC): a Material date range picker, default yesterday and today; a complete,
+     valid range reloads. -->
+<div class="mt-6 flex flex-wrap items-start gap-3" role="search" aria-label="Alert date range">
+  <mat-form-field appearance="outline" subscriptSizing="dynamic" data-testid="history-range">
+    <mat-label>Dates (UTC)</mat-label>
+    <mat-date-range-input [rangePicker]="picker" [max]="maxDate">
+      <input
+        matStartDate
+        placeholder="Start date"
+        data-testid="history-from"
+        [value]="start()"
+        (dateChange)="onStart($event.value)"
+      />
+      <input
+        matEndDate
+        placeholder="End date"
+        data-testid="history-to"
+        [value]="end()"
+        (dateChange)="onEnd($event.value)"
+      />
+    </mat-date-range-input>
+    <mat-datepicker-toggle matIconSuffix [for]="picker" />
+    <mat-date-range-picker #picker />
   </mat-form-field>
   <p class="pt-2.5 text-sm text-muted" role="status" data-testid="history-count">
     @if (error(); as message) {

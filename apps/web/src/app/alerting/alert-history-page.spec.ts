@@ -1,6 +1,7 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { TestRequest } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { MatDateRangeInputHarness } from '@angular/material/datepicker/testing';
 import { MatPaginatorHarness } from '@angular/material/paginator/testing';
 import { Title } from '@angular/platform-browser';
 import { Router } from '@angular/router';
@@ -62,10 +63,13 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     expectAlerts().flush(readings);
     await app.stable();
   }
-  async function setRange(id: 'history-from' | 'history-to', value: string) {
-    const input = q<HTMLInputElement>(id)!;
-    input.value = value;
-    input.dispatchEvent(new Event('change'));
+  /** Types days into the Material date range input (en-US, M/D/YYYY), like a user would. */
+  async function setDays(start: string | null, end: string | null) {
+    const range = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatDateRangeInputHarness,
+    );
+    if (start !== null) await (await range.getStartInput()).setValue(start);
+    if (end !== null) await (await range.getEndInput()).setValue(end);
     await app.stable();
   }
   const chipTexts = (el: Element) =>
@@ -102,16 +106,23 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     app = await openFleet('/alerting/history', () => CLOCK);
   });
 
-  it('asks for the last 24 hours by default (to the next minute) and shows them in the range fields', async () => {
+  it('asks for yesterday and today (whole UTC days) by default, shown in the Material date range picker', async () => {
     const req = expectAlerts();
-    expect(req.request.params.get('from')).toBe('2026-01-02T00:01:00.000Z');
-    expect(req.request.params.get('to')).toBe('2026-01-03T00:01:00.000Z');
+    expect(req.request.params.get('from')).toBe('2026-01-02T00:00:00.000Z');
+    expect(req.request.params.get('to')).toBe('2026-01-04T00:00:00.000Z'); // the day after today
     req.flush([]);
     await app.stable();
 
-    expect(q<HTMLInputElement>('history-from')!.value).toBe('2026-01-02T00:01');
-    expect(q<HTMLInputElement>('history-to')!.value).toBe('2026-01-03T00:01');
-    expect(q<HTMLInputElement>('history-from')!.type).toBe('datetime-local');
+    const range = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatDateRangeInputHarness,
+    );
+    expect(await (await range.getStartInput()).getValue()).toBe('1/2/2026');
+    expect(await (await range.getEndInput()).getValue()).toBe('1/3/2026');
+    expect(await range.getValue()).toBe('1/2/2026 – 1/3/2026');
+    // A Material date range input with a picker toggle; no future days (max = today).
+    expect(q('history-range')!.querySelector('mat-date-range-input')).not.toBeNull();
+    expect(q('history-range')!.querySelector('mat-datepicker-toggle button')).not.toBeNull();
+    expect(await (await range.getEndInput()).getMax()).toBe('2026-01-03'); // ISO from the harness
     expect(TestBed.inject(Title).getTitle()).toBe('Alert history · Nextera');
     expect(q('alerting-tab-history')!.getAttribute('aria-current')).toBe('page');
     expect(app.text(q('history-empty'))).toBe('No alerts in this range.');
@@ -237,20 +248,22 @@ describe('AlertHistoryPage (/alerting/history)', () => {
   it('reloads when the range changes, and explains an invalid range without asking the API', async () => {
     await flush(flagged());
 
-    await setRange('history-from', '2026-01-02T03:00');
+    await setDays('1/1/2026', null); // a new start day, the same end day
     const req = expectAlerts();
-    expect(req.request.params.get('from')).toBe('2026-01-02T03:00:00.000Z');
-    expect(req.request.params.get('to')).toBe('2026-01-03T00:01:00.000Z');
+    expect(req.request.params.get('from')).toBe('2026-01-01T00:00:00.000Z');
+    expect(req.request.params.get('to')).toBe('2026-01-04T00:00:00.000Z');
     req.flush(flagged().slice(1));
     await app.stable();
     expect(all('history-turbine')).toHaveLength(1);
 
-    await setRange('history-to', '2026-01-02T02:00');
+    await setDays('1/5/2026', '1/3/2026');
     app.http.expectNone(ALERTS_URL);
-    expect(app.text(q('history-range-error'))).toBe('The end must be after the start.');
+    expect(app.text(q('history-range-error'))).toBe(
+      'The end date must not be before the start date.',
+    );
     expect(all('history-turbine')).toHaveLength(1); // the last results stay
 
-    await setRange('history-to', '2026-02-05T00:00');
+    await setDays('12/1/2025', '1/3/2026');
     app.http.expectNone(ALERTS_URL);
     expect(app.text(q('history-range-error'))).toBe('Choose at most 31 days.');
   });

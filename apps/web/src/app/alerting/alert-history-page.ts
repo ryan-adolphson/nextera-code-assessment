@@ -3,9 +3,16 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButton, MatIconButton } from '@angular/material/button';
 import { MatChip, MatChipSet } from '@angular/material/chips';
-import { MatFormField, MatLabel } from '@angular/material/form-field';
+import { provideNativeDateAdapter } from '@angular/material/core';
+import {
+  MatDateRangeInput,
+  MatDateRangePicker,
+  MatDatepickerToggle,
+  MatEndDate,
+  MatStartDate,
+} from '@angular/material/datepicker';
+import { MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
 import { MatIcon } from '@angular/material/icon';
-import { MatInput } from '@angular/material/input';
 import { RouterLink } from '@angular/router';
 import { Subject, catchError, map, of, switchMap, tap } from 'rxjs';
 import { NOW } from '../core/clock';
@@ -16,22 +23,24 @@ import { TABLE_IMPORTS } from '../ui/table';
 import { AlertHistoryApi } from './alert-history-api.service';
 import {
   TurbineAlerts,
-  fromUtcInput,
+  dayRange,
+  defaultDays,
   groupAlertsByTurbine,
-  last24Hours,
+  pickerDate,
   rangeError,
-  toUtcInput,
+  utcDayOf,
 } from './alert-history';
 import { describeRuleWithLevel } from './alert-config.model';
 import { AlertingTabs } from './alerting-tabs';
 import { describeTriggerWithLevel } from './alert-text';
 
 /**
- * /alerting/history: the readings that triggered alert rules in a time range (GET /api/alerts),
- * default the last 24 hours. A Material table with expandable rows: one summary row per turbine
+ * /alerting/history: the readings that triggered alert rules over whole UTC days chosen with a
+ * Material date range picker (GET /api/alerts for [start 00:00, the day after end 00:00)), default
+ * yesterday and today. A Material table with expandable rows: one summary row per turbine
  * (latest alert, each distinct rule as a Material chip with its count) that
  * expands to its flagged readings, newest first, each with its rules as chips. 25 turbines per
- * page. The range is in UTC like every time in the app; changing it reloads.
+ * page. Days are UTC like every time in the app; choosing a valid range reloads.
  */
 @Component({
   selector: 'app-alert-history-page',
@@ -41,15 +50,22 @@ import { describeTriggerWithLevel } from './alert-text';
     MatButton,
     MatChip,
     MatChipSet,
+    MatDateRangeInput,
+    MatDateRangePicker,
+    MatDatepickerToggle,
+    MatEndDate,
     MatFormField,
     MatIcon,
     MatIconButton,
-    MatInput,
     MatLabel,
+    MatStartDate,
+    MatSuffix,
     RouterLink,
     TABLE_IMPORTS,
   ],
   templateUrl: './alert-history-page.html',
+  // The datepicker's DateAdapter: native Dates (local midnights, read as UTC days by utcDayOf).
+  providers: [provideNativeDateAdapter()],
   // A column filling the shell's window-high page (route data `fillViewport`): heading, tabs and
   // range keep their height, the table frame takes what is left and scrolls its rows.
   host: { class: 'flex min-h-0 flex-1 flex-col' },
@@ -59,12 +75,15 @@ export class AlertHistoryPage {
   private readonly api = inject(AlertHistoryApi);
   private readonly fleet = inject(FleetStore);
 
-  /** The range inputs (`datetime-local`, UTC). */
-  protected readonly fromInput = signal('');
-  protected readonly toInput = signal('');
-  protected readonly error = computed(() =>
-    rangeError(fromUtcInput(this.fromInput()), fromUtcInput(this.toInput())),
-  );
+  private readonly now = inject(NOW);
+  /** The picked days (the picker's Dates; null while not chosen or not a valid date). */
+  protected readonly start = signal<Date | null>(null);
+  protected readonly end = signal<Date | null>(null);
+  /** No future days to pick: the last selectable day is today (UTC). */
+  protected readonly maxDate = pickerDate(defaultDays(this.now()).end);
+  private readonly startDay = computed(() => dayOf(this.start()));
+  private readonly endDay = computed(() => dayOf(this.end()));
+  protected readonly error = computed(() => rangeError(this.startDay(), this.endDay()));
 
   protected readonly readings = signal<Telemetry[]>([]);
   protected readonly loading = signal(false);
@@ -117,9 +136,9 @@ export class AlertHistoryPage {
         this.loading.set(false);
       });
 
-    const { from, to } = last24Hours(inject(NOW)());
-    this.fromInput.set(toUtcInput(from));
-    this.toInput.set(toUtcInput(to));
+    const { start, end } = defaultDays(this.now());
+    this.start.set(pickerDate(start));
+    this.end.set(pickerDate(end));
     this.load();
   }
 
@@ -136,22 +155,21 @@ export class AlertHistoryPage {
     });
   }
 
-  protected onFrom(event: Event): void {
-    this.fromInput.set((event.target as HTMLInputElement).value);
+  /** The picker changed a day (calendar or typed); a complete, valid range reloads. */
+  protected onStart(date: Date | null): void {
+    this.start.set(date);
     this.load();
   }
 
-  protected onTo(event: Event): void {
-    this.toInput.set((event.target as HTMLInputElement).value);
+  protected onEnd(date: Date | null): void {
+    this.end.set(date);
     this.load();
   }
 
-  /** Loads the current range (an invalid range keeps the last results and shows why). */
+  /** Loads the chosen days (an incomplete or invalid range keeps the last results and says why). */
   protected load(): void {
     if (this.error()) return;
-    const from = new Date(fromUtcInput(this.fromInput())!).toISOString();
-    const to = new Date(fromUtcInput(this.toInput())!).toISOString();
-    this.requests.next({ from, to });
+    this.requests.next(dayRange(this.startDay()!, this.endDay()!));
   }
 
   private readonly farmNames = computed(
@@ -161,4 +179,9 @@ export class AlertHistoryPage {
   private farmName(farmId: string): string | null {
     return this.farmNames().get(farmId) ?? null;
   }
+}
+
+/** A picked Date as its UTC day, or null (not chosen, or an invalid typed date). */
+function dayOf(date: Date | null): number | null {
+  return date && !Number.isNaN(date.getTime()) ? utcDayOf(date) : null;
 }

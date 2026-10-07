@@ -2,35 +2,49 @@ import { Telemetry } from '../fleet/fleet.model';
 import { AlertConfig, AlertLevel } from './alert-config.model';
 import { LEVEL_SEVERITY } from './alert-text';
 
-/** The longest range the API accepts (GET /api/alerts). */
+/** The longest range the API accepts (GET /api/alerts): at most 31 whole days. */
 export const MAX_RANGE_DAYS = 31;
-const MINUTE_MS = 60_000;
-const DAY_MS = 24 * 60 * MINUTE_MS;
+const DAY_MS = 24 * 60 * 60_000;
 
-/** A `datetime-local` value ("2026-01-02T03:25") for an instant, in UTC (the app shows UTC). */
-export function toUtcInput(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 16);
+/**
+ * The UTC day (its midnight, epoch ms) a picked calendar date stands for. The datepicker's native
+ * DateAdapter yields local-midnight Dates; their year/month/day are read as a UTC day, because the
+ * app shows UTC everywhere.
+ */
+export function utcDayOf(date: Date): number {
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-/** The instant of a UTC `datetime-local` value, or null when empty or invalid. */
-export function fromUtcInput(value: string): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
-  const ms = Date.parse(`${value}:00Z`);
-  return Number.isNaN(ms) ? null : ms;
+/** The calendar date the datepicker shows for a UTC day (the inverse of `utcDayOf`). */
+export function pickerDate(utcDay: number): Date {
+  const d = new Date(utcDay);
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
-/** The default range: the last 24 hours, `to` rounded up to the next minute so "now" is included. */
-export function last24Hours(now: number): { from: number; to: number } {
-  const to = Math.ceil(now / MINUTE_MS) * MINUTE_MS;
-  return { from: to - DAY_MS, to };
+/** The default days: yesterday and today (UTC), so the last 24 hours are always included. */
+export function defaultDays(now: number): { start: number; end: number } {
+  const today = Math.floor(now / DAY_MS) * DAY_MS;
+  return { start: today - DAY_MS, end: today };
 }
 
-/** Why a range cannot be queried, or null when it can (mirrors the API's 400s). */
-export function rangeError(from: number | null, to: number | null): string | null {
-  if (from === null) return 'Enter a valid start date and time.';
-  if (to === null) return 'Enter a valid end date and time.';
-  if (to <= from) return 'The end must be after the start.';
-  if (to - from > MAX_RANGE_DAYS * DAY_MS) return `Choose at most ${MAX_RANGE_DAYS} days.`;
+/** Whole UTC days [start 00:00, the day after end 00:00) as the API's [from, to). */
+export function dayRange(start: number, end: number): { from: string; to: string } {
+  return {
+    from: new Date(start).toISOString(),
+    to: new Date(end + DAY_MS).toISOString(),
+  };
+}
+
+/**
+ * Why a day range cannot be queried, or null when it can (mirrors the API's 400s). Both days are
+ * UTC midnights (`utcDayOf`), or null while not chosen or not a valid date.
+ */
+export function rangeError(start: number | null, end: number | null): string | null {
+  if (start === null) return 'Choose a start date.';
+  if (end === null) return 'Choose an end date.';
+  if (end < start) return 'The end date must not be before the start date.';
+  if (end - start + DAY_MS > MAX_RANGE_DAYS * DAY_MS)
+    return `Choose at most ${MAX_RANGE_DAYS} days.`;
   return null;
 }
 

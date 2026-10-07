@@ -111,6 +111,9 @@
   --mat-sys-on-surface-variant: var(--muted);
   --mat-sys-surface-container: var(--surface);
   --mat-sys-surface-container-highest: var(--surface);
+  --mat-sys-surface-container-high: var(--bg);
+  --mat-sys-secondary: var(--accent);
+  --mat-sys-tertiary-container: var(--highlight);
   --mat-sys-outline: var(--muted);
   --mat-sys-outline-variant: var(--border);
   --mat-sys-error: var(--danger);
@@ -198,6 +201,15 @@
   --mat-button-toggle-background-color: var(--bg);
   --mat-button-toggle-selected-state-background-color: var(--accent);
   --mat-button-toggle-selected-state-text-color: var(--on-accent);
+
+  /* Datepicker (alert history): the days in the chosen range get a light accent wash. */
+  --mat-datepicker-calendar-date-in-range-state-background-color: color-mix(
+    in srgb,
+    var(--accent) 16%,
+    transparent
+  );
+  --mat-datepicker-calendar-container-shape: 12px;
+  --mat-datepicker-calendar-date-today-outline-color: var(--muted);
 
   /* Dialogs (MatDialog): the page surface, a hairline-free card with our title size. */
   --mat-dialog-container-color: var(--bg);

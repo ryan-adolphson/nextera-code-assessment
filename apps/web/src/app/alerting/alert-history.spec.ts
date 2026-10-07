@@ -1,47 +1,57 @@
 import { reading } from '../fleet/testing';
 import { AlertConfig } from './alert-config.model';
 import {
-  fromUtcInput,
+  dayRange,
+  defaultDays,
   groupAlertsByTurbine,
-  last24Hours,
+  pickerDate,
   rangeError,
-  toUtcInput,
+  utcDayOf,
 } from './alert-history';
 
-describe('UTC datetime-local values', () => {
-  it('round-trips an instant at minute precision, in UTC', () => {
-    const ms = Date.parse('2026-01-02T03:25:00Z');
-    expect(toUtcInput(ms)).toBe('2026-01-02T03:25');
-    expect(fromUtcInput('2026-01-02T03:25')).toBe(ms);
+describe('UTC days from the datepicker', () => {
+  const day = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
+
+  it('reads a picked calendar date (a local midnight) as that UTC day, and back', () => {
+    expect(utcDayOf(new Date(2026, 0, 2))).toBe(day('2026-01-02'));
+    const shown = pickerDate(day('2026-01-02'));
+    expect([shown.getFullYear(), shown.getMonth(), shown.getDate()]).toEqual([2026, 0, 2]);
+    expect(utcDayOf(pickerDate(day('2026-12-31')))).toBe(day('2026-12-31'));
   });
 
-  it('rejects empty or malformed values', () => {
-    expect(fromUtcInput('')).toBeNull();
-    expect(fromUtcInput('2026-01-02')).toBeNull();
-    expect(fromUtcInput('2026-13-45T99:99')).toBeNull();
+  it('defaults to yesterday and today (UTC), so the last 24 hours are included', () => {
+    expect(defaultDays(Date.parse('2026-01-03T00:00:30Z'))).toEqual({
+      start: day('2026-01-02'),
+      end: day('2026-01-03'),
+    });
   });
-});
 
-describe('last24Hours', () => {
-  it('ends at the next whole minute (so now is included) and starts 24 h earlier', () => {
-    const { from, to } = last24Hours(Date.parse('2026-01-03T00:00:30Z'));
-    expect(new Date(to).toISOString()).toBe('2026-01-03T00:01:00.000Z');
-    expect(new Date(from).toISOString()).toBe('2026-01-02T00:01:00.000Z');
+  it('queries whole days: start 00:00 to the day after the end, 00:00 (exclusive)', () => {
+    expect(dayRange(day('2026-01-02'), day('2026-01-03'))).toEqual({
+      from: '2026-01-02T00:00:00.000Z',
+      to: '2026-01-04T00:00:00.000Z',
+    });
+    // One day: that day's 24 hours.
+    expect(dayRange(day('2026-01-02'), day('2026-01-02'))).toEqual({
+      from: '2026-01-02T00:00:00.000Z',
+      to: '2026-01-03T00:00:00.000Z',
+    });
   });
 });
 
 describe('rangeError', () => {
-  const at = (iso: string) => Date.parse(iso);
-  it('accepts a forward range of up to 31 days', () => {
-    expect(rangeError(at('2026-01-01T00:00Z'), at('2026-02-01T00:00Z'))).toBeNull();
+  const day = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
+  it('accepts one day up to 31 days', () => {
+    expect(rangeError(day('2026-01-02'), day('2026-01-02'))).toBeNull();
+    expect(rangeError(day('2026-01-01'), day('2026-01-31'))).toBeNull(); // 31 days
   });
   it.each([
-    [null, at('2026-01-02T00:00Z'), 'Enter a valid start date and time.'],
-    [at('2026-01-02T00:00Z'), null, 'Enter a valid end date and time.'],
-    [at('2026-01-02T00:00Z'), at('2026-01-02T00:00Z'), 'The end must be after the start.'],
-    [at('2026-01-01T00:00Z'), at('2026-02-01T00:01Z'), 'Choose at most 31 days.'],
-  ])('explains %s → %s', (from, to, message) => {
-    expect(rangeError(from, to)).toBe(message);
+    [null, day('2026-01-02'), 'Choose a start date.'],
+    [day('2026-01-02'), null, 'Choose an end date.'],
+    [day('2026-01-03'), day('2026-01-02'), 'The end date must not be before the start date.'],
+    [day('2026-01-01'), day('2026-02-01'), 'Choose at most 31 days.'], // 32 days
+  ])('explains %s → %s', (start, end, message) => {
+    expect(rangeError(start, end)).toBe(message);
   });
 });
 
