@@ -1,5 +1,6 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { MatTooltip } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 import { AlertLevel, ALERT_RULE_LEVELS } from '../alerting/alert-config.model';
 import { AlertLevelBadge } from '../alerting/alert-level-badge';
@@ -9,7 +10,6 @@ import {
   describeTriggerWithLevel,
   triggeredRules,
 } from '../alerting/evaluate-alerts';
-import { Tooltip } from '../ui/tooltip';
 import { FleetStore, FleetTurbine } from './fleet.store';
 import { STALENESS_LABELS, STALENESS_ORDER, Staleness } from './staleness';
 import { StalenessBadge } from './staleness-badge';
@@ -96,7 +96,7 @@ const COLUMNS: {
  */
 @Component({
   selector: 'app-turbine-list',
-  imports: [AlertLevelBadge, DatePipe, DecimalPipe, RouterLink, StalenessBadge, Tooltip],
+  imports: [AlertLevelBadge, DatePipe, DecimalPipe, MatTooltip, RouterLink, StalenessBadge],
   templateUrl: './turbine-list.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

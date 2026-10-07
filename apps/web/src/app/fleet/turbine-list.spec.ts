@@ -1,3 +1,5 @@
+import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
+import { MatTooltipHarness } from '@angular/material/tooltip/testing';
 import { AlertConfig } from '../alerting/alert-config.model';
 import { TEST_API_BASE_URL, mixedFleetFixture, openFleet, reading } from './testing';
 
@@ -348,6 +350,22 @@ describe('TurbineList (/turbines)', () => {
       await flushRules(rules);
     }
 
+    /** The Material tooltip of a turbine's alert pill. */
+    const tooltip = (id: string) =>
+      TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+        MatTooltipHarness.with({
+          selector: `tr[data-turbine-id=${id}] [data-testid=alert-tooltip-trigger]`,
+        }),
+      );
+    /** The lines of that tooltip (it renders its text only while open). */
+    async function details(id: string) {
+      const tip = await tooltip(id);
+      await tip.show();
+      const text = await tip.getTooltipText();
+      await tip.hide();
+      return text.split('\n');
+    }
+
     it('shows None for every reading when there are no rules, and — without a reading', () => {
       expect(app.text(table().querySelector('thead th:nth-child(5)'))).toBe('Alert');
       expect(alertStates()).toEqual({
@@ -378,48 +396,47 @@ describe('TurbineList (/turbines)', () => {
       const pill = t6.querySelector('[data-testid=alert-level]')!;
       expect(pill.getAttribute('data-level')).toBe('error');
       expect(app.text(pill)).toBe('Error');
-      // Visibly only the pill: the trigger holds just the pill, the tooltip is hidden.
-      const trigger = t6.querySelector<HTMLElement>('[data-testid=tooltip-trigger]')!;
+      // Visibly only the pill: the trigger button holds just the pill, the tooltip is closed.
+      const trigger = t6.querySelector<HTMLElement>('[data-testid=alert-tooltip-trigger]')!;
       expect(trigger.contains(pill)).toBe(true);
       expect(app.text(trigger)).toBe('Error');
       expect([trigger.tagName, trigger.getAttribute('type')]).toEqual(['BUTTON', 'button']);
-      const tooltip = t6.querySelector<HTMLElement>('[data-testid=alert-tooltip]')!;
-      expect(tooltip.hidden).toBe(true);
-      expect(tooltip.getAttribute('role')).toBe('tooltip');
-      expect(trigger.getAttribute('aria-describedby')).toBe(tooltip.id);
-      expect([
-        ...t6.querySelectorAll('[data-testid=tooltip-trigger], [data-testid=alert-tooltip]'),
-      ]).toHaveLength(2);
+      expect(t6.querySelectorAll('[data-testid=alert-tooltip-trigger]')).toHaveLength(1);
       expect(
         t6.querySelector('details, [data-testid=alert-summary], [data-testid=alert-more]'),
       ).toBeNull();
-      // Every triggered rule, worst first, with its level.
-      const details = (cell: Element) =>
-        [...cell.querySelectorAll('[data-testid=alert-tooltip] li')].map((li) => app.text(li));
-      expect(details(t6)).toEqual([
+      const tip = await tooltip('TURB006');
+      expect(await tip.isOpen()).toBe(false);
+      // Every triggered rule, worst first, with its level: one line each.
+      expect(await details('TURB006')).toEqual([
         'Error: Gearbox temperature 126.5 °C > 120',
         'Warning: Gearbox temperature 126.5 °C > 90',
       ]);
-      expect(details(alertCell('TURB005'))).toEqual([
+      expect(await details('TURB005')).toEqual([
         'Warning: Wind speed 15.8 m/s > 9',
         'Info: Power output 0 kW < 100',
       ]);
+      // The message is also the button's accessible description (Material's AriaDescriber).
+      const describedBy = trigger.getAttribute('aria-describedby')!;
+      expect(document.getElementById(describedBy)?.textContent).toBe(
+        'Error: Gearbox temperature 126.5 °C > 120\nWarning: Gearbox temperature 126.5 °C > 90',
+      );
 
-      // Hover / focus opens it.
-      trigger.focus();
+      // Hover opens it, leaving closes it; a click/tap opens it too.
+      await tip.show();
+      expect(await tip.isOpen()).toBe(true);
+      expect(document.querySelector('.app-tooltip')).not.toBeNull();
+      await tip.hide();
+      expect(await tip.isOpen()).toBe(false);
+      trigger.click();
       await app.stable();
-      expect(tooltip.hidden).toBe(false);
-      expect(tooltip.hasAttribute('data-open')).toBe(true);
-      trigger.blur();
-      await app.stable();
-      expect(tooltip.hidden).toBe(true);
+      expect(await tip.isOpen()).toBe(true);
 
       // The other states have no tooltip.
       expect(app.text(alertCell('TURB001'))).toBe('None');
       expect(app.text(alertCell('TURB004'))).toBe('—');
       for (const id of ['TURB001', 'TURB004']) {
-        expect(alertCell(id).querySelector('[data-testid=tooltip-trigger]')).toBeNull();
-        expect(alertCell(id).querySelector('[role=tooltip]')).toBeNull();
+        expect(alertCell(id).querySelector('[data-testid=alert-tooltip-trigger]')).toBeNull();
       }
     });
 
@@ -484,11 +501,7 @@ describe('TurbineList (/turbines)', () => {
       await app.stable();
 
       expect(alertCell('TURB001').getAttribute('data-alert')).toBe('error');
-      expect(
-        [...alertCell('TURB001').querySelectorAll('[data-testid=alert-tooltip] li')].map((li) =>
-          app.text(li),
-        ),
-      ).toEqual([
+      expect(await details('TURB001')).toEqual([
         'Error: Gearbox temperature 121 °C > 120',
         'Warning: Gearbox temperature 121 °C > 90',
       ]);

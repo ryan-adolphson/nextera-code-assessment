@@ -99,6 +99,26 @@
   }
 }
 
+/*
+ * Angular Material tooltip (`matTooltip`). There is no Material theme, so its tokens come from
+ * ours (they follow dark mode). `app-tooltip` (matTooltipClass) is the left-aligned, wider,
+ * multi-line variant: one line per `\n` in the message.
+ */
+:root {
+  --mat-tooltip-container-color: var(--surface);
+  --mat-tooltip-supporting-text-color: var(--text);
+  --mat-tooltip-container-shape: 6px;
+  --mat-tooltip-supporting-text-font: inherit;
+  --mat-tooltip-supporting-text-size: 0.875rem;
+  --mat-tooltip-supporting-text-line-height: 1.4;
+  --mat-tooltip-supporting-text-weight: 400;
+  --mat-tooltip-supporting-text-tracking: normal;
+}
+
+.app-tooltip .mat-mdc-tooltip-surface {
+  @apply max-w-[min(20rem,calc(100vw-16px))] border border-line px-3 py-2 text-left whitespace-pre-line shadow-md;
+}
+
 /* Data tables (farm comparison, turbine readings): hairline rows, compact cells. */
 @utility data-table {
   @apply w-full border-collapse;

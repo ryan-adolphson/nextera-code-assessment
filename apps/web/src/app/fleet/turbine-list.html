@@ -143,16 +143,21 @@
             >
               @switch (alert.state) {
                 @case ('triggered') {
-                  <!-- Only the pill; every triggered rule (worst first) is in its tooltip, which
-                       is also the pill's accessible description. -->
-                  <app-tooltip testId="alert-tooltip">
+                  <!-- Only the pill; every triggered rule (worst first) is in its Material tooltip,
+                       which is also the button's accessible description. A button so it is
+                       focusable and named by the pill ("Error"); a click/tap shows the tooltip. -->
+                  <button
+                    #tip="matTooltip"
+                    type="button"
+                    class="inline-flex cursor-default rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    data-testid="alert-tooltip-trigger"
+                    matTooltipClass="app-tooltip"
+                    matTooltipPosition="above"
+                    [matTooltip]="alert.details.join('\n')"
+                    (click)="tip.show()"
+                  >
                     <app-alert-level-badge [level]="alert.level!" />
-                    <ul tooltip-content class="grid gap-0.5" data-testid="alert-details">
-                      @for (d of alert.details; track $index) {
-                        <li>{{ d }}</li>
-                      }
-                    </ul>
-                  </app-tooltip>
+                  </button>
                 }
                 @case ('none') {
                   <span class="text-muted">None</span>
