@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { Component, input } from '@angular/core';
 
 /** A labelled headline number (fleet output, turbines reporting…). Project the value as content. */
 @Component({
@@ -15,7 +15,6 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
       </span>
     </div>
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class StatTile {
   readonly label = input.required<string>();

@@ -1,14 +1,5 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
-import {
-  ChangeDetectionStrategy,
-  Component,
-  OnDestroy,
-  computed,
-  effect,
-  inject,
-  input,
-  untracked,
-} from '@angular/core';
+import { Component, OnDestroy, computed, effect, inject, input, untracked } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { differenceInMinutes } from 'date-fns';
 import { millisecondsInHour } from 'date-fns/constants';
@@ -41,7 +32,6 @@ import { StalenessBadge } from './staleness-badge';
     TABLE_IMPORTS,
   ],
   templateUrl: './turbine-page.html',
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TurbinePage implements OnDestroy {
   /** Bound from the route parameters (withComponentInputBinding). */

@@ -57,20 +57,29 @@ describe('AlertHistoryPage (/alerting/history)', () => {
   const q = <T extends Element = HTMLElement>(id: string) =>
     app.root().querySelector<T>(`[data-testid=${id}]`);
   const all = (id: string) => [...app.root().querySelectorAll(`[data-testid=${id}]`)];
-  const expectAlerts = (): TestRequest =>
-    app.http.expectOne((r) => r.method === 'GET' && r.url === ALERTS_URL);
+  /** The pending GET /api/alerts (the page's resource sends it on change detection). */
+  const expectAlerts = (): TestRequest => {
+    TestBed.tick();
+    return app.http.expectOne((r) => r.method === 'GET' && r.url === ALERTS_URL);
+  };
   async function flush(readings: Telemetry[]) {
     expectAlerts().flush(readings);
     await app.stable();
   }
-  /** Types days into the Material date range input (en-US, M/D/YYYY), like a user would. */
-  async function setDays(start: string | null, end: string | null) {
-    const range = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
-      MatDateRangeInputHarness,
-    );
-    if (start !== null) await (await range.getStartInput()).setValue(start);
-    if (end !== null) await (await range.getEndInput()).setValue(end);
-    await app.stable();
+  /**
+   * Types days into the Material date range input (en-US, M/D/YYYY), like a user would. DOM events,
+   * not `MatDateRangeInputHarness.setValue`: the harness waits for stability, which never comes
+   * while the reload it triggers is pending (a loading resource is a pending task).
+   */
+  function setDays(start: string | null, end: string | null) {
+    const type = (testId: string, value: string) => {
+      const input = q<HTMLInputElement>(testId)!;
+      input.value = value;
+      for (const type of ['input', 'change', 'blur']) input.dispatchEvent(new Event(type));
+    };
+    if (start !== null) type('history-from', start);
+    if (end !== null) type('history-to', end);
+    TestBed.tick();
   }
   const chipTexts = (el: Element) =>
     [...el.querySelectorAll('[data-testid=alert-chip]')].map((c) => app.text(c));
@@ -246,7 +255,7 @@ describe('AlertHistoryPage (/alerting/history)', () => {
   it('reloads when the range changes, and explains an invalid range without asking the API', async () => {
     await flush(flagged());
 
-    await setDays('1/1/2026', null); // a new start day, the same end day
+    setDays('1/1/2026', null); // a new start day, the same end day
     const req = expectAlerts();
     expect(req.request.params.get('from')).toBe('2026-01-01T00:00:00.000Z');
     expect(req.request.params.get('to')).toBe('2026-01-04T00:00:00.000Z');
@@ -254,14 +263,14 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     await app.stable();
     expect(all('history-turbine')).toHaveLength(1);
 
-    await setDays('1/5/2026', '1/3/2026');
+    setDays('1/5/2026', '1/3/2026');
     app.http.expectNone(ALERTS_URL);
     expect(app.text(q('history-range-error'))).toBe(
       'The end date must not be before the start date.',
     );
     expect(all('history-turbine')).toHaveLength(1); // the last results stay
 
-    await setDays('12/1/2025', '1/3/2026');
+    setDays('12/1/2025', '1/3/2026');
     app.http.expectNone(ALERTS_URL);
     expect(app.text(q('history-range-error'))).toBe('Choose at most 31 days.');
   });
@@ -272,7 +281,6 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     expect(app.text(q('history-error'))).toContain('The alerts could not be loaded.');
 
     q<HTMLButtonElement>('history-retry')!.click();
-    await app.stable();
     await flush(flagged());
     expect(q('history-error')).toBeNull();
     expect(all('history-turbine')).toHaveLength(2);

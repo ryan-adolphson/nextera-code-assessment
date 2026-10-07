@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { MatButton, MatIconButton } from '@angular/material/button';
 import { MatChip, MatChipSet } from '@angular/material/chips';
 import { provideNativeDateAdapter } from '@angular/material/core';
@@ -61,7 +61,6 @@ import { AlertLevelBadge } from './alert-level-badge';
   // A column filling the shell's window-high page (route data `fillViewport`): heading, tabs and
   // range keep their height, the table frame takes what is left and scrolls its rows.
   host: { class: 'flex min-h-0 flex-1 flex-col' },
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AlertHistoryPage {
   private readonly api = inject(AlertHistoryApi);

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, signal, viewChild } from '@angular/core';
+import { Component, signal, viewChild } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MatPaginator } from '@angular/material/paginator';
 import { PagingDirective, paginate } from './paging';
@@ -44,7 +44,6 @@ describe('paginate', () => {
 @Component({
   imports: [MatPaginator, PagingDirective],
   template: `<mat-paginator [appPaging]="paging" aria-label="Pages" />`,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 class PagingHost {
   readonly rows = signal(Array.from({ length: 12 }, (_, i) => i + 1));

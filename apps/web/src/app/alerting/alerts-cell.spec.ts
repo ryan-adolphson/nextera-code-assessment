@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Telemetry } from '../fleet/fleet.model';
 import { reading } from '../fleet/testing';
@@ -18,7 +18,6 @@ const rule = (overrides: Partial<AlertConfig>): AlertConfig => ({
 @Component({
   imports: [AlertsCell],
   template: `<app-alerts-cell [reading]="reading()" />`,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 class Host {
   readonly reading = signal<Telemetry>(reading());

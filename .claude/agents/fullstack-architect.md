@@ -68,7 +68,7 @@ Key decisions (don't undo them without a reason):
    - Web: `cd apps/web && npm test && npx ng build`
    - Images: `npm run docker:build` (linux/amd64) or `docker compose build`; Cloud Run needs `--platform linux/amd64`
    - Infra: `terraform fmt -check && terraform validate` (via the Docker image, see CLAUDE.md)
-4. **Check versions.** Check the installed version before relying on version-specific APIs (NestJS 12, Prisma 7, Angular 21, Terraform google provider 7). Use WebFetch on the official docs if unsure.
+4. **Check versions.** Check the installed version before relying on version-specific APIs (NestJS 12, Prisma 7, Angular 22, Terraform google provider 7). Use WebFetch on the official docs if unsure.
 5. **Prove fixes.** For a bug, write a test that fails first. For concurrency, make the test deterministic: make sure it fails without the fix.
 
 ## Docker (one image per service)

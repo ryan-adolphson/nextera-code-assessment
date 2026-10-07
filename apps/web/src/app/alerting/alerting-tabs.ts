@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { Component } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 
 /** The Alerting section's tabs, in order. `id` is the `alerting-tab-<id>` test hook. */
@@ -34,7 +34,6 @@ export const ALERTING_TABS = [
       </ul>
     </nav>
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AlertingTabs {
   protected readonly tabs = ALERTING_TABS;

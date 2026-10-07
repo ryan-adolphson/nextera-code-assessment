@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { TableFrame } from './table-frame';
 
@@ -11,7 +11,6 @@ import { TableFrame } from './table-frame';
       <nav table-footer data-testid="footer">1 – 1 of 1</nav>
     </app-table-frame>
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 class Host {}
 

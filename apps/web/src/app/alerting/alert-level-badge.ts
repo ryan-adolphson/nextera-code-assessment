@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { Component, computed, input } from '@angular/core';
 import { AlertLevel, levelLabel } from './alert-config.model';
 
 /**
@@ -20,7 +20,6 @@ import { AlertLevel, levelLabel } from './alert-config.model';
     }
     {{ label() }}{{ count() === null ? '' : ': ' + count() }}
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AlertLevelBadge {
   readonly level = input.required<AlertLevel>();

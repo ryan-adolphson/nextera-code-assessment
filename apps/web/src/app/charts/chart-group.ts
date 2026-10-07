@@ -1,11 +1,4 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  effect,
-  input,
-  signal,
-  untracked,
-} from '@angular/core';
+import { Component, effect, input, signal, untracked } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { minutesToMilliseconds } from 'date-fns';
 import { AlertSeries } from './alert-series';
@@ -86,7 +79,6 @@ export interface ChartSeries {
       }
     </section>
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ChartGroup {
   readonly charts = input.required<ChartSeries[]>();

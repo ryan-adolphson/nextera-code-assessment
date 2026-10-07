@@ -1,13 +1,4 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  ElementRef,
-  OnInit,
-  computed,
-  inject,
-  signal,
-  viewChild,
-} from '@angular/core';
+import { Component, ElementRef, OnInit, computed, inject, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatIconButton } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
@@ -48,7 +39,6 @@ export const NAV_ITEMS = [
   providers: [FleetStore],
   templateUrl: './fleet-shell.html',
   host: { '(document:keydown.escape)': 'closeMenu()' },
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class FleetShell implements OnInit {
   protected readonly store = inject(FleetStore);

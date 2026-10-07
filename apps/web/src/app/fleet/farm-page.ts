@@ -1,5 +1,5 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
+import { Component, computed, inject, input } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { MapMarker, MapView } from '../map/map-view';
 import { StatTile } from '../ui/stat-tile';
@@ -12,7 +12,6 @@ import { StalenessBadge } from './staleness-badge';
   selector: 'app-farm-page',
   imports: [DatePipe, DecimalPipe, RouterLink, MapView, StatTile, StalenessBadge],
   templateUrl: './farm-page.html',
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class FarmPage {
   /** Bound from the route parameter (withComponentInputBinding). */

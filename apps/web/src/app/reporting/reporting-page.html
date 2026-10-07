@@ -77,9 +77,9 @@
   </div>
 </form>
 
-@if (form.errors?.['range'] && (form.touched || form.dirty)) {
+@if ((form.touched || form.dirty) && form.errors?.['range']; as message) {
   <p class="mt-2 text-sm text-danger" role="alert" data-testid="report-range-error">
-    {{ form.errors?.['range'] }}
+    {{ message }}
   </p>
 }
 

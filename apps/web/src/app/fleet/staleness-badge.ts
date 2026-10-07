@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { Component, computed, input } from '@angular/core';
 import { STALENESS_LABELS, Staleness } from './staleness';
 
 /**
@@ -24,7 +24,6 @@ import { STALENESS_LABELS, Staleness } from './staleness';
     }
     {{ label() }}
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class StalenessBadge {
   readonly staleness = input.required<Staleness>();

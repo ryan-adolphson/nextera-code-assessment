@@ -1,5 +1,5 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { Component, computed, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import {
   AbstractControl,
@@ -107,7 +107,6 @@ function validRange(group: AbstractControl): ValidationErrors | null {
   templateUrl: './reporting-page.html',
   // The datepicker's DateAdapter: native Dates (local midnights, read as UTC days by utcDayOf).
   providers: [provideNativeDateAdapter()],
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ReportingPage {
   private readonly api = inject(ReportApi);

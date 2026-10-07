@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { Component, computed, input } from '@angular/core';
 import { MatTooltip } from '@angular/material/tooltip';
 import { Telemetry } from '../fleet/fleet.model';
 import { AlertLevelBadge } from './alert-level-badge';
@@ -32,7 +32,6 @@ import { describeTriggerWithLevel } from './alert-text';
       <span class="text-muted">–</span>
     }
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AlertsCell {
   readonly reading = input.required<Telemetry>();

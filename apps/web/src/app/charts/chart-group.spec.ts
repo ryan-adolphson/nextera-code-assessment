@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { AlertSeries } from './alert-series';
 import { ChartGroup, ChartSeries } from './chart-group';
@@ -20,7 +20,6 @@ const points = (...values: number[]) => values.map((v, i) => ({ t: t0 + i * 5 * 
       [resetKey]="resetKey()"
     />
   `,
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 class Host {
   readonly charts: ChartSeries[] = [

@@ -1,5 +1,5 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { MatIcon } from '@angular/material/icon';
 import { MatIconButton } from '@angular/material/button';
 import { MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
@@ -93,7 +93,6 @@ const COLUMNS: Column[] = [
     TABLE_IMPORTS,
   ],
   templateUrl: './turbine-list.html',
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TurbineList {
   protected readonly store = inject(FleetStore);

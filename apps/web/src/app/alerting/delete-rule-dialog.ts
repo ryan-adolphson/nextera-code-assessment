@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
+import { Component, DestroyRef, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButton } from '@angular/material/button';
 import {
@@ -53,7 +53,6 @@ import { errorMessage, statusOf } from './rule-errors';
     </mat-dialog-actions>
   `,
   host: { 'data-testid': 'delete-dialog' },
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DeleteRuleDialog {
   private readonly api = inject(AlertConfigApi);

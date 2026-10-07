@@ -1,11 +1,4 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  DestroyRef,
-  computed,
-  inject,
-  signal,
-} from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import {
   AbstractControl,
@@ -88,7 +81,6 @@ function finite(control: AbstractControl<number | null>): ValidationErrors | nul
   ],
   templateUrl: './rule-editor-dialog.html',
   host: { 'data-testid': 'rule-dialog' },
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class RuleEditorDialog {
   private readonly api = inject(AlertConfigApi);

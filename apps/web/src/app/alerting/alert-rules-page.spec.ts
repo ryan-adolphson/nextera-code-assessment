@@ -26,15 +26,17 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     await flushList(rules);
   }
   /**
-   * Stable, including MatDialog's close (its `afterClosed` arrives a task after the close, even
-   * without animations).
+   * Rendered, including MatDialog's close (its `afterClosed` arrives a task after the close, even
+   * without animations) and a resource's answer (committed a microtask after it arrives). Ticks
+   * instead of `whenStable()`: the rules resource is a pending task while a request is open.
    */
   async function settle() {
-    await app.stable();
+    TestBed.tick();
     await new Promise((resolve) => setTimeout(resolve));
-    await app.stable();
+    TestBed.tick();
   }
   async function flushList(rules: AlertConfig[]) {
+    TestBed.tick(); // the resource sends its request on change detection
     app.http.expectOne({ method: 'GET', url: URL }).flush(rules);
     await settle();
   }
@@ -134,6 +136,7 @@ describe('AlertRulesPage (/alerting/rules)', () => {
 
   it('shows a load error with a retry', async () => {
     app = await openFleet('/alerting/rules', () => 0);
+    TestBed.tick();
     app.http.expectOne(URL).flush('boom', { status: 500, statusText: 'Server Error' });
     await settle();
     expect(app.text(q('rules-load-error'))).toContain('Could not load the alert rules.');

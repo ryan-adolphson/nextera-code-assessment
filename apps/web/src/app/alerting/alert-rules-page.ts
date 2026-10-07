@@ -1,10 +1,4 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  ViewContainerRef,
-  inject,
-  signal,
-} from '@angular/core';
+import { Component, ViewContainerRef, inject, signal } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { MatDialog, MatDialogConfig } from '@angular/material/dialog';
 import { paginate } from '../ui/paging';
@@ -41,7 +35,6 @@ const DIALOG_CONFIG: MatDialogConfig = {
   providers: [AlertRulesStore],
   imports: [AlertLevelBadge, AlertingTabs, MatButton, TABLE_IMPORTS],
   templateUrl: './alert-rules-page.html',
-  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AlertRulesPage {
   protected readonly store = inject(AlertRulesStore);
