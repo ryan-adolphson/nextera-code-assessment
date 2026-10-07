@@ -1,6 +1,6 @@
 import { reading } from '../fleet/testing';
 import { AlertConfig } from './alert-config.model';
-import { describeTrigger, describeTriggerWithLevel, worstLevel } from './alert-text';
+import { countByLevel, describeTrigger, describeTriggerWithLevel, worstLevel } from './alert-text';
 
 let n = 0;
 const rule = (overrides: Partial<AlertConfig> = {}): AlertConfig => ({
@@ -39,5 +39,26 @@ describe('worstLevel', () => {
     expect(worstLevel([level('info'), level('error'), level('warn')])).toBe('error');
     expect(worstLevel([level('warn'), level('info')])).toBe('warn');
     expect(worstLevel([])).toBe('info');
+  });
+});
+
+describe('countByLevel', () => {
+  it('counts the rules per level: only the levels present, worst first, whatever the input order', () => {
+    expect(
+      countByLevel([
+        rule({ alertLevel: 'info' }),
+        rule({ alertLevel: 'warn' }),
+        rule({ alertLevel: 'error' }),
+        rule({ alertLevel: 'warn' }),
+      ]),
+    ).toEqual([
+      { level: 'error', count: 1 },
+      { level: 'warn', count: 2 },
+      { level: 'info', count: 1 },
+    ]);
+    expect(countByLevel([rule({ alertLevel: 'info' }), rule({ alertLevel: 'info' })])).toEqual([
+      { level: 'info', count: 2 },
+    ]);
+    expect(countByLevel([])).toEqual([]);
   });
 });

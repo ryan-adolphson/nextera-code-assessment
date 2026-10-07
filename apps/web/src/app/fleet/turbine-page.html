@@ -145,7 +145,7 @@
         <ng-container matColumnDef="alerts">
           <th mat-header-cell *matHeaderCellDef>Alerts</th>
           <td mat-cell *matCellDef="let r" data-testid="reading-alerts">
-            <app-alerts-cell [reading]="r" />
+            <app-alerts-cell format="levels" [reading]="r" />
           </td>
         </ng-container>
 

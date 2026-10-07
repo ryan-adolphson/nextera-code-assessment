@@ -38,7 +38,16 @@ describe('Fleet routes', () => {
   const el = () => harness.routeNativeElement!.parentElement!.parentElement as HTMLElement;
   const text = (selector: string) =>
     el().querySelector(selector)?.textContent?.replace(/\s+/g, ' ').trim();
-  const cards = () => [...el().querySelectorAll<HTMLAnchorElement>('[data-testid=turbine-card]')];
+  /** The farm page's turbine rows (the shared turbines table). */
+  const rows = () => [
+    ...el().querySelectorAll<HTMLTableRowElement>(
+      '[data-testid=turbines] tbody tr[data-turbine-id]',
+    ),
+  ];
+  const cells = (row: Element) =>
+    [...row.querySelectorAll('td')].map((td) => td.textContent?.replace(/\s+/g, ' ').trim());
+  const turbineLink = (row: Element) => row.querySelector<HTMLAnchorElement>('td a')!;
+  const badge = (row: Element) => row.querySelector('[data-testid=staleness]');
   const stable = () => harness.fixture.whenStable();
   const staleness = (selector: string) =>
     el().querySelector(selector)?.getAttribute('data-staleness');
@@ -124,7 +133,7 @@ describe('Fleet routes', () => {
     });
 
     it('does not show turbines until a farm is chosen', () => {
-      expect(cards()).toHaveLength(0);
+      expect(el().querySelector('[data-testid=turbines]')).toBeNull();
     });
 
     it('opens a farm from its link', async () => {
@@ -148,8 +157,22 @@ describe('Fleet routes', () => {
       expect(text('h1')).toBe('High Plains FARM02');
       expect(text('[data-testid=farm-power]')).toBe('2,259 kW');
       expect(text('[data-testid=farm-reporting]')).toBe('1 / 1');
-      expect(cards().map((c) => c.querySelector('strong')?.textContent)).toEqual(['TURB002']);
-      expect(cards()[0].textContent).toContain('Wind 8.5 m/s');
+      expect(rows().map((r) => r.getAttribute('data-turbine-id'))).toEqual(['TURB002']);
+      // The /turbines columns without Farm: id, status, commissioned, power, wind, gearbox, time.
+      expect(cells(rows()[0])).toEqual([
+        'TURB002',
+        'Reporting',
+        'Not commissioned',
+        '2,259',
+        '8.5',
+        '80.0',
+        'Jan 2, 23:55',
+      ]);
+      const headers = [...el().querySelectorAll('[data-testid=turbines] thead th')].map((th) =>
+        th.textContent?.trim(),
+      );
+      expect(headers).not.toContain('Farm');
+      expect(headers).toContain('Commissioned');
     });
 
     it("shows the farm's turbines on the map; a marker opens the turbine page", async () => {
@@ -169,7 +192,7 @@ describe('Fleet routes', () => {
 
       expect(text('h1')).toBe('Red Canyon FARM03');
       expect(text('[data-testid=no-turbines]')).toContain('No turbines are registered');
-      expect(cards()).toHaveLength(0);
+      expect(el().querySelector('[data-testid=turbines]')).toBeNull();
       // The map still shows where the farm is.
       expect(el().querySelector('[data-marker-id="FARM03"]')!.classList).toContain('marker-empty');
     });
@@ -179,37 +202,39 @@ describe('Fleet routes', () => {
       expect(text('[data-testid=farm-not-found]')).toBe('Farm FARM99 was not found.');
     });
 
-    it('links each turbine card to its own page', async () => {
+    it('links each turbine row to its own page', async () => {
       await start('/farms/FARM01');
-      expect(cards()[0].getAttribute('href')).toBe('/farms/FARM01/turbines/TURB001');
+      expect(turbineLink(rows()[0]).getAttribute('href')).toBe('/farms/FARM01/turbines/TURB001');
 
-      cards()[0].click();
+      turbineLink(rows()[0]).click();
       await stable();
 
       expect(text('h1')).toBe('TURB001 Prairie Ridge');
     });
 
-    it('updates a turbine card live', async () => {
+    it('updates a turbine row live', async () => {
       await start('/farms/FARM01');
 
       sse.push(reading({ timestamp: '2026-01-03T00:00:00.000Z', powerOutputKw: 3100 }));
       await stable();
 
-      expect(cards()[0].textContent).toContain('3,100 kW');
-      expect(cards()[0].hasAttribute('data-updated')).toBe(true);
+      expect(cells(rows()[0])[3]).toBe('3,100');
+      expect(cells(rows()[0])[6]).toBe('Jan 3, 00:00');
+      expect(rows()[0].hasAttribute('data-updated')).toBe(true);
     });
 
-    it('moves the turbine cards through 15, 30 and 60 min on the clock alone', async () => {
+    it('moves the turbine rows through 15, 30 and 60 min on the clock alone', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true }); // timers only; the clock is NOW
       try {
         await start('/farms/FARM01'); // TURB001's latest (23:55) is 5 min old
-        const badge = () => cards()[0].querySelector('[data-testid=staleness]');
+        const status = () => badge(rows()[0])!;
         const marker = () => el().querySelector('[data-marker-id="TURB001"]')!.classList;
-        expect(cards()[0].getAttribute('data-staleness')).toBe('ok');
-        expect(badge()).toBeNull(); // reporting cards stay quiet
+        // The table's status pill, as on /turbines (the cards hid it while reporting).
+        expect(status().getAttribute('data-staleness')).toBe('ok');
+        expect(status().textContent?.trim()).toBe('Reporting');
 
         await advanceClock(10 * MINUTE); // exactly 15 min: still reporting
-        expect(cards()[0].getAttribute('data-staleness')).toBe('ok');
+        expect(status().getAttribute('data-staleness')).toBe('ok');
 
         const steps = [
           [1, 'stale-15', 'No data in 15 min', '0 / 1'], // 16 min
@@ -218,16 +243,15 @@ describe('Fleet routes', () => {
         ] as const;
         for (const [minutes, level, label, reporting] of steps) {
           await advanceClock(minutes * MINUTE);
-          expect(cards()[0].getAttribute('data-staleness')).toBe(level);
-          expect(badge()?.getAttribute('data-staleness')).toBe(level);
-          expect(badge()?.textContent?.trim()).toBe(label);
+          expect(status().getAttribute('data-staleness')).toBe(level);
+          expect(status().textContent?.trim()).toBe(label);
           expect(marker()).toContain(`marker-${level}`);
           expect(text('[data-testid=farm-reporting]')).toBe(reporting);
         }
 
         sse.push(reading({ timestamp: new Date(clockNow).toISOString() }));
         await stable();
-        expect(cards()[0].getAttribute('data-staleness')).toBe('ok');
+        expect(status().getAttribute('data-staleness')).toBe('ok');
         expect(text('[data-testid=farm-reporting]')).toBe('1 / 1');
       } finally {
         vi.useRealTimers();
@@ -712,16 +736,22 @@ describe('Fleet routes', () => {
       expect(header.at(-1)).toBe('Alerts');
       const cells = [...el().querySelectorAll('[data-testid=reading-alerts]')];
       expect(cells.map((c) => c.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
-        'Error 2', // the shared AlertsCell: worst level + count
+        'Error: 1 Warning: 1', // the shared AlertsCell, levels format: a pill per level, worst first
         '–',
         '–',
       ]);
       const trigger = cells[0].querySelector<HTMLButtonElement>(
         '[data-testid=alerts-cell-trigger]',
       )!;
-      expect(trigger.querySelector('[data-testid=alert-level]')!.getAttribute('data-level')).toBe(
-        'error',
-      );
+      expect(
+        [...trigger.querySelectorAll('[data-testid=level-count]')].map((p) => [
+          p.getAttribute('data-level'),
+          p.textContent?.trim(),
+        ]),
+      ).toEqual([
+        ['error', 'Error: 1'],
+        ['warn', 'Warning: 1'],
+      ]);
       // Every rule, worst first: the tooltip and the button's accessible description.
       expect(document.getElementById(trigger.getAttribute('aria-describedby')!)?.textContent).toBe(
         'Error: Gearbox temperature 79.3 °C > 75\nWarning: Gearbox temperature 79.3 °C > 70',

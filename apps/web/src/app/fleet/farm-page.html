@@ -39,41 +39,9 @@
       No turbines are registered for this farm yet.
     </p>
   } @else {
-    <p class="mb-3 text-sm text-muted">Select a turbine on the map or below to see its charts.</p>
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-3">
-      @for (turbine of turbines(); track turbine.id) {
-        <a
-          class="group grid gap-1.5 rounded-lg border border-line p-4 text-ink no-underline hover:border-accent hover:no-underline focus-visible:border-accent data-updated:animate-flash"
-          data-testid="turbine-card"
-          [routerLink]="['turbines', turbine.id]"
-          [attr.data-updated]="turbine.id === store.recentlyUpdated() ? '' : null"
-          [attr.data-staleness]="turbine.staleness"
-        >
-          <span class="flex flex-wrap items-center gap-2">
-            <strong>{{ turbine.id }}</strong>
-            @if (turbine.staleness !== 'ok' && turbine.staleness !== 'empty') {
-              <app-staleness-badge [staleness]="turbine.staleness" />
-            }
-          </span>
-          @if (turbine.latest; as r) {
-            <span class="text-xl font-semibold group-data-[staleness^=stale]:text-muted"
-              >{{ r.powerOutputKw | number: '1.0-0' }} kW</span
-            >
-            <span class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-sm">
-              <span>Wind {{ r.windSpeedMs | number: '1.1-1' }} m/s</span>
-              <span>Rotor {{ r.rotorRpm | number: '1.1-1' }} rpm</span>
-              <span>Pitch {{ r.bladePitchDeg | number: '1.1-1' }}°</span>
-              <span>Gearbox {{ r.gearboxTempC | number: '1.1-1' }} °C</span>
-            </span>
-            <span class="text-sm text-muted"
-              >{{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }} UTC</span
-            >
-          } @else {
-            <span class="text-muted">No readings yet</span>
-          }
-        </a>
-      }
-    </div>
+    <p class="text-sm text-muted">Select a turbine on the map or in the table to see its charts.</p>
+    <!-- The /turbines table, scoped to this farm (no Farm column; the text filter is by turbine id). -->
+    <app-turbine-table [turbines]="turbines()" [hiddenColumns]="hiddenColumns" />
   }
 } @else {
   <p data-testid="farm-not-found">Farm {{ farmId() }} was not found.</p>
