@@ -1,0 +1,67 @@
+<h2 mat-dialog-title>{{ editing ? 'Edit alert rule' : 'Add alert rule' }}</h2>
+<form novalidate [formGroup]="form" (ngSubmit)="save()">
+  <mat-dialog-content class="grid gap-4">
+    <!-- Material outline fields; the selects stay native (matNativeControl). -->
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Metric</mat-label>
+      <select matNativeControl data-testid="rule-metric" formControlName="metric">
+        @for (m of metrics; track m.value) {
+          <option [value]="m.value">{{ m.label }} ({{ m.unit }})</option>
+        }
+      </select>
+    </mat-form-field>
+
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Condition</mat-label>
+        <select matNativeControl data-testid="rule-comparison" formControlName="comparison">
+          @for (c of comparisons; track c.value) {
+            <option [value]="c.value">{{ c.label }}</option>
+          }
+        </select>
+      </mat-form-field>
+
+      <!-- Material's default error state: invalid and (touched or the form was submitted). -->
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Threshold</mat-label>
+        <input
+          matInput
+          type="number"
+          step="any"
+          inputmode="decimal"
+          data-testid="rule-value"
+          aria-describedby="rule-value-unit"
+          formControlName="value"
+        />
+        <span matTextSuffix class="pl-1 text-muted" id="rule-value-unit">{{ unit() }}</span>
+        <mat-error data-testid="rule-value-error">{{ valueError() }}</mat-error>
+      </mat-form-field>
+    </div>
+
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Level</mat-label>
+      <select matNativeControl data-testid="rule-level-select" formControlName="level">
+        @for (l of levels; track l.value) {
+          <option [value]="l.value">{{ l.label }}</option>
+        }
+      </select>
+    </mat-form-field>
+
+    @if (error(); as error) {
+      <p
+        class="m-0 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger"
+        role="alert"
+        data-testid="rule-error"
+      >
+        {{ error }}
+      </p>
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    <button matButton="outlined" type="button" mat-dialog-close>Cancel</button>
+    <button matButton="filled" type="submit" data-testid="rule-save" [disabled]="saving()">
+      {{ saving() ? 'Saving…' : editing ? 'Save changes' : 'Add rule' }}
+    </button>
+  </mat-dialog-actions>
+</form>

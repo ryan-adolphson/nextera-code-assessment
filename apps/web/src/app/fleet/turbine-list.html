@@ -69,138 +69,124 @@
     </p>
   </div>
 
-  <!-- The table frame: as tall as its rows, at most the height left in the window (min 12rem).
-       The rows scroll (both ways) under the sticky header row; the paginator stays below. -->
-  <div
-    class="mt-4 flex min-h-48 flex-col overflow-hidden rounded-lg border border-line"
-    data-testid="turbines-frame"
+  <!-- The table frame (ui/table-frame.ts): the rows scroll under the sticky header row; the
+       paginator stays below. -->
+  <app-table-frame
+    class="mt-4"
+    label="Turbines"
+    testId="turbines-frame"
+    scrollTestId="turbines-scroll"
   >
-    <!-- relative: contains the cells' absolutely positioned sr-only text (no page overflow) -->
-    <div
-      class="relative min-h-0 flex-1 overflow-auto"
-      role="region"
-      aria-label="Turbines"
-      tabindex="0"
-      data-testid="turbines-scroll"
-    >
-      <!-- Sorting: MatSort (two states, aria-sort on the header) drives the `sort` signal; the
+    <!-- Sorting: MatSort (two states, aria-sort on the header) drives the `sort` signal; the
          order itself (no reading last, ties by id) is computed in the component. -->
-      <table
-        mat-table
-        matSort
-        matSortDisableClear
-        data-testid="turbines"
-        [dataSource]="paging.page()"
-        [trackBy]="trackById"
-        [matSortActive]="sort().key"
-        [matSortDirection]="sort().dir"
-        (matSortChange)="onSort($event)"
-      >
-        <ng-container matColumnDef="id">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-id">Turbine</th>
-          <td mat-cell *matCellDef="let t">
-            <a [routerLink]="['/farms', t.farmId, 'turbines', t.id]">{{ t.id }}</a>
-          </td>
-        </ng-container>
+    <table
+      mat-table
+      matSort
+      matSortDisableClear
+      data-testid="turbines"
+      [dataSource]="paging.page()"
+      [trackBy]="trackById"
+      [matSortActive]="sort().key"
+      [matSortDirection]="sort().dir"
+      (matSortChange)="onSort($event)"
+    >
+      <ng-container matColumnDef="id">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-id">Turbine</th>
+        <td mat-cell *matCellDef="let t">
+          <a [routerLink]="['/farms', t.farmId, 'turbines', t.id]">{{ t.id }}</a>
+        </td>
+      </ng-container>
 
-        <ng-container matColumnDef="farm">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-farm">Farm</th>
-          <td mat-cell *matCellDef="let t">
-            <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a>
-            <span class="text-muted"> {{ t.farmId }}</span>
-          </td>
-        </ng-container>
+      <ng-container matColumnDef="farm">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-farm">Farm</th>
+        <td mat-cell *matCellDef="let t">
+          <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a>
+          <span class="text-muted"> {{ t.farmId }}</span>
+        </td>
+      </ng-container>
 
-        <ng-container matColumnDef="status">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-status">
-            Status
-          </th>
-          <td mat-cell *matCellDef="let t"><app-staleness-badge [staleness]="t.staleness" /></td>
-        </ng-container>
+      <ng-container matColumnDef="status">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-status">Status</th>
+        <td mat-cell *matCellDef="let t"><app-staleness-badge [staleness]="t.staleness" /></td>
+      </ng-container>
 
-        <ng-container matColumnDef="commissioned">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-commissioned">
-            Commissioned
-          </th>
-          <td
-            mat-cell
-            *matCellDef="let t"
-            data-testid="commissioned-cell"
-            [attr.data-commissioned]="t.commissioned"
-          >
-            <!-- check mark (green) when commissioned, X (muted: a state, not an error) when not.
+      <ng-container matColumnDef="commissioned">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-commissioned">
+          Commissioned
+        </th>
+        <td
+          mat-cell
+          *matCellDef="let t"
+          data-testid="commissioned-cell"
+          [attr.data-commissioned]="t.commissioned"
+        >
+          <!-- check mark (green) when commissioned, X (muted: a state, not an error) when not.
                  `!` utilities: mat-icon's own size/colour rules are unlayered. -->
-            <mat-icon
-              class="size-5! align-middle"
-              [class]="t.commissioned ? 'text-ok!' : 'text-muted!'"
-              data-testid="commissioned-icon"
-              [attr.data-icon]="t.commissioned ? 'check' : 'x'"
-              [svgIcon]="t.commissioned ? 'check' : 'close'"
-            />
-            <span class="sr-only">{{ t.commissioned ? 'Commissioned' : 'Not commissioned' }}</span>
-          </td>
-        </ng-container>
+          <mat-icon
+            class="size-5! align-middle"
+            [class]="t.commissioned ? 'text-ok!' : 'text-muted!'"
+            data-testid="commissioned-icon"
+            [attr.data-icon]="t.commissioned ? 'check' : 'x'"
+            [svgIcon]="t.commissioned ? 'check' : 'close'"
+          />
+          <span class="sr-only">{{ t.commissioned ? 'Commissioned' : 'Not commissioned' }}</span>
+        </td>
+      </ng-container>
 
-        <!-- Numeric columns: right-aligned, arrow before the label. -->
-        @for (col of numericColumns; track col.key) {
-          <ng-container [matColumnDef]="col.key">
-            <th
-              mat-header-cell
-              *matHeaderCellDef
-              mat-sort-header
-              arrowPosition="before"
-              class="[&_.mat-sort-header-container]:justify-end"
-              [attr.data-testid]="'sort-' + col.key"
-            >
-              {{ col.label }}
-            </th>
-            <td mat-cell *matCellDef="let t" class="text-right! tabular-nums">
-              @if (t.latest; as r) {
-                {{ r[col.reading.field] | number: col.reading.format }}
-              } @else {
-                <span class="text-muted">–</span>
-              }
-            </td>
-          </ng-container>
-        }
-
-        <ng-container matColumnDef="time">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-time">
-            Last reading (UTC)
+      <!-- Numeric columns: right-aligned, arrow before the label. -->
+      @for (col of numericColumns; track col.key) {
+        <ng-container [matColumnDef]="col.key">
+          <th
+            mat-header-cell
+            *matHeaderCellDef
+            mat-sort-header
+            arrowPosition="before"
+            class="[&_.mat-sort-header-container]:justify-end"
+            [attr.data-testid]="'sort-' + col.key"
+          >
+            {{ col.label }}
           </th>
-          <td mat-cell *matCellDef="let t" class="tabular-nums">
+          <td mat-cell *matCellDef="let t" class="text-right! tabular-nums">
             @if (t.latest; as r) {
-              {{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}
+              {{ r[col.reading.field] | number: col.reading.format }}
             } @else {
-              <span class="text-muted">No readings yet</span>
+              <span class="text-muted">–</span>
             }
           </td>
         </ng-container>
+      }
 
-        <tr mat-header-row *matHeaderRowDef="columnKeys; sticky: true" class="bg-page"></tr>
-        <tr
-          mat-row
-          *matRowDef="let t; columns: columnKeys"
-          class="data-updated:animate-flash"
-          [attr.data-turbine-id]="t.id"
-          [attr.data-updated]="t.id === store.recentlyUpdated() ? '' : null"
-        ></tr>
-        <tr class="mat-mdc-no-data-row" *matNoDataRow>
-          <td class="mat-mdc-cell px-3 py-2 text-muted" colspan="8" data-testid="no-matches">
-            No turbines match the filters.
-          </td>
-        </tr>
-      </table>
-    </div>
+      <ng-container matColumnDef="time">
+        <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-time">
+          Last reading (UTC)
+        </th>
+        <td mat-cell *matCellDef="let t" class="tabular-nums">
+          @if (t.latest; as r) {
+            {{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}
+          } @else {
+            <span class="text-muted">No readings yet</span>
+          }
+        </td>
+      </ng-container>
+
+      <tr mat-header-row *matHeaderRowDef="columnKeys; sticky: true" class="bg-page"></tr>
+      <tr
+        mat-row
+        *matRowDef="let t; columns: columnKeys"
+        class="data-updated:animate-flash"
+        [attr.data-turbine-id]="t.id"
+        [attr.data-updated]="t.id === store.recentlyUpdated() ? '' : null"
+      ></tr>
+      <tr class="mat-mdc-no-data-row" *matNoDataRow>
+        <td class="mat-mdc-cell px-3 py-2 text-muted" colspan="8" data-testid="no-matches">
+          No turbines match the filters.
+        </td>
+      </tr>
+    </table>
     <mat-paginator
-      class="shrink-0 border-t border-line"
       aria-label="Turbine table pages"
       data-testid="turbines-paginator"
-      [length]="paging.length()"
-      [pageIndex]="paging.pageIndex()"
-      [pageSize]="paging.pageSize()"
-      [pageSizeOptions]="paging.pageSizeOptions"
-      (page)="paging.onPage($event)"
+      [appPaging]="paging"
     />
-  </div>
+  </app-table-frame>
 }

@@ -42,9 +42,19 @@ import {
   toCandles,
   withGapBreaks,
 } from './scales';
+import {
+  BRUSH_CURSOR,
+  BRUSH_OPTION,
+  ChartKind,
+  MIN_X_RANGE_MS,
+  baseOption,
+  themeOption,
+} from './chart-options';
+import { ChartTheme, MarkerLevel, readTheme } from './chart-theme';
+import { candleSpan, candleTooltip, tooltipContent } from './chart-tooltips';
 
-/** How the readings are drawn: a line, or candles of each time bucket (open/close/low/high). */
-export type ChartKind = 'line' | 'candlestick';
+export type { ChartKind } from './chart-options';
+export type { ChartTheme, MarkerLevel } from './chart-theme';
 
 // Register only what a line chart needs, so the rest of ECharts is tree-shaken away.
 echarts.use([
@@ -89,8 +99,6 @@ const STAT_LINES = [
   { key: 'low', label: 'Low', position: 'insideEndBottom' },
 ] as const;
 
-/** Severity of a marker (the alert levels); worst first. */
-export type MarkerLevel = 'error' | 'warn' | 'info';
 const MARKER_LEVELS: readonly { level: MarkerLevel; label: string }[] = [
   { level: 'error', label: 'Error' },
   { level: 'warn', label: 'Warning' },
@@ -107,37 +115,6 @@ export interface ChartMarker {
   level: MarkerLevel;
   lines: string[];
 }
-
-/** Theme colours, read from the app's CSS variables (re-read when light/dark mode changes). */
-export interface ChartTheme {
-  series: string;
-  grid: string;
-  text: string;
-  muted: string;
-  surface: string;
-  /** Marker colours: the status tokens AlertLevelBadge uses (validated for light and dark). */
-  levels: Record<MarkerLevel, string>;
-}
-
-function readTheme(): ChartTheme {
-  const css = getComputedStyle(document.documentElement);
-  const get = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
-  return {
-    series: get('--series-1', '#2a78d6'),
-    grid: get('--border', '#e3e3e8'),
-    text: get('--text', '#1a1a1a'),
-    muted: get('--muted', '#6b6b6b'),
-    surface: get('--bg', '#ffffff'),
-    levels: {
-      error: get('--danger', '#c92a2a'),
-      warn: get('--warn', '#e67700'),
-      info: get('--accent', '#3b5bdb'),
-    },
-  };
-}
-
-/** Narrowest time window zooming can reach (6 readings at 5-minute intervals). */
-const MIN_X_RANGE_MS = 30 * 60_000;
 
 /**
  * Single-series line chart (Apache ECharts, SVG renderer) for one metric over time; small
@@ -554,167 +531,19 @@ export class LineChart {
     const chart = echarts.init(element, null, { renderer: 'svg' });
     const isolated = (index: number) => isIsolated(this.data(), index);
     const isLast = (index: number) => index === this.data().length - 1;
-    const candles = this.kind() === 'candlestick';
-    // Median/high/low reference lines: decoration only, never hovered or in the tooltip.
-    const markLine = {
-      data: [],
-      silent: true,
-      symbol: 'none',
-      animation: false,
-      emphasis: { disabled: true },
-      tooltip: { show: false },
-      lineStyle: { type: 'dashed', width: 1 },
-      label: { show: true, fontSize: 10, distance: 2 },
-    };
-    const readings = candles
-      ? {
-          id: 'readings',
-          type: 'candlestick',
-          data: [],
-          barMaxWidth: 14,
-          itemStyle: { borderWidth: 1.5 },
-          emphasis: { disabled: true },
-          silent: true,
-          markLine,
-        }
-      : {
-          id: 'readings',
-          type: 'line',
-          data: [],
-          connectNulls: false, // nulls break the line: gaps stay visible
-          lineStyle: { width: 2, cap: 'round', join: 'round' },
-          symbol: 'circle',
-          showSymbol: true,
-          showAllSymbol: true,
-          symbolSize: (_value: unknown, params: { dataIndex: number }) =>
-            isLast(params.dataIndex) ? 8 : isolated(params.dataIndex) ? 5 : 0,
-          emphasis: { disabled: true },
-          silent: true,
-          markLine,
-        };
-
-    chart.setOption({
-      animation: false,
-      // ECharts 6 keeps the axis labels inside the chart (grid `outerBoundsMode: 'auto'`).
-      grid: { left: 4, right: 12, top: 10, bottom: 54 }, // bottom: time labels + slider
-      xAxis: {
-        type: 'value',
-        splitLine: { show: false },
-        axisTick: { show: false },
-        axisLabel: {
-          fontSize: 11,
-          hideOverlap: true,
-          formatter: (value: number) => this.xLabels.get(value) ?? '',
-        },
-      },
-      yAxis: {
-        type: 'value',
-        axisLine: { show: false },
-        axisTick: { show: false },
-        splitLine: { lineStyle: { width: 1 } },
-        axisLabel: {
-          fontSize: 11,
-          formatter: (value: number) => value.toLocaleString('en-US', { maximumFractionDigits: 2 }),
-        },
-      },
-      // Time axis only: drag to pan and Ctrl+wheel (trackpad pinch sends ctrlKey) or touch
-      // pinch to zoom inside the plot, plus a slider under it. `filterMode: 'none'` keeps the
-      // line running to the edges and the y-axis steady.
-      dataZoom: [
-        {
-          type: 'inside',
-          id: 'inside',
-          xAxisIndex: 0,
-          filterMode: 'none',
-          minValueSpan: MIN_X_RANGE_MS,
-          zoomOnMouseWheel: 'ctrl',
-          moveOnMouseMove: !candles, // candlestick: dragging draws the brush instead
-          moveOnMouseWheel: false,
-        },
-        {
-          type: 'slider',
-          id: 'slider',
-          xAxisIndex: 0,
-          filterMode: 'none',
-          minValueSpan: MIN_X_RANGE_MS,
-          height: 18,
-          bottom: 6,
-          left: 48,
-          right: 16,
-          showDetail: false, // the axis labels and tooltip already show the times
-          brushSelect: false,
-        },
-      ],
-      tooltip: {
-        trigger: 'axis',
-        triggerOn: 'none', // we drive it (pointer, keyboard, other charts) via showTip
-        borderWidth: 1,
-        padding: [6, 8],
-        extraCssText: 'box-shadow: none; border-radius: 6px;',
-        axisPointer: { type: 'line', snap: true, lineStyle: { width: 1, type: 'solid' } },
-        formatter: (params: unknown) => {
-          const [first] = params as { value: [number, number | null] }[];
-          const [t, v] = first?.value ?? [];
-          const candle = t == null ? undefined : this.candleAt().get(t);
-          if (candle) return candleTooltip(candle, (key) => this.format(candle[key]), this.unit());
-          return t == null || v == null
-            ? ''
-            : tooltipContent(
-                `${this.format(v)} ${this.unit()}`,
-                t,
-                this.markerAt().get(t)?.lines ?? [],
-              );
-        },
-      },
-      series: [
-        readings,
-        {
-          id: 'hover', // the reading under the crosshair
-          type: 'line',
-          data: [],
-          symbol: 'circle',
-          symbolSize: 8,
-          showSymbol: true,
-          emphasis: { disabled: true },
-          silent: true,
-          z: 3,
-          tooltip: { show: false },
-        },
-        {
-          id: 'markers', // the scatter overlay (last, so series 0/1 stay readings/hover): drawn on top by z
-          type: 'scatter',
-          data: [],
-          symbol: 'circle',
-          symbolSize: 10,
-          itemStyle: { borderWidth: 2 },
-          emphasis: { disabled: true },
-          silent: true,
-          z: 4,
-          tooltip: { show: false },
-        },
-      ],
-    });
+    chart.setOption(
+      baseOption(this.kind(), {
+        symbolSize: (index) => (isLast(index) ? 8 : isolated(index) ? 5 : 0),
+        xLabel: (value) => this.xLabels.get(value) ?? '',
+        tooltip: (params) => this.tooltip(params),
+      }),
+    );
     this.applyTheme(chart, this.theme);
 
-    if (candles) {
+    if (this.kind() === 'candlestick') {
       // Drag over the plot to brush a time range (lineX), which zooms every chart to it.
-      chart.setOption({
-        brush: {
-          id: 'brush',
-          xAxisIndex: 0,
-          brushType: 'lineX',
-          brushMode: 'single',
-          transformable: false,
-          removeOnClick: true,
-          throttleType: 'debounce',
-          throttleDelay: 0,
-        },
-      });
-      chart.dispatchAction({
-        type: 'takeGlobalCursor',
-        key: 'brush',
-        brushOption: { brushType: 'lineX', brushMode: 'single' },
-      });
+      chart.setOption(BRUSH_OPTION);
+      chart.dispatchAction(BRUSH_CURSOR);
       chart.on('brushEnd', (event) => {
         const [area] = (event as { areas?: { coordRange?: [number, number] }[] }).areas ?? [];
         this.onBrushEnd(area?.coordRange ?? null);
@@ -748,73 +577,19 @@ export class LineChart {
     return chart;
   }
 
+  /** The shared crosshair tooltip: the candle, or the reading with any marker lines. */
+  private tooltip(params: unknown): string | HTMLElement {
+    const [first] = params as { value: [number, number | null] }[];
+    const [t, v] = first?.value ?? [];
+    const candle = t == null ? undefined : this.candleAt().get(t);
+    if (candle) return candleTooltip(candle, (key) => this.format(candle[key]), this.unit());
+    return t == null || v == null
+      ? ''
+      : tooltipContent(`${this.format(v)} ${this.unit()}`, t, this.markerAt().get(t)?.lines ?? []);
+  }
+
   private applyTheme(chart: echarts.ECharts, theme: ChartTheme): void {
-    const label = { color: theme.muted };
-    chart.setOption({
-      xAxis: { axisLine: { lineStyle: { color: theme.grid } }, axisLabel: label },
-      yAxis: { splitLine: { lineStyle: { color: theme.grid } }, axisLabel: label },
-      ...(this.kind() === 'candlestick' && {
-        brush: {
-          id: 'brush',
-          brushStyle: {
-            color: withAlpha(theme.series, 0.12),
-            borderColor: theme.series,
-            borderWidth: 1,
-          },
-        },
-      }),
-      tooltip: {
-        backgroundColor: theme.surface,
-        borderColor: theme.grid,
-        axisPointer: { lineStyle: { color: theme.muted } },
-      },
-      dataZoom: [
-        { id: 'inside' },
-        {
-          id: 'slider',
-          backgroundColor: 'transparent',
-          borderColor: theme.grid,
-          fillerColor: withAlpha(theme.series, 0.12),
-          dataBackground: {
-            lineStyle: { color: theme.muted, opacity: 0.6, width: 1 },
-            areaStyle: { opacity: 0 },
-          },
-          selectedDataBackground: {
-            lineStyle: { color: theme.series, width: 1 },
-            areaStyle: { opacity: 0 },
-          },
-          handleStyle: { color: theme.surface, borderColor: theme.muted },
-          moveHandleStyle: { color: theme.grid, opacity: 1 },
-          emphasis: {
-            handleStyle: { borderColor: theme.series },
-            moveHandleStyle: { color: theme.muted },
-          },
-        },
-      ],
-      series: [
-        this.kind() === 'candlestick'
-          ? {
-              id: 'readings',
-              // Rising candles hollow (surface fill), falling solid: one hue, no red/green.
-              itemStyle: {
-                color: theme.surface,
-                color0: theme.series,
-                borderColor: theme.series,
-                borderColor0: theme.series,
-              },
-            }
-          : {
-              id: 'readings',
-              lineStyle: { color: theme.series },
-              itemStyle: { color: theme.series },
-            },
-        {
-          id: 'hover',
-          itemStyle: { color: theme.series, borderColor: theme.surface, borderWidth: 2 },
-        },
-        { id: 'markers', itemStyle: { borderColor: theme.surface } },
-      ],
-    });
+    chart.setOption(themeOption(theme, this.kind()));
   }
 
   /** Re-reads theme colours when the OS switches between light and dark mode. */
@@ -832,81 +607,10 @@ export class LineChart {
   }
 }
 
-/**
- * Tooltip: the value (bold, text ink) first, then the UTC time, then any marker lines (e.g. the
- * alerts that fired). Text only, never HTML.
- */
-function tooltipContent(value: string, t: number, lines: readonly string[] = []): HTMLElement {
-  const root = document.createElement('div');
-  root.className = 'text-xs leading-5';
-  const strong = document.createElement('strong');
-  strong.className = 'block text-ink';
-  strong.textContent = value;
-  const time = document.createElement('span');
-  time.className = 'text-muted';
-  time.textContent = formatTimestamp(t);
-  root.append(strong, time);
-  for (const line of lines) {
-    const item = document.createElement('span');
-    item.className = 'block text-ink';
-    item.textContent = line;
-    root.append(item);
-  }
-  return root;
-}
-
 /** The zoomed window clipped to the domain; the whole domain when not zoomed (or no overlap). */
 function clampRange(view: TimeRange | null, domain: TimeRange): TimeRange {
   if (!view) return domain;
   const from = Math.max(view.from, domain.from);
   const to = Math.min(view.to, domain.to);
   return from < to ? { from, to } : domain;
-}
-
-/** `#rrggbb` + alpha as `rgba()` (other colour formats are returned unchanged). */
-function withAlpha(color: string, alpha: number): string {
-  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color);
-  if (!hex) return color;
-  const [r, g, b] = hex.slice(1).map((h) => parseInt(h, 16));
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-/** "Jan 2, 03:00–03:30 UTC": a candle's time span. */
-function candleSpan(c: Candle): string {
-  const end = formatTimestamp(c.end).replace(/^[A-Z][a-z]{2} \d{1,2}, /, '');
-  return formatTimestamp(c.start).replace(' UTC', `–${end}`);
-}
-
-/**
- * Candle tooltip: start/end (the open/close: first and last reading of the period), low and high (text ink, aligned figures) with the unit, then the time
- * span and the number of readings. Text only, never HTML.
- */
-function candleTooltip(
-  c: Candle,
-  format: (key: 'open' | 'close' | 'low' | 'high') => string,
-  unit: string,
-): HTMLElement {
-  const root = document.createElement('div');
-  root.className = 'text-xs leading-5';
-  for (const [key, label] of [
-    ['open', 'Start'],
-    ['close', 'End'],
-    ['low', 'Low'],
-    ['high', 'High'],
-  ] as const) {
-    const row = document.createElement('span');
-    row.className = 'flex justify-between gap-3 text-ink tabular-nums';
-    const name = document.createElement('span');
-    name.className = 'text-muted';
-    name.textContent = label;
-    const value = document.createElement('strong');
-    value.textContent = `${format(key)} ${unit}`.trim();
-    row.append(name, value);
-    root.append(row);
-  }
-  const time = document.createElement('span');
-  time.className = 'block text-muted';
-  time.textContent = `${candleSpan(c)} · ${c.count} ${c.count === 1 ? 'reading' : 'readings'}`;
-  root.append(time);
-  return root;
 }

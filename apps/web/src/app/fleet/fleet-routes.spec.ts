@@ -1,23 +1,17 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { TestBed } from '@angular/core/testing';
 import { MatPaginatorHarness } from '@angular/material/paginator/testing';
-import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { of, throwError } from 'rxjs';
-import { routes } from '../app.routes';
-import { NOW } from '../core/clock';
-import { SseService } from '../core/sse.service';
-import { provideIcons } from '../ui/icons';
 import { LineChart } from '../charts/line-chart';
-import { FleetApi } from './fleet-api.service';
 import { FarmOverview, TelemetryStats } from './fleet.model';
-import { fakes, farmsFixture, reading, statsFixture } from './testing';
+import { FakeFleetApi, FakeSse, farmsFixture, openFleet, reading, statsFixture } from './testing';
 
 /** Drives the real routes: overview -> farm -> turbine, with fake API and SSE. */
 describe('Fleet routes', () => {
   let harness: RouterTestingHarness;
-  let api: ReturnType<typeof fakes>['api'];
-  let sse: ReturnType<typeof fakes>['sse'];
+  let api: FakeFleetApi;
+  let sse: FakeSse;
   /** The client clock: 5 minutes after TURB001's latest reading (Jan 2, 23:55) unless changed. */
   const CLOCK = Date.parse('2026-01-03T00:00:00.000Z');
   let clockNow: number;
@@ -29,19 +23,16 @@ describe('Fleet routes', () => {
     stats?: TelemetryStats,
     farms?: FarmOverview[],
   ) {
-    ({ api, sse } = fakes(farms));
-    api.telemetry.mockReturnValue(of(history));
-    if (stats) api.telemetryStats.mockReturnValue(of(stats));
-    TestBed.configureTestingModule({
-      providers: [
-        provideRouter(routes, withComponentInputBinding()),
-        { provide: FleetApi, useValue: api },
-        { provide: SseService, useValue: sse },
-        { provide: NOW, useValue: () => clockNow },
-        provideIcons(),
-      ],
-    });
-    harness = await RouterTestingHarness.create(url);
+    // The shared route setup (fleet/testing.ts), with this turbine's history and stats.
+    ({ api, sse, harness } = await openFleet(
+      url,
+      () => clockNow,
+      farms,
+      ({ api }) => {
+        api.telemetry.mockReturnValue(of(history));
+        if (stats) api.telemetryStats.mockReturnValue(of(stats));
+      },
+    ));
   }
 
   const el = () => harness.routeNativeElement!.parentElement!.parentElement as HTMLElement;
@@ -370,7 +361,7 @@ describe('Fleet routes', () => {
       await start('/farms/FARM01/turbines/TURB001', history);
       const buttons = [...el().querySelectorAll<HTMLButtonElement>('[data-testid=range] button')];
       expect(buttons.map((b) => b.textContent?.trim())).toEqual(['6h', '24h', '48h', '7d']);
-      expect(buttons[1].getAttribute('aria-pressed')).toBe('true');
+      expect(buttons[1].getAttribute('aria-checked')).toBe('true'); // a Material toggle group: radio semantics
 
       buttons[3].click();
       await stable();
@@ -379,7 +370,7 @@ describe('Fleet routes', () => {
         'TURB001',
         expect.objectContaining({ limit: 2016 }),
       );
-      expect(buttons[3].getAttribute('aria-pressed')).toBe('true');
+      expect(buttons[3].getAttribute('aria-checked')).toBe('true');
     });
 
     it('charts the alerts: rules triggered per reading as the line, flagged readings as the scatter', async () => {
@@ -652,7 +643,7 @@ describe('Fleet routes', () => {
           expect.objectContaining({ limit: 2016 }),
         );
         expect(
-          el().querySelectorAll<HTMLButtonElement>('[data-testid=range] button')[3].ariaPressed,
+          el().querySelectorAll<HTMLButtonElement>('[data-testid=range] button')[3].ariaChecked,
         ).toBe('true');
       });
 

@@ -8,8 +8,8 @@ import {
 } from './alert-config.model';
 
 /**
- * Alert descriptions for the UI. Rules are evaluated by ingestion (telemetry_alerts), not here.
- * Higher is worse.
+ * Alert descriptions for the UI (rules are evaluated by ingestion, see telemetry_alerts).
+ * LEVEL_SEVERITY: higher is worse.
  */
 export const LEVEL_SEVERITY: Record<AlertLevel, number> = { info: 1, warn: 2, error: 3 };
 

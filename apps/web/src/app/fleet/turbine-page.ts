@@ -10,11 +10,13 @@ import {
   signal,
   untracked,
 } from '@angular/core';
+import { MatButton } from '@angular/material/button';
+import { MatButtonToggle, MatButtonToggleGroup } from '@angular/material/button-toggle';
 import { MatTooltip } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
-import { describeRule, levelLabel } from '../alerting/alert-config.model';
+import { describeRuleWithLevel } from '../alerting/alert-config.model';
 import { AlertLevelBadge } from '../alerting/alert-level-badge';
-import { describeTriggerWithLevel } from '../alerting/evaluate-alerts';
+import { describeTriggerWithLevel } from '../alerting/alert-text';
 import { ChartMarker, LineChart, TimeRange } from '../charts/line-chart';
 import { ChartPoint } from '../charts/scales';
 import { DELAYED_AFTER_MS, HISTORY_RANGES, READING_INTERVAL_MS, Telemetry } from './fleet.model';
@@ -46,6 +48,9 @@ export const METRICS: { key: Metric; title: string; unit: string; decimals: numb
     DecimalPipe,
     RouterLink,
     LineChart,
+    MatButton,
+    MatButtonToggle,
+    MatButtonToggleGroup,
     MatTooltip,
     StalenessBadge,
     TABLE_IMPORTS,
@@ -89,9 +94,12 @@ export class TurbinePage implements OnDestroy {
       null,
   );
 
-  /** Readings in time order, then one series per metric. */
+  /** The readings in time order (the store keeps them newest first), for every chart. */
+  private readonly ascending = computed(() => [...this.store.history()].reverse());
+
+  /** One series per metric. */
   protected readonly charts = computed(() => {
-    const ascending = [...this.store.history()].reverse();
+    const ascending = this.ascending();
     return METRICS.map((metric) => ({
       ...metric,
       points: ascending.map((r): ChartPoint => ({ t: Date.parse(r.timestamp), v: r[metric.key] })),
@@ -103,7 +111,7 @@ export class TurbinePage implements OnDestroy {
    * readings as a scatter overlay, coloured by their worst level; the tooltip lists the rules.
    */
   protected readonly alertChart = computed(() => {
-    const ascending = [...this.store.history()].reverse();
+    const ascending = this.ascending();
     return {
       points: ascending.map((r): ChartPoint => ({
         t: Date.parse(r.timestamp),
@@ -164,9 +172,7 @@ export class TurbinePage implements OnDestroy {
 
   /** Tooltip of a reading's Alerts cell: one line per triggered rule, worst first. */
   protected alertLines(reading: Telemetry): string {
-    return reading.alerts
-      .map((rule) => `${levelLabel(rule.alertLevel)}: ${describeRule(rule)}`)
-      .join('\n');
+    return reading.alerts.map(describeRuleWithLevel).join('\n');
   }
 
   protected delayMinutes(reading: Telemetry): number {

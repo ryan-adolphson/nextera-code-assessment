@@ -1,7 +1,7 @@
 import { Title } from '@angular/platform-browser';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
-import { openFleet, reading } from './testing';
+import { openFleet } from './testing';
 
 /** The shell's side navigation, driven through the real routes. */
 describe('FleetShell navigation', () => {
@@ -23,12 +23,6 @@ describe('FleetShell navigation', () => {
   const toggle = () => app.root().querySelector<HTMLButtonElement>('[data-testid=nav-toggle]')!;
   const nav = () => app.root().querySelector<HTMLElement>('#main-nav')!;
   const url = () => TestBed.inject(Router).url;
-  /** The text a screen reader announces: content without aria-hidden parts. */
-  const spoken = (el: Element) => {
-    const copy = el.cloneNode(true) as Element;
-    copy.querySelectorAll('[aria-hidden=true]').forEach((e) => e.remove());
-    return app.text(copy);
-  };
 
   it('shows the four sections in order, each a link', async () => {
     await open('/farms');

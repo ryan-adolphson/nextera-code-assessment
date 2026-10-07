@@ -31,23 +31,20 @@
   </header>
 
   <!-- One filter row above everything it scopes. -->
-  <div
-    class="mt-5 mb-3 flex flex-wrap items-center gap-1.5"
-    role="group"
-    aria-label="Time range"
-    data-testid="range"
-  >
-    @for (range of ranges; track range.ms) {
-      <button
-        type="button"
-        class="cursor-pointer rounded-md border border-line bg-page px-3 py-1 text-ink hover:border-accent aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-white"
-        [attr.aria-pressed]="store.historyRangeMs() === range.ms"
-        (click)="setRange(range.ms)"
-      >
-        {{ range.label }}
-      </button>
-    }
-    <span class="ml-2 text-sm text-muted" data-testid="window-end"
+  <div class="mt-5 mb-3 flex flex-wrap items-center gap-3">
+    <!-- One choice of four: a Material toggle group (role=radiogroup, aria-checked). -->
+    <mat-button-toggle-group
+      hideSingleSelectionIndicator
+      aria-label="Time range"
+      data-testid="range"
+      [value]="store.historyRangeMs()"
+      (change)="setRange($event.value)"
+    >
+      @for (range of ranges; track range.ms) {
+        <mat-button-toggle [value]="range.ms">{{ range.label }}</mat-button-toggle>
+      }
+    </mat-button-toggle-group>
+    <span class="text-sm text-muted" data-testid="window-end"
       >Ending now ({{ store.now() | date: 'HH:mm' : 'UTC' }} UTC)</span
     >
   </div>
@@ -71,8 +68,9 @@
           </p>
           @if (longerRange(); as longer) {
             <button
+              matButton="outlined"
               type="button"
-              class="mt-3 cursor-pointer rounded-md border border-line bg-page px-3 py-1 text-sm text-ink hover:border-accent"
+              class="mt-3"
               data-testid="empty-window-longer"
               (click)="setRange(longer.ms)"
             >
@@ -93,8 +91,8 @@
       @if (view()) {
         <div class="mb-2 flex justify-end">
           <button
+            matButton="outlined"
             type="button"
-            class="cursor-pointer rounded-md border border-line px-3 py-1 text-sm hover:bg-surface"
             data-testid="reset-zoom"
             (click)="view.set(null)"
           >
@@ -216,11 +214,7 @@
     <mat-paginator
       aria-label="Reading pages"
       data-testid="history-paginator"
-      [length]="historyPaging.length()"
-      [pageIndex]="historyPaging.pageIndex()"
-      [pageSize]="historyPaging.pageSize()"
-      [pageSizeOptions]="historyPaging.pageSizeOptions"
-      (page)="historyPaging.onPage($event)"
+      [appPaging]="historyPaging"
     />
   }
 } @else {

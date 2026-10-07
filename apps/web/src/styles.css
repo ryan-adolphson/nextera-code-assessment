@@ -117,6 +117,17 @@
   --mat-sys-inverse-surface: var(--surface);
   --mat-sys-inverse-on-surface: var(--text);
   --mat-sys-corner-extra-small: 6px;
+  --mat-sys-corner-medium: 8px;
+  --mat-sys-corner-large: 12px;
+  --mat-sys-corner-extra-large: 12px;
+  --mat-sys-pressed-state-layer-opacity: 0.12;
+  --mat-sys-primary-container: var(--surface);
+  --mat-sys-on-primary-container: var(--text);
+  --mat-sys-headline-small-font: inherit;
+  --mat-sys-headline-small-size: 1.125rem;
+  --mat-sys-headline-small-line-height: 1.75rem;
+  --mat-sys-headline-small-weight: 600;
+  --mat-sys-headline-small-tracking: normal;
   --mat-sys-hover-state-layer-opacity: 0.08;
   --mat-sys-focus-state-layer-opacity: 0.12;
   /* Typography: the app's font, at the body sizes. */
@@ -160,6 +171,39 @@
   --mat-paginator-container-text-color: var(--muted);
   --mat-paginator-enabled-icon-color: var(--text);
   --mat-paginator-disabled-icon-color: var(--border);
+
+  /*
+   * Buttons (matButton filled/outlined/text, matIconButton): compact 36px, 6px corners like the
+   * rest of the UI (Material's default is a pill); filled = --accent, outlined = hairline.
+   */
+  --mat-button-filled-container-height: 36px;
+  --mat-button-outlined-container-height: 36px;
+  --mat-button-text-container-height: 36px;
+  --mat-button-filled-container-shape: 6px;
+  --mat-button-outlined-container-shape: 6px;
+  --mat-button-text-container-shape: 6px;
+  --mat-button-filled-horizontal-padding: 16px;
+  --mat-button-outlined-horizontal-padding: 14px;
+  --mat-button-text-horizontal-padding: 10px;
+  --mat-button-outlined-outline-color: var(--border);
+  --mat-button-outlined-label-text-color: var(--text);
+  --mat-button-text-label-text-color: var(--accent);
+  --mat-icon-button-icon-color: var(--muted);
+
+  /* Toggle group (turbine page time range): one control with hairline dividers. */
+  --mat-button-toggle-height: 36px;
+  --mat-button-toggle-shape: 6px;
+  --mat-button-toggle-divider-color: var(--border);
+  --mat-button-toggle-text-color: var(--text);
+  --mat-button-toggle-background-color: var(--bg);
+  --mat-button-toggle-selected-state-background-color: var(--accent);
+  --mat-button-toggle-selected-state-text-color: var(--on-accent);
+
+  /* Dialogs (MatDialog): the page surface, a hairline-free card with our title size. */
+  --mat-dialog-container-color: var(--bg);
+  --mat-dialog-container-shape: 12px;
+  --mat-dialog-subhead-color: var(--text);
+  --mat-dialog-supporting-text-color: var(--text);
 
   /* Form fields (outline): compact 40px controls, hairline outline like the tables. */
   --mat-form-field-container-height: 40px;
@@ -212,4 +256,11 @@ tr.mat-mdc-row.history-detail-row {
 }
 tr.mat-mdc-row.history-detail-row[hidden] {
   display: none;
+}
+
+/* Destructive Material buttons (Delete): danger text, or a solid danger fill for filled ones. */
+.danger-button {
+  --mat-button-text-label-text-color: var(--danger);
+  --mat-button-filled-container-color: var(--danger);
+  --mat-button-filled-label-text-color: var(--on-danger);
 }

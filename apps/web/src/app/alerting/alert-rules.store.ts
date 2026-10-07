@@ -6,8 +6,8 @@ import { AlertConfigApi } from './alert-config-api.service';
 import { AlertConfig } from './alert-config.model';
 
 /**
- * The alert rules (GET /api/alert-configs), provided by FleetShell next to FleetStore and used by
- * the Rules page (alerts are evaluated by ingestion, not in the browser). Loaded when first used, and reloaded on every `alert-config.changed` (FleetStore's
+ * The alert rules (GET /api/alert-configs), provided by the Rules page (its only user; alerts are
+ * evaluated by ingestion, not in the browser). Needs the shell's FleetStore. Loaded when first used, and reloaded on every `alert-config.changed` (FleetStore's
  * `alertConfigVersion`, from the shell's one SSE connection) and after local writes (`reload()`).
  * `switchMap` drops a stale response when reloads overlap. A failed load keeps the last rules.
  */

@@ -1,7 +1,7 @@
+import { describeRuleWithLevel } from './alert-config.model';
 import { reading } from '../fleet/testing';
-import { TelemetryMetric } from '../fleet/fleet.model';
 import { AlertConfig } from './alert-config.model';
-import { describeTrigger, describeTriggerWithLevel } from './evaluate-alerts';
+import { describeTrigger, describeTriggerWithLevel } from './alert-text';
 
 let n = 0;
 const rule = (overrides: Partial<AlertConfig> = {}): AlertConfig => ({
@@ -31,5 +31,18 @@ describe('describeTrigger', () => {
         rule({ measurementMetric: 'bladePitchDeg', valueMetric: 30, alertLevel: 'warn' }),
       ),
     ).toBe('Warning: Blade pitch 44° > 30');
+  });
+});
+
+describe('describeRuleWithLevel', () => {
+  it('prefixes the rule with its level', () => {
+    expect(
+      describeRuleWithLevel({
+        measurementMetric: 'gearboxTempC',
+        comparison: 'above',
+        valueMetric: 120,
+        alertLevel: 'error',
+      }),
+    ).toBe('Error: Gearbox temperature above 120 °C');
   });
 });

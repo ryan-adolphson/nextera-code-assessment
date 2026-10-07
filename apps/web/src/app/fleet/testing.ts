@@ -1,6 +1,9 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { InteractivityChecker } from '@angular/cdk/a11y';
+import { Injectable } from '@angular/core';
+import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { Observable, Subject, of } from 'rxjs';
@@ -185,6 +188,17 @@ export const largeFleetFixture = (count: number): FarmOverview[] => [
   },
 ];
 
+export type FakeFleetApi = ReturnType<typeof fakes>['api'];
+export type FakeSse = ReturnType<typeof fakes>['sse'];
+
+/** CDK's interactivity checks without layout: every element counts as visible (jsdom). */
+@Injectable()
+class LayoutlessInteractivityChecker extends InteractivityChecker {
+  override isVisible(): boolean {
+    return true;
+  }
+}
+
 /** Test doubles for FleetApi and SseService: push SSE events with `sse.push(...)`. */
 export function fakes(farms: FarmOverview[] = farmsFixture()) {
   const events = new Subject<SseEvent<unknown>>();
@@ -213,9 +227,16 @@ export function fakes(farms: FarmOverview[] = farmsFixture()) {
 /**
  * Opens `url` on the real routes with fake API/SSE and the client clock `clock()`. `root` is the
  * whole rendered app (shell + page); `text` reads an element's whitespace-normalised text.
+ * `beforeOpen` sets up the fakes before the first navigation (e.g. a turbine's history).
  */
-export async function openFleet(url: string, clock: () => number, farms?: FarmOverview[]) {
+export async function openFleet(
+  url: string,
+  clock: () => number,
+  farms?: FarmOverview[],
+  beforeOpen?: (fakes: { api: FakeFleetApi; sse: FakeSse }) => void,
+) {
   const { api, sse } = fakes(farms);
+  beforeOpen?.({ api, sse });
   TestBed.configureTestingModule({
     providers: [
       provideRouter(routes, withComponentInputBinding()),
@@ -227,6 +248,11 @@ export async function openFleet(url: string, clock: () => number, farms?: FarmOv
       { provide: SseService, useValue: sse },
       { provide: NOW, useValue: clock },
       provideIcons(),
+      // Material dialogs, chips… without animations: open/close happen synchronously in tests.
+      { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
+      // jsdom has no layout, so CDK would find nothing visible (hence nothing tabbable) and focus
+      // traps (MatDialog autoFocus, cdkFocusInitial) would fall back to the container.
+      { provide: InteractivityChecker, useClass: LayoutlessInteractivityChecker },
     ],
   });
   const harness = await RouterTestingHarness.create(url);

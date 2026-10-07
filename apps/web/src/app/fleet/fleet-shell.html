@@ -34,10 +34,12 @@
         ></span>
         {{ liveLabel() }}
       </span>
+      <!-- md:hidden! — Material's (unlayered) icon-button display would beat the utility. -->
       <button
         #menuButton
+        matIconButton
         type="button"
-        class="inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink hover:bg-page md:hidden"
+        class="shrink-0 md:hidden!"
         aria-controls="main-nav"
         data-testid="nav-toggle"
         [attr.aria-expanded]="menuOpen()"

@@ -1,5 +1,6 @@
-import { Signal, computed, signal } from '@angular/core';
-import { PageEvent } from '@angular/material/paginator';
+import { Directive, Signal, computed, effect, inject, input, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { MatPaginator, PageEvent } from '@angular/material/paginator';
 
 /** One page of `rows` for a `<mat-paginator>`, driven by signals. */
 export interface Paging<T> {
@@ -22,9 +23,7 @@ export interface Paging<T> {
  *
  * ```html
  * <table mat-table [dataSource]="paging.page()">…</table>
- * <mat-paginator [length]="paging.length()" [pageIndex]="paging.pageIndex()"
- *   [pageSize]="paging.pageSize()" [pageSizeOptions]="paging.pageSizeOptions"
- *   (page)="paging.onPage($event)" />
+ * <mat-paginator [appPaging]="paging" aria-label="…" />
  * ```
  */
 export function paginate<T>(
@@ -56,4 +55,28 @@ export function paginate<T>(
       requested.set(0);
     },
   };
+}
+
+/**
+ * Binds a `<mat-paginator>` to a `Paging`: pushes its length, page index, page size and size
+ * options into the paginator, and its `page` events back (`[appPaging]="paging"`).
+ */
+@Directive({ selector: 'mat-paginator[appPaging]' })
+export class PagingDirective {
+  readonly appPaging = input.required<Paging<unknown>>();
+  private readonly paginator = inject(MatPaginator);
+
+  constructor() {
+    effect(() => {
+      const paging = this.appPaging();
+      const paginator = this.paginator;
+      paginator.pageSizeOptions = [...paging.pageSizeOptions];
+      paginator.pageSize = paging.pageSize();
+      paginator.length = paging.length();
+      paginator.pageIndex = paging.pageIndex();
+    });
+    this.paginator.page
+      .pipe(takeUntilDestroyed())
+      .subscribe((event) => this.appPaging().onPage(event));
+  }
 }

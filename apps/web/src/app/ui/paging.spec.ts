@@ -1,5 +1,7 @@
-import { signal } from '@angular/core';
-import { paginate } from './paging';
+import { ChangeDetectionStrategy, Component, signal, viewChild } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { MatPaginator } from '@angular/material/paginator';
+import { PagingDirective, paginate } from './paging';
 
 describe('paginate', () => {
   const numbers = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
@@ -36,5 +38,40 @@ describe('paginate', () => {
   it('offers the default page sizes unless given', () => {
     expect(paginate(signal([]), 25).pageSizeOptions).toEqual([10, 25, 50, 100]);
     expect(paginate(signal([]), 50, [50, 100]).pageSizeOptions).toEqual([50, 100]);
+  });
+});
+
+@Component({
+  imports: [MatPaginator, PagingDirective],
+  template: `<mat-paginator [appPaging]="paging" aria-label="Pages" />`,
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+class PagingHost {
+  readonly rows = signal(Array.from({ length: 12 }, (_, i) => i + 1));
+  readonly paging = paginate(this.rows, 5, [5, 10]);
+  readonly paginator = viewChild.required(MatPaginator);
+}
+
+describe('PagingDirective', () => {
+  it('pushes the paging state into the paginator and its page events back', async () => {
+    const fixture = TestBed.createComponent(PagingHost);
+    await fixture.whenStable();
+    const { paginator, paging, rows } = fixture.componentInstance;
+    const state = () => [
+      paginator().length,
+      paginator().pageIndex,
+      paginator().pageSize,
+      paginator().pageSizeOptions,
+    ];
+    expect(state()).toEqual([12, 0, 5, [5, 10]]);
+
+    paginator().nextPage(); // a user click: emits `page`
+    await fixture.whenStable();
+    expect(paging.pageIndex()).toBe(1);
+    expect(paging.page()).toEqual([6, 7, 8, 9, 10]);
+
+    rows.set([1, 2, 3]); // the rows shrink: the clamped index flows back to the paginator
+    await fixture.whenStable();
+    expect(state()).toEqual([3, 0, 5, [5, 10]]);
   });
 });

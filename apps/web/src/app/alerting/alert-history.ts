@@ -1,6 +1,6 @@
 import { Telemetry } from '../fleet/fleet.model';
 import { AlertConfig, AlertLevel } from './alert-config.model';
-import { LEVEL_SEVERITY } from './evaluate-alerts';
+import { LEVEL_SEVERITY } from './alert-text';
 
 /** The longest range the API accepts (GET /api/alerts). */
 export const MAX_RANGE_DAYS = 31;

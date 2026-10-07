@@ -46,186 +46,170 @@
     data-testid="history-error"
   >
     The alerts could not be loaded.
-    <button
-      type="button"
-      class="cursor-pointer rounded-md border border-line bg-page px-3 py-1 text-ink hover:bg-surface"
-      data-testid="history-retry"
-      (click)="load()"
-    >
+    <button matButton="outlined" type="button" data-testid="history-retry" (click)="load()">
       Retry
     </button>
   </p>
 } @else {
-  <!-- The table frame: as tall as its rows, at most the height left in the window (min 12rem).
-       The rows scroll under the sticky header row; the paginator stays below. -->
-  <div
-    class="mt-4 flex min-h-48 flex-col overflow-hidden rounded-lg border border-line"
-    data-testid="history-frame"
+  <!-- The table frame (ui/table-frame.ts): the rows scroll under the sticky header row; the
+       paginator stays below. -->
+  <app-table-frame
+    class="mt-4"
+    label="Alerts by turbine"
+    testId="history-frame"
+    scrollTestId="history-scroll"
   >
-    <div
-      class="relative min-h-0 flex-1 overflow-auto"
-      role="region"
-      aria-label="Alerts by turbine"
-      tabindex="0"
-      data-testid="history-scroll"
-    >
-      <!-- Expandable rows: each turbine renders a summary row and a detail row
+    <!-- Expandable rows: each turbine renders a summary row and a detail row
            (multiTemplateDataRows); the detail row is hidden until the turbine is expanded. -->
-      <table
-        mat-table
-        multiTemplateDataRows
-        data-testid="alert-history"
-        [dataSource]="paging.page()"
-        [trackBy]="trackTurbine"
-        [attr.aria-busy]="loading()"
-      >
-        <ng-container matColumnDef="expand">
-          <th mat-header-cell *matHeaderCellDef class="w-12">
-            <span class="sr-only">Expand</span>
-          </th>
-          <td mat-cell *matCellDef="let t" class="w-12 pr-0!">
-            <!-- The row's click handler toggles; this button makes it keyboard-operable. -->
-            <button
-              type="button"
-              class="-m-1 inline-flex size-8 cursor-pointer items-center justify-center rounded-md text-muted hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
-              data-testid="history-expand"
-              [attr.aria-expanded]="isExpanded(t.turbineId)"
-              [attr.aria-controls]="'history-detail-' + t.turbineId"
-              [attr.aria-label]="
-                (isExpanded(t.turbineId) ? 'Hide' : 'Show') + ' readings for ' + t.turbineId
-              "
-            >
-              <mat-icon
-                class="size-5! transition-transform"
-                [class.rotate-90]="isExpanded(t.turbineId)"
-                svgIcon="chevron-right"
-              />
-            </button>
-          </td>
-        </ng-container>
-
-        <ng-container matColumnDef="turbine">
-          <th mat-header-cell *matHeaderCellDef>Turbine</th>
-          <td mat-cell *matCellDef="let t" class="font-semibold">
-            <a
-              [routerLink]="['/farms', t.farmId, 'turbines', t.turbineId]"
-              (click)="$event.stopPropagation()"
-              >{{ t.turbineId }}</a
-            >
-          </td>
-        </ng-container>
-
-        <ng-container matColumnDef="farm">
-          <th mat-header-cell *matHeaderCellDef>Farm</th>
-          <td mat-cell *matCellDef="let t">
-            {{ t.farmName ?? t.farmId }}
-            @if (t.farmName) {
-              <span class="text-muted"> {{ t.farmId }}</span>
-            }
-          </td>
-        </ng-container>
-
-        <ng-container matColumnDef="latest">
-          <th mat-header-cell *matHeaderCellDef>Latest (UTC)</th>
-          <td mat-cell *matCellDef="let t" class="tabular-nums">
-            {{ t.latest | date: 'MMM d, HH:mm' : 'UTC' }}
-          </td>
-        </ng-container>
-
-        <!-- Each distinct rule that fired in the range, worst first, with its reading count. -->
-        <ng-container matColumnDef="rules">
-          <th mat-header-cell *matHeaderCellDef>Alerts</th>
-          <td mat-cell *matCellDef="let t" class="py-1!">
-            <mat-chip-set aria-label="Alerts in this range" data-testid="turbine-alert-chips">
-              <mat-chip>{{ t.rules.length }}</mat-chip>
-              <!-- @for (r of t.rules; track r.rule.id) {
-                <mat-chip
-                  class="alert-chip"
-                  disableRipple
-                  data-testid="alert-chip"
-                  [attr.data-level]="r.rule.alertLevel"
-                  >{{ ruleChip(r.rule) }} ×{{ r.count }}</mat-chip
-                >
-              } -->
-            </mat-chip-set>
-          </td>
-        </ng-container>
-
-        <!-- The detail row: the turbine's flagged readings, newest first, each with its chips. -->
-        <ng-container matColumnDef="detail">
-          <td
-            mat-cell
-            *matCellDef="let t"
-            class="bg-surface"
-            [attr.colspan]="columns.length"
-            [id]="'history-detail-' + t.turbineId"
+    <table
+      mat-table
+      multiTemplateDataRows
+      data-testid="alert-history"
+      [dataSource]="paging.page()"
+      [trackBy]="trackTurbine"
+      [attr.aria-busy]="loading()"
+    >
+      <ng-container matColumnDef="expand">
+        <th mat-header-cell *matHeaderCellDef class="w-12">
+          <span class="sr-only">Expand</span>
+        </th>
+        <td mat-cell *matCellDef="let t" class="w-12 pr-0!">
+          <!-- The row's click handler toggles; this button makes it keyboard-operable. -->
+          <button
+            matIconButton
+            type="button"
+            class="-m-1 [--mat-icon-button-icon-size:20px] [--mat-icon-button-state-layer-size:32px]"
+            data-testid="history-expand"
+            [attr.aria-expanded]="isExpanded(t.turbineId)"
+            [attr.aria-controls]="'history-detail-' + t.turbineId"
+            [attr.aria-label]="
+              (isExpanded(t.turbineId) ? 'Hide' : 'Show') + ' readings for ' + t.turbineId
+            "
           >
-            @if (isExpanded(t.turbineId)) {
-              <ul class="grid gap-1 py-2 pl-10" [attr.aria-label]="'Readings for ' + t.turbineId">
-                @for (r of t.readings; track r.id) {
-                  <li class="flex flex-wrap items-center gap-3" data-testid="history-reading">
-                    <span class="w-28 text-muted tabular-nums">{{
-                      r.timestamp | date: 'MMM d, HH:mm' : 'UTC'
-                    }}</span>
-                    <mat-chip-set aria-label="Triggered alerts" data-testid="reading-alert-chips">
-                      @for (alert of r.alerts; track alert.id) {
-                        <mat-chip
-                          class="alert-chip"
-                          disableRipple
-                          data-testid="alert-chip"
-                          [attr.data-level]="alert.alertLevel"
-                          >{{ describe(r, alert) }}</mat-chip
-                        >
-                      }
-                    </mat-chip-set>
-                  </li>
-                }
-              </ul>
-            }
-          </td>
-        </ng-container>
+            <mat-icon
+              class="size-5! transition-transform"
+              [class.rotate-90]="isExpanded(t.turbineId)"
+              svgIcon="chevron-right"
+            />
+          </button>
+        </td>
+      </ng-container>
 
-        <tr mat-header-row *matHeaderRowDef="columns; sticky: true" class="bg-page"></tr>
-        <tr
-          mat-row
-          *matRowDef="let t; columns: columns"
-          class="cursor-pointer hover:bg-surface"
-          data-testid="history-turbine"
-          [attr.data-turbine-id]="t.turbineId"
-          [attr.data-level]="t.worst"
-          [attr.data-expanded]="isExpanded(t.turbineId) ? '' : null"
-          (click)="toggle(t.turbineId)"
-        ></tr>
-        <tr
-          mat-row
-          *matRowDef="let t; columns: ['detail']"
-          class="history-detail-row"
-          data-testid="history-detail"
-          [attr.data-turbine-id]="t.turbineId"
-          [attr.hidden]="isExpanded(t.turbineId) ? null : ''"
-        ></tr>
-        <tr class="mat-mdc-no-data-row" *matNoDataRow>
-          <td
-            class="mat-mdc-cell px-3 py-2 text-muted"
-            [attr.colspan]="columns.length"
-            data-testid="history-empty"
+      <ng-container matColumnDef="turbine">
+        <th mat-header-cell *matHeaderCellDef>Turbine</th>
+        <td mat-cell *matCellDef="let t" class="font-semibold">
+          <a
+            [routerLink]="['/farms', t.farmId, 'turbines', t.turbineId]"
+            (click)="$event.stopPropagation()"
+            >{{ t.turbineId }}</a
           >
-            @if (!loading()) {
-              No alerts in this range.
+        </td>
+      </ng-container>
+
+      <ng-container matColumnDef="farm">
+        <th mat-header-cell *matHeaderCellDef>Farm</th>
+        <td mat-cell *matCellDef="let t">
+          {{ t.farmName ?? t.farmId }}
+          @if (t.farmName) {
+            <span class="text-muted"> {{ t.farmId }}</span>
+          }
+        </td>
+      </ng-container>
+
+      <ng-container matColumnDef="latest">
+        <th mat-header-cell *matHeaderCellDef>Latest (UTC)</th>
+        <td mat-cell *matCellDef="let t" class="tabular-nums">
+          {{ t.latest | date: 'MMM d, HH:mm' : 'UTC' }}
+        </td>
+      </ng-container>
+
+      <!-- Each distinct rule that fired in the range, worst first, with its reading count. -->
+      <ng-container matColumnDef="rules">
+        <th mat-header-cell *matHeaderCellDef>Alerts</th>
+        <td mat-cell *matCellDef="let t" class="py-1!">
+          <mat-chip-set aria-label="Alerts in this range" data-testid="turbine-alert-chips">
+            @for (r of t.rules; track r.rule.id) {
+              <mat-chip
+                class="alert-chip"
+                disableRipple
+                data-testid="alert-chip"
+                [attr.data-level]="r.rule.alertLevel"
+                >{{ ruleChip(r.rule) }} ×{{ r.count }}</mat-chip
+              >
             }
-          </td>
-        </tr>
-      </table>
-    </div>
+          </mat-chip-set>
+        </td>
+      </ng-container>
+
+      <!-- The detail row: the turbine's flagged readings, newest first, each with its chips. -->
+      <ng-container matColumnDef="detail">
+        <td
+          mat-cell
+          *matCellDef="let t"
+          class="bg-surface"
+          [attr.colspan]="columns.length"
+          [id]="'history-detail-' + t.turbineId"
+        >
+          @if (isExpanded(t.turbineId)) {
+            <ul class="grid gap-1 py-2 pl-10" [attr.aria-label]="'Readings for ' + t.turbineId">
+              @for (r of t.readings; track r.id) {
+                <li class="flex flex-wrap items-center gap-3" data-testid="history-reading">
+                  <span class="w-28 text-muted tabular-nums">{{
+                    r.timestamp | date: 'MMM d, HH:mm' : 'UTC'
+                  }}</span>
+                  <mat-chip-set aria-label="Triggered alerts" data-testid="reading-alert-chips">
+                    @for (alert of r.alerts; track alert.id) {
+                      <mat-chip
+                        class="alert-chip"
+                        disableRipple
+                        data-testid="alert-chip"
+                        [attr.data-level]="alert.alertLevel"
+                        >{{ describe(r, alert) }}</mat-chip
+                      >
+                    }
+                  </mat-chip-set>
+                </li>
+              }
+            </ul>
+          }
+        </td>
+      </ng-container>
+
+      <tr mat-header-row *matHeaderRowDef="columns; sticky: true" class="bg-page"></tr>
+      <tr
+        mat-row
+        *matRowDef="let t; columns: columns"
+        class="cursor-pointer hover:bg-surface"
+        data-testid="history-turbine"
+        [attr.data-turbine-id]="t.turbineId"
+        [attr.data-level]="t.worst"
+        [attr.data-expanded]="isExpanded(t.turbineId) ? '' : null"
+        (click)="toggle(t.turbineId)"
+      ></tr>
+      <tr
+        mat-row
+        *matRowDef="let t; columns: ['detail']"
+        class="history-detail-row"
+        data-testid="history-detail"
+        [attr.data-turbine-id]="t.turbineId"
+        [attr.hidden]="isExpanded(t.turbineId) ? null : ''"
+      ></tr>
+      <tr class="mat-mdc-no-data-row" *matNoDataRow>
+        <td
+          class="mat-mdc-cell px-3 py-2 text-muted"
+          [attr.colspan]="columns.length"
+          data-testid="history-empty"
+        >
+          @if (!loading()) {
+            No alerts in this range.
+          }
+        </td>
+      </tr>
+    </table>
     <mat-paginator
-      class="shrink-0 border-t border-line"
       aria-label="Alert history pages"
       data-testid="history-paginator"
-      [length]="paging.length()"
-      [pageIndex]="paging.pageIndex()"
-      [pageSize]="paging.pageSize()"
-      [pageSizeOptions]="paging.pageSizeOptions"
-      (page)="paging.onPage($event)"
+      [appPaging]="paging"
     />
-  </div>
+  </app-table-frame>
 }

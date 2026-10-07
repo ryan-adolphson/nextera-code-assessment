@@ -64,3 +64,8 @@ export function describeRule(rule: AlertConfigInput): string {
   const metric = metricOf(rule.measurementMetric);
   return `${metric.label} ${rule.comparison} ${formatThreshold(rule.valueMetric, metric.unit)}`;
 }
+
+/** "Error: Gearbox temperature above 120 °C": a rule with its level (lists that mix levels). */
+export function describeRuleWithLevel(rule: AlertConfigInput): string {
+  return `${levelLabel(rule.alertLevel)}: ${describeRule(rule)}`;
+}

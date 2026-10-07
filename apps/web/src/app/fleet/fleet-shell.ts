@@ -9,10 +9,10 @@ import {
   viewChild,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { MatIconButton } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
-import { AlertRulesStore } from '../alerting/alert-rules.store';
 import { IconName } from '../ui/icons';
 import { FleetStore, LiveStatus } from './fleet.store';
 
@@ -32,8 +32,8 @@ export const NAV_ITEMS = [
 ] as const satisfies readonly { id: string; path: string; label: string; icon: IconName }[];
 
 /**
- * Parent of every page: the side navigation and the page region. Owns the FleetStore and the
- * AlertRulesStore (provided here, so all pages share them): the fleet is loaded and the SSE connection opened once, and
+ * Parent of every page: the side navigation and the page region. Owns the FleetStore (provided
+ * here, so all pages share it): the fleet is loaded and the SSE connection opened once, and
  * navigating between pages neither reloads nor reconnects.
  *
  * Desktop (md and up): a sticky left column with the app name, the live badge and the nav.
@@ -44,8 +44,8 @@ export const NAV_ITEMS = [
  */
 @Component({
   selector: 'app-fleet-shell',
-  imports: [MatIcon, RouterLink, RouterLinkActive, RouterOutlet],
-  providers: [FleetStore, AlertRulesStore],
+  imports: [MatIcon, MatIconButton, RouterLink, RouterLinkActive, RouterOutlet],
+  providers: [FleetStore],
   templateUrl: './fleet-shell.html',
   host: { '(document:keydown.escape)': 'closeMenu()' },
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -59,7 +59,10 @@ export class FleetShell implements OnInit {
   /** The current route asks for a window-high page (route data `fillViewport`). */
   protected readonly fillViewport = signal(false);
   private readonly router = inject(Router);
-  private readonly menuButton = viewChild.required<ElementRef<HTMLButtonElement>>('menuButton');
+  // read: ElementRef: the ref is on a MatIconButton, which would otherwise be the component.
+  private readonly menuButton = viewChild.required('menuButton', {
+    read: ElementRef<HTMLButtonElement>,
+  });
 
   constructor() {
     this.router.events
