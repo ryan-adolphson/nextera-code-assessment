@@ -10,6 +10,7 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatChip, MatChipSet } from '@angular/material/chips';
 import { MatFormField, MatLabel } from '@angular/material/form-field';
+import { MatIcon } from '@angular/material/icon';
 import { MatInput } from '@angular/material/input';
 import { RouterLink } from '@angular/router';
 import { Subscription } from 'rxjs';
@@ -20,20 +21,22 @@ import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
 import { AlertHistoryApi } from './alert-history-api.service';
 import {
-  HistoryRow,
+  TurbineAlerts,
   fromUtcInput,
-  groupByTurbine,
+  groupAlertsByTurbine,
   last24Hours,
   rangeError,
   toUtcInput,
 } from './alert-history';
+import { describeRule, levelLabel } from './alert-config.model';
 import { AlertingTabs } from './alerting-tabs';
 import { describeTriggerWithLevel } from './evaluate-alerts';
 
 /**
  * /alerting/history: the readings that triggered alert rules in a time range (GET /api/alerts),
- * default the last 24 hours. A Material table grouped by turbine (a header row per turbine, then
- * its flagged readings, newest first) with each triggered rule as a Material chip; 25 readings per
+ * default the last 24 hours. A Material table with expandable rows: one summary row per turbine
+ * (latest alert, each distinct rule as a Material chip with its count) that
+ * expands to its flagged readings, newest first, each with its rules as chips. 25 turbines per
  * page. The range is in UTC like every time in the app; changing it reloads.
  */
 @Component({
@@ -44,6 +47,7 @@ import { describeTriggerWithLevel } from './evaluate-alerts';
     MatChip,
     MatChipSet,
     MatFormField,
+    MatIcon,
     MatInput,
     MatLabel,
     RouterLink,
@@ -74,16 +78,18 @@ export class AlertHistoryPage {
     () => new Set(this.readings().map((r) => r.turbineId)).size,
   );
 
-  /** 25 readings per page; group headers are added per page (repeated when a turbine continues). */
-  protected readonly paging = paginate(this.readings, 25);
-  protected readonly rows = computed(() =>
-    groupByTurbine(this.paging.page(), this.readings(), (farmId) => this.farmName(farmId)),
+  /** One summary row per turbine, 25 per page. */
+  protected readonly turbines = computed(() =>
+    groupAlertsByTurbine(this.readings(), (farmId) => this.farmName(farmId)),
   );
-  protected readonly columns = ['measured', 'alerts'];
-  protected readonly isGroup = (_: number, row: HistoryRow) => row.kind === 'group';
-  protected readonly trackRow = (_: number, row: HistoryRow) =>
-    row.kind === 'group' ? `group:${row.turbineId}` : row.reading.id;
+  protected readonly paging = paginate(this.turbines, 25);
+  protected readonly columns = ['expand', 'turbine', 'farm', 'latest', 'rules'];
+  protected readonly trackTurbine = (_: number, t: TurbineAlerts) => t.turbineId;
+  /** The turbines whose rows are expanded (any number at once). */
+  protected readonly expanded = signal<ReadonlySet<string>>(new Set());
   protected readonly describe = describeTriggerWithLevel;
+  protected readonly ruleChip = (rule: TurbineAlerts['rules'][number]['rule']) =>
+    `${levelLabel(rule.alertLevel)}: ${describeRule(rule)}`;
 
   private request?: Subscription;
 
@@ -92,6 +98,19 @@ export class AlertHistoryPage {
     this.fromInput.set(toUtcInput(from));
     this.toInput.set(toUtcInput(to));
     this.load();
+  }
+
+  protected isExpanded(turbineId: string): boolean {
+    return this.expanded().has(turbineId);
+  }
+
+  /** Opens or closes a turbine's detail row (the row or its expand button). */
+  protected toggle(turbineId: string): void {
+    this.expanded.update((open) => {
+      const next = new Set(open);
+      if (!next.delete(turbineId)) next.add(turbineId);
+      return next;
+    });
   }
 
   protected onFrom(event: Event): void {
@@ -118,6 +137,7 @@ export class AlertHistoryPage {
       .subscribe({
         next: (readings) => {
           this.readings.set(readings);
+          this.expanded.set(new Set());
           this.paging.reset();
           this.loading.set(false);
         },

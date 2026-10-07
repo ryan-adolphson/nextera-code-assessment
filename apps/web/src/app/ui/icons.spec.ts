@@ -10,6 +10,7 @@ describe('provideIcons', () => {
     expect(Object.keys(ICONS).sort()).toEqual([
       'bar-chart',
       'check',
+      'chevron-right',
       'close',
       'map',
       'menu',

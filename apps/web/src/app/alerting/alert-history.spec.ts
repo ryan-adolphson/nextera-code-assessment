@@ -1,5 +1,12 @@
 import { reading } from '../fleet/testing';
-import { fromUtcInput, groupByTurbine, last24Hours, rangeError, toUtcInput } from './alert-history';
+import { AlertConfig } from './alert-config.model';
+import {
+  fromUtcInput,
+  groupAlertsByTurbine,
+  last24Hours,
+  rangeError,
+  toUtcInput,
+} from './alert-history';
 
 describe('UTC datetime-local values', () => {
   it('round-trips an instant at minute precision, in UTC', () => {
@@ -38,36 +45,57 @@ describe('rangeError', () => {
   });
 });
 
-describe('groupByTurbine', () => {
-  const r = (id: string, turbineId: string) =>
-    reading({ id, turbineId, farmId: turbineId === 'TURB001' ? 'FARM01' : 'FARM02' });
-  const all = [r('a1', 'TURB001'), r('b1', 'TURB002'), r('b2', 'TURB002'), r('b3', 'TURB002')];
+describe('groupAlertsByTurbine', () => {
+  const rule = (id: string, alertLevel: AlertConfig['alertLevel']): AlertConfig => ({
+    id,
+    measurementMetric: 'gearboxTempC',
+    comparison: 'above',
+    valueMetric: 1,
+    alertLevel,
+    enabled: true,
+  });
+  const info = rule('info', 'info');
+  const warn = rule('warn', 'warn');
+  const error = rule('error', 'error');
+  // As the API returns them: by turbine, newest first.
+  const readings = [
+    reading({ id: 'a1', timestamp: '2026-01-02T13:40:00.000Z', alerts: [info] }),
+    reading({
+      id: 'b1',
+      turbineId: 'TURB002',
+      farmId: 'FARM02',
+      timestamp: '2026-01-02T03:30:00.000Z',
+      alerts: [warn],
+    }),
+    reading({
+      id: 'b2',
+      turbineId: 'TURB002',
+      farmId: 'FARM02',
+      timestamp: '2026-01-02T03:25:00.000Z',
+      alerts: [error, warn],
+    }),
+  ];
   const farm = (id: string) => (id === 'FARM01' ? 'Prairie Ridge' : null);
-  const summary = (rows: ReturnType<typeof groupByTurbine>) =>
-    rows.map((row) =>
-      row.kind === 'group'
-        ? `group ${row.turbineId} ${row.farmName} ${row.count}${row.continued ? ' continued' : ''}`
-        : row.reading.id,
-    );
 
-  it('puts a header with the turbine’s total count before each turbine’s readings', () => {
-    expect(summary(groupByTurbine(all.slice(0, 3), all, farm))).toEqual([
-      'group TURB001 Prairie Ridge 1',
-      'a1',
-      'group TURB002 null 3',
-      'b1',
-      'b2',
+  it('summarises each turbine in the API order: readings, latest, worst level', () => {
+    const groups = groupAlertsByTurbine(readings, farm);
+    expect(
+      groups.map((g) => [g.turbineId, g.farmName, g.readings.map((r) => r.id), g.latest, g.worst]),
+    ).toEqual([
+      ['TURB001', 'Prairie Ridge', ['a1'], '2026-01-02T13:40:00.000Z', 'info'],
+      ['TURB002', null, ['b1', 'b2'], '2026-01-02T03:30:00.000Z', 'error'],
     ]);
   });
 
-  it('repeats the header, marked continued, when a turbine runs onto the next page', () => {
-    expect(summary(groupByTurbine(all.slice(3), all, farm))).toEqual([
-      'group TURB002 null 3 continued',
-      'b3',
+  it('lists each distinct rule once, worst first, with how many readings it flagged', () => {
+    const [, turb2] = groupAlertsByTurbine(readings, farm);
+    expect(turb2.rules.map((r) => [r.rule.id, r.count])).toEqual([
+      ['error', 1],
+      ['warn', 2],
     ]);
   });
 
-  it('has no rows for an empty page', () => {
-    expect(groupByTurbine([], [], farm)).toEqual([]);
+  it('has no turbines without readings', () => {
+    expect(groupAlertsByTurbine([], farm)).toEqual([]);
   });
 });

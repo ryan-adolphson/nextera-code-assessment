@@ -3,6 +3,7 @@ import { MatIconRegistry } from '@angular/material/icon';
 import { DomSanitizer } from '@angular/platform-browser';
 import barChart from '@material-symbols/svg-400/outlined/bar_chart.svg';
 import check from '@material-symbols/svg-400/outlined/check.svg';
+import chevronRight from '@material-symbols/svg-400/outlined/chevron_right.svg';
 import close from '@material-symbols/svg-400/outlined/close.svg';
 import map from '@material-symbols/svg-400/outlined/map.svg';
 import menu from '@material-symbols/svg-400/outlined/menu.svg';
@@ -16,6 +17,7 @@ import windPower from '@material-symbols/svg-400/outlined/wind_power.svg';
 export const ICONS = {
   'bar-chart': barChart,
   check,
+  'chevron-right': chevronRight,
   close,
   map,
   menu,

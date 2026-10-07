@@ -3,6 +3,7 @@ import { TestRequest } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { MatPaginatorHarness } from '@angular/material/paginator/testing';
 import { Title } from '@angular/platform-browser';
+import { Router } from '@angular/router';
 import { Telemetry } from '../fleet/fleet.model';
 import { TEST_API_BASE_URL, openFleet, reading } from '../fleet/testing';
 import { AlertConfig } from './alert-config.model';
@@ -67,13 +68,35 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     input.dispatchEvent(new Event('change'));
     await app.stable();
   }
-  /** Each table row as text: a group header, or a reading's time and its chips (" | "). */
-  const table = () =>
-    [...app.root().querySelectorAll('[data-testid=alert-history] tbody tr')].map((tr) => {
-      const chips = [...tr.querySelectorAll('[data-testid=alert-chip]')];
-      if (!chips.length) return app.text(tr);
-      return `${app.text(tr.querySelector('td'))} ${chips.map((c) => app.text(c)).join(' | ')}`;
-    });
+  const chipTexts = (el: Element) =>
+    [...el.querySelectorAll('[data-testid=alert-chip]')].map((c) => app.text(c));
+  /** Each turbine's summary row: its cells (without the chips), then its chips. */
+  const summaries = () =>
+    all('history-turbine').map((tr) => [
+      ...[...tr.querySelectorAll('td')]
+        .filter((td) => !td.querySelector('[data-testid=alert-chip]'))
+        .map((td) => app.text(td)),
+      chipTexts(tr),
+    ]);
+  /** A turbine's expanded detail: each reading's time and chips. */
+  const details = (turbineId: string) =>
+    [
+      ...app
+        .root()
+        .querySelectorAll(
+          `[data-testid=history-detail][data-turbine-id=${turbineId}] [data-testid=history-reading]`,
+        ),
+    ].map((li) => [app.text(li.querySelector('span')), chipTexts(li)]);
+  const expandButton = (turbineId: string) =>
+    app
+      .root()
+      .querySelector<HTMLButtonElement>(
+        `[data-testid=history-turbine][data-turbine-id=${turbineId}] [data-testid=history-expand]`,
+      )!;
+  const detailRow = (turbineId: string) =>
+    app
+      .root()
+      .querySelector<HTMLElement>(`[data-testid=history-detail][data-turbine-id=${turbineId}]`)!;
 
   beforeEach(async () => {
     app = await openFleet('/alerting/history', () => CLOCK);
@@ -95,44 +118,101 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     expect(app.text(q('history-count'))).toBe('0 flagged readings on 0 turbines');
   });
 
-  it('groups the readings by turbine, with each triggered rule as a Material chip', async () => {
+  it('shows one expandable summary row per turbine, with each distinct rule as a Material chip', async () => {
     await flush(flagged());
 
-    expect(table()).toEqual([
-      'TURB001 · Prairie Ridge FARM01 · 1 flagged reading',
-      'Jan 2, 13:40 Info: Power output 0 kW < 100',
-      'TURB002 · High Plains FARM02 · 3 flagged readings',
-      'Jan 2, 03:30 Error: Gearbox temperature 126.5 °C > 120 | Warning: Gearbox temperature 126.5 °C > 90',
-      'Jan 2, 03:25 Error: Gearbox temperature 126.5 °C > 120 | Warning: Gearbox temperature 126.5 °C > 90',
-      'Jan 2, 03:20 Error: Gearbox temperature 126.5 °C > 120 | Warning: Gearbox temperature 126.5 °C > 90',
+    expect(summaries()).toEqual([
+      [
+        '', // the expand button: named by aria-label
+
+        'TURB001',
+        'Prairie Ridge FARM01',
+        'Jan 2, 13:40',
+        ['Info: Power output below 100 kW ×1'],
+      ],
+      [
+        '',
+        'TURB002',
+        'High Plains FARM02',
+        'Jan 2, 03:30',
+        [
+          'Error: Gearbox temperature above 120 °C ×3',
+          'Warning: Gearbox temperature above 90 °C ×3',
+        ],
+      ],
     ]);
     expect(app.text(q('history-count'))).toBe('4 flagged readings on 2 turbines');
+    expect(all('history-turbine').map((tr) => tr.getAttribute('data-level'))).toEqual([
+      'info',
+      'error',
+    ]);
 
-    // Group headers span the row and link to the turbine.
-    const [group] = all('history-group');
-    expect(group.querySelector('td')!.getAttribute('colspan')).toBe('2');
-    expect(group.querySelector('a')!.getAttribute('href')).toBe('/farms/FARM01/turbines/TURB001');
-
-    // Chips: Material chips in a labelled chip set, coloured by level, worst first.
-    const reading = all('history-reading')[1];
-    const chips = [...reading.querySelectorAll('[data-testid=alert-chip]')];
+    // Material table with multiTemplateDataRows; the chips are Material chips coloured by level.
+    expect(q('alert-history')!.classList).toContain('mat-mdc-table');
+    const chips = [...all('history-turbine')[1].querySelectorAll('[data-testid=alert-chip]')];
     expect(chips.map((c) => [c.tagName, c.getAttribute('data-level')])).toEqual([
       ['MAT-CHIP', 'error'],
       ['MAT-CHIP', 'warn'],
     ]);
-    expect(chips[0].classList).toContain('mat-mdc-chip');
-    expect(
-      reading.querySelector('[data-testid=reading-alert-chips]')!.getAttribute('aria-label'),
-    ).toBe('Triggered alerts');
+    // Collapsed: the detail rows are rendered but hidden, with no readings inside.
+    expect(all('history-detail').map((tr) => tr.hasAttribute('hidden'))).toEqual([true, true]);
+    expect(all('history-reading')).toHaveLength(0);
+    expect(all('history-turbine')[0].querySelector('a')!.getAttribute('href')).toBe(
+      '/farms/FARM01/turbines/TURB001',
+    );
   });
 
-  it('pages 25 readings at a time and repeats a turbine’s header when it continues', async () => {
+  it('expands a turbine to its flagged readings, newest first, each with its rules as chips', async () => {
+    await flush(flagged());
+    const button = expandButton('TURB002');
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(button.getAttribute('aria-label')).toBe('Show readings for TURB002');
+    expect(button.getAttribute('aria-controls')).toBe('history-detail-TURB002');
+
+    button.click();
+    await app.stable();
+
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(button.getAttribute('aria-label')).toBe('Hide readings for TURB002');
+    expect(button.querySelector('mat-icon')!.classList).toContain('rotate-90');
+    expect(detailRow('TURB002').hasAttribute('hidden')).toBe(false);
+    expect(detailRow('TURB002').querySelector('td')!.id).toBe('history-detail-TURB002');
+    expect(detailRow('TURB002').querySelector('td')!.getAttribute('colspan')).toBe('5');
+    const gearbox = [
+      'Error: Gearbox temperature 126.5 °C > 120',
+      'Warning: Gearbox temperature 126.5 °C > 90',
+    ];
+    expect(details('TURB002')).toEqual([
+      ['Jan 2, 03:30', gearbox],
+      ['Jan 2, 03:25', gearbox],
+      ['Jan 2, 03:20', gearbox],
+    ]);
+    expect(detailRow('TURB001').hasAttribute('hidden')).toBe(true); // others stay collapsed
+
+    // Clicking the row (not just the button) toggles too; several can be open at once.
+    (all('history-turbine')[0] as HTMLElement).click();
+    await app.stable();
+    expect(details('TURB001')).toEqual([['Jan 2, 13:40', ['Info: Power output 0 kW < 100']]]);
+    expect(detailRow('TURB002').hasAttribute('hidden')).toBe(false);
+
+    button.click();
+    await app.stable();
+    expect(detailRow('TURB002').hasAttribute('hidden')).toBe(true);
+    expect(details('TURB002')).toEqual([]);
+  });
+
+  it('does not toggle when the turbine link is followed', async () => {
+    await flush(flagged());
+    all('history-turbine')[0].querySelector<HTMLAnchorElement>('a')!.click();
+    await app.stable();
+    expect(TestBed.inject(Router).url).toBe('/farms/FARM01/turbines/TURB001');
+  });
+
+  it('pages 25 turbines at a time', async () => {
     const many = Array.from({ length: 30 }, (_, i) =>
       reading({
         id: `r${i}`,
-        turbineId: 'TURB002',
-        farmId: 'FARM02',
-        timestamp: new Date(Date.parse('2026-01-02T23:55:00Z') - i * 300_000).toISOString(),
+        turbineId: `TURB${String(i + 1).padStart(3, '0')}`,
         alerts: [rule()],
       }),
     );
@@ -142,12 +222,16 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     );
 
     expect(await pages.getRangeLabel()).toBe('1 – 25 of 30');
-    expect(all('history-reading')).toHaveLength(25);
-    expect(table()[0]).toBe('TURB002 · High Plains FARM02 · 30 flagged readings');
+    expect(all('history-turbine')).toHaveLength(25);
 
     await pages.goToNextPage();
-    expect(all('history-reading')).toHaveLength(5);
-    expect(table()[0]).toBe('TURB002 · High Plains FARM02 · 30 flagged readings (continued)');
+    expect(all('history-turbine').map((tr) => tr.getAttribute('data-turbine-id'))).toEqual([
+      'TURB026',
+      'TURB027',
+      'TURB028',
+      'TURB029',
+      'TURB030',
+    ]);
   });
 
   it('reloads when the range changes, and explains an invalid range without asking the API', async () => {
@@ -159,12 +243,12 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     expect(req.request.params.get('to')).toBe('2026-01-03T00:01:00.000Z');
     req.flush(flagged().slice(1));
     await app.stable();
-    expect(all('history-reading')).toHaveLength(3);
+    expect(all('history-turbine')).toHaveLength(1);
 
     await setRange('history-to', '2026-01-02T02:00');
     app.http.expectNone(ALERTS_URL);
     expect(app.text(q('history-range-error'))).toBe('The end must be after the start.');
-    expect(all('history-reading')).toHaveLength(3); // the last results stay
+    expect(all('history-turbine')).toHaveLength(1); // the last results stay
 
     await setRange('history-to', '2026-02-05T00:00');
     app.http.expectNone(ALERTS_URL);
@@ -180,7 +264,7 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     await app.stable();
     await flush(flagged());
     expect(q('history-error')).toBeNull();
-    expect(all('history-reading')).toHaveLength(4);
+    expect(all('history-turbine')).toHaveLength(2);
   });
 
   it('fits range and table in one window-high view: only the rows scroll, above the paginator', async () => {

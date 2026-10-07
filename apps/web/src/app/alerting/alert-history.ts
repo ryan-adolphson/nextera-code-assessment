@@ -1,4 +1,6 @@
 import { Telemetry } from '../fleet/fleet.model';
+import { AlertConfig, AlertLevel } from './alert-config.model';
+import { LEVEL_SEVERITY } from './evaluate-alerts';
 
 /** The longest range the API accepts (GET /api/alerts). */
 export const MAX_RANGE_DAYS = 31;
@@ -32,49 +34,47 @@ export function rangeError(from: number | null, to: number | null): string | nul
   return null;
 }
 
-/** A row of the history table: a turbine's group header, or one of its flagged readings. */
-export type HistoryRow =
-  | {
-      kind: 'group';
-      turbineId: string;
-      farmId: string;
-      farmName: string | null;
-      /** All of the turbine's flagged readings in the range, not just this page's. */
-      count: number;
-      /** The group started on an earlier page. */
-      continued: boolean;
-    }
-  | { kind: 'reading'; reading: Telemetry };
+/** One turbine's flagged readings in the range: a summary row of the history table. */
+export interface TurbineAlerts {
+  turbineId: string;
+  farmId: string;
+  farmName: string | null;
+  /** Its flagged readings, newest first (the detail row). */
+  readings: Telemetry[];
+  /** The newest flagged reading's measurement time (ISO). */
+  latest: string;
+  worst: AlertLevel;
+  /** Each distinct rule that fired, worst level first, with how many readings it flagged. */
+  rules: { rule: AlertConfig; count: number }[];
+}
 
 /**
- * One page of readings (already grouped by turbine by the API) with a header row before each
- * turbine's readings, repeated (`continued`) when a turbine's readings span pages.
+ * Groups the API's readings (already by turbine, newest first) into one summary per turbine, in
+ * the API's order (turbine id ascending).
  */
-export function groupByTurbine(
-  page: readonly Telemetry[],
-  all: readonly Telemetry[],
+export function groupAlertsByTurbine(
+  readings: readonly Telemetry[],
   farmNameOf: (farmId: string) => string | null,
-): HistoryRow[] {
-  const counts = new Map<string, number>();
-  for (const r of all) counts.set(r.turbineId, (counts.get(r.turbineId) ?? 0) + 1);
-  const firstIndex = new Map<string, number>();
-  all.forEach((r, i) => {
-    if (!firstIndex.has(r.turbineId)) firstIndex.set(r.turbineId, i);
-  });
-
-  const rows: HistoryRow[] = [];
-  page.forEach((reading, i) => {
-    if (i === 0 || page[i - 1].turbineId !== reading.turbineId) {
-      rows.push({
-        kind: 'group',
-        turbineId: reading.turbineId,
-        farmId: reading.farmId,
-        farmName: farmNameOf(reading.farmId),
-        count: counts.get(reading.turbineId) ?? 0,
-        continued: i === 0 && all.indexOf(reading) > (firstIndex.get(reading.turbineId) ?? 0),
-      });
+): TurbineAlerts[] {
+  const groups = new Map<string, Telemetry[]>();
+  for (const r of readings) groups.set(r.turbineId, [...(groups.get(r.turbineId) ?? []), r]);
+  return [...groups.values()].map((group) => {
+    const rules = new Map<string, { rule: AlertConfig; count: number }>();
+    for (const rule of group.flatMap((r) => r.alerts)) {
+      const seen = rules.get(rule.id);
+      rules.set(rule.id, { rule, count: (seen?.count ?? 0) + 1 });
     }
-    rows.push({ kind: 'reading', reading });
+    const sorted = [...rules.values()].sort(
+      (a, b) => LEVEL_SEVERITY[b.rule.alertLevel] - LEVEL_SEVERITY[a.rule.alertLevel],
+    );
+    return {
+      turbineId: group[0].turbineId,
+      farmId: group[0].farmId,
+      farmName: farmNameOf(group[0].farmId),
+      readings: group,
+      latest: group[0].timestamp,
+      worst: sorted[0]?.rule.alertLevel ?? 'info',
+      rules: sorted,
+    };
   });
-  return rows;
 }
