@@ -1,4 +1,13 @@
-import { dayRange, defaultDays, pickerDate, rangeError, utcDayOf } from './utc-days';
+import { DatePipe } from '@angular/common';
+import {
+  dayRange,
+  defaultDays,
+  isoDay,
+  lastUtcDay,
+  pickerDate,
+  rangeError,
+  utcDayOf,
+} from './utc-days';
 
 describe('UTC days from the datepicker', () => {
   const day = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
@@ -43,5 +52,18 @@ describe('rangeError', () => {
     [day('2026-01-01'), day('2026-02-01'), 'Choose at most 31 days.'], // 32 days
   ])('explains %s → %s', (start, end, message) => {
     expect(rangeError(start, end)).toBe(message);
+  });
+});
+
+describe('lastUtcDay and isoDay', () => {
+  it('gives the last whole day of a [from, to) range as epoch ms, and names days for files', () => {
+    expect(lastUtcDay('2026-01-03T00:00:00.000Z')).toBe(Date.parse('2026-01-02T00:00:00Z'));
+    expect(isoDay(lastUtcDay('2026-01-03T00:00:00.000Z'))).toBe('2026-01-02');
+    expect(isoDay('2026-01-01T00:00:00.000Z')).toBe('2026-01-01');
+  });
+
+  it('formats right with DatePipe in UTC (a UTCDate would be shifted a second time)', () => {
+    const day = lastUtcDay('2026-01-03T00:00:00.000Z');
+    expect(new DatePipe('en-US').transform(day, 'MMM d, y', 'UTC')).toBe('Jan 2, 2026');
   });
 });

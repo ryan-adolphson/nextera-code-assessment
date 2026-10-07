@@ -1,10 +1,11 @@
+import { minutesToMilliseconds } from 'date-fns';
 import { ChartTheme, withAlpha } from './chart-theme';
 
 /** How the readings are drawn: a line, or candles of each time bucket (open/close/low/high). */
 export type ChartKind = 'line' | 'candlestick';
 
 /** Narrowest time window zooming can reach (6 readings at 5-minute intervals). */
-export const MIN_X_RANGE_MS = 30 * 60_000;
+export const MIN_X_RANGE_MS = minutesToMilliseconds(30);
 
 /** What the static option needs from the chart component. */
 export interface OptionHooks {

@@ -11,6 +11,8 @@ import {
   untracked,
 } from '@angular/core';
 import { MatButton } from '@angular/material/button';
+import { differenceInMinutes } from 'date-fns';
+import { millisecondsInHour } from 'date-fns/constants';
 import { MatButtonToggle, MatButtonToggleGroup } from '@angular/material/button-toggle';
 import { MatTooltip } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
@@ -121,7 +123,7 @@ export class TurbinePage implements OnDestroy {
   protected readonly rangeName = computed(
     () =>
       this.ranges.find((r) => r.ms === this.store.historyRangeMs())?.long ??
-      `${Math.round(this.store.historyRangeMs() / 3_600_000)} hours`,
+      `${Math.round(this.store.historyRangeMs() / millisecondsInHour)} hours`,
   );
 
   /**
@@ -163,7 +165,7 @@ export class TurbinePage implements OnDestroy {
   }
 
   protected delayMinutes(reading: Telemetry): number {
-    return Math.round((Date.parse(reading.receivedAt) - Date.parse(reading.timestamp)) / 60_000);
+    return differenceInMinutes(reading.receivedAt, reading.timestamp, { roundingMethod: 'round' });
   }
 
   protected isDelayed(reading: Telemetry): boolean {

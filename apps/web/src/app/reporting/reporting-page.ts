@@ -27,7 +27,14 @@ import { AlertLevelBadge } from '../alerting/alert-level-badge';
 import { describeTriggerWithLevel } from '../alerting/alert-text';
 import { LineChart, TimeRange } from '../charts/line-chart';
 import { NOW } from '../core/clock';
-import { dayRange, defaultDays, pickerDate, rangeError, utcDayOf } from '../core/utc-days';
+import {
+  dayRange,
+  defaultDays,
+  lastUtcDay,
+  pickerDate,
+  rangeError,
+  utcDayOf,
+} from '../core/utc-days';
 import { Telemetry } from '../fleet/fleet.model';
 import { FleetStore } from '../fleet/fleet.store';
 import { METRICS } from '../fleet/metrics';
@@ -166,7 +173,7 @@ export class ReportingPage {
   /** The last day of the report ([from, to) covers whole days; to is the day after). */
   protected readonly lastDay = computed(() => {
     const report = this.report();
-    return report ? new Date(Date.parse(report.to) - 24 * 60 * 60_000).toISOString() : null;
+    return report ? lastUtcDay(report.to) : null;
   });
   /** Shared crosshair and zoom across the charts, like the turbine page. */
   protected readonly hoverT = signal<number | null>(null);

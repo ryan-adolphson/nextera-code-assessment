@@ -1,6 +1,5 @@
+import { minutesToMilliseconds } from 'date-fns';
 import { Telemetry } from './fleet.model';
-
-const MINUTE_MS = 60_000;
 
 /**
  * How long a turbine may go without a reading before it is flagged, mildest first. Turbines report
@@ -9,9 +8,9 @@ const MINUTE_MS = 60_000;
  * `afterMs`: exactly 15:00 old is still reporting, 15:00 plus 1 ms is the first level.
  */
 export const STALENESS_LEVELS = [
-  { level: 'stale-15', afterMs: 15 * MINUTE_MS, label: 'No data in 15 min' },
-  { level: 'stale-30', afterMs: 30 * MINUTE_MS, label: 'No data in 30 min' },
-  { level: 'stale-60', afterMs: 60 * MINUTE_MS, label: 'No data in 60 min' },
+  { level: 'stale-15', afterMs: minutesToMilliseconds(15), label: 'No data in 15 min' },
+  { level: 'stale-30', afterMs: minutesToMilliseconds(30), label: 'No data in 30 min' },
+  { level: 'stale-60', afterMs: minutesToMilliseconds(60), label: 'No data in 60 min' },
 ] as const;
 
 export type StaleLevel = (typeof STALENESS_LEVELS)[number]['level'];

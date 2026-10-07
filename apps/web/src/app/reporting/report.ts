@@ -3,6 +3,7 @@ import { LEVEL_SEVERITY, describeTriggerWithLevel } from '../alerting/alert-text
 import { ChartMarker } from '../charts/line-chart';
 import { ChartPoint } from '../charts/scales';
 import { Telemetry } from '../fleet/fleet.model';
+import { isoDay, lastUtcDay } from '../core/utc-days';
 import { METRICS, Metric } from '../fleet/metrics';
 import { TelemetryReport } from './report-api.service';
 
@@ -144,9 +145,7 @@ function csvField(value: string): string {
 
 /** "report-TURB002-2026-01-01-2026-01-02.csv": the scope and the chosen days (to is exclusive). */
 export function csvFileName(report: TelemetryReport): string {
-  const day = (iso: string) => iso.slice(0, 10);
-  const lastDay = new Date(Date.parse(report.to) - 24 * 60 * 60_000).toISOString();
-  return `report-${report.scope.id}-${day(report.from)}-${day(lastDay)}.csv`;
+  return `report-${report.scope.id}-${isoDay(report.from)}-${isoDay(lastUtcDay(report.to))}.csv`;
 }
 
 /** Saves `csv` as a file through a temporary download link (no server round trip). */

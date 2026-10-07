@@ -26,6 +26,7 @@ import {
   MarkLineComponent,
   TooltipComponent,
 } from 'echarts/components';
+import { minutesToMilliseconds } from 'date-fns';
 import * as echarts from 'echarts/core';
 import { SVGRenderer } from 'echarts/renderers';
 import {
@@ -156,7 +157,7 @@ export class LineChart {
   readonly domain = input.required<TimeRange>();
   readonly decimals = input(1);
   /** Readings further apart than this are not connected. */
-  readonly gapMs = input(7.5 * 60_000);
+  readonly gapMs = input(minutesToMilliseconds(7.5));
   /** Shared crosshair position (epoch ms), or null. */
   readonly hoverT = input<number | null>(null);
   readonly hoverTChange = output<number | null>();

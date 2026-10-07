@@ -110,6 +110,8 @@ The `angular-developer` skill (`.claude/skills` → `.agents/skills`, from `angu
   - **Local:** compose `web` on `:${WEB_PORT:-8082}` with `API_BASE_URL=http://localhost:${API_PORT}/api`; the compose `api` adds that origin to `CORS_ORIGINS`.
 - **Separate project:** TypeScript 5.9 (Angular) vs 6 (NestJS 12), so `apps/web` is not in the npm workspaces. Angular 22 needs Node 24.15 or newer.
 
+- **Dates: date-fns 4 + `@date-fns/utc`.** All date maths and formatting go through date-fns with the UTC context (`format(t, 'MMM d, HH:mm', { in: utc })`, `startOfDay`/`addDays`/`subDays`/`differenceInCalendarDays(…, { in: utc })`, `differenceInMinutes(a, b, { roundingMethod: 'round' })`); durations are `minutesToMilliseconds`/`hoursToMilliseconds` or `millisecondsInMinute|Hour|Day` from `date-fns/constants`, never `60_000` literals. Helpers: `core/utc-days.ts` (picker days ↔ UTC days, `defaultDays`, `dayRange`, `lastUtcDay`, `isoDay`, `rangeError`), `charts/scales.ts` (`formatTimestamp`, tick labels). **Gotcha:** with `{ in: utc }` date-fns returns a `UTCDate` whose local getters are UTC; Angular's `DatePipe` with `'UTC'` then shifts it again. Return epoch ms (`+date`) or ISO strings from helpers, as `lastUtcDay` does. Kept by hand (no date-fns equivalent): the UTC-aligned candle buckets and the short candle label ("15 min", "1 h").
+
 ## Testing
 
 | Layer | Where | Notes |

@@ -1,3 +1,7 @@
+import { utc } from '@date-fns/utc';
+import { format, hoursToMilliseconds, minutesToMilliseconds } from 'date-fns';
+import { millisecondsInDay, millisecondsInHour, millisecondsInMinute } from 'date-fns/constants';
+
 export interface ChartPoint {
   /** Epoch milliseconds. */
   t: number;
@@ -12,21 +16,12 @@ function niceStep(value: number): number {
   return nice * 10 ** exponent;
 }
 
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
+/** Tick steps, finest first: 15 and 30 minutes, then 1, 2, 3, 6, 12, 24 and 48 hours. */
 const TIME_STEPS = [
-  15 * MINUTE,
-  30 * MINUTE,
-  HOUR,
-  2 * HOUR,
-  3 * HOUR,
-  6 * HOUR,
-  12 * HOUR,
-  DAY,
-  2 * DAY,
+  minutesToMilliseconds(15),
+  minutesToMilliseconds(30),
+  ...[1, 2, 3, 6, 12, 24, 48].map(hoursToMilliseconds),
 ];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export interface TimeTick {
   t: number;
@@ -52,18 +47,15 @@ export function timeTicks(
   return ticks;
 }
 
+/** "HH:mm", or "MMM d" at UTC midnight. */
 function formatTick(t: number): string {
-  const d = new Date(t);
-  if (t % DAY === 0) return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
-  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  return format(t, t % millisecondsInDay === 0 ? 'MMM d' : 'HH:mm', { in: utc });
 }
 
+/** "Jan 2, 03:20 UTC": a time as the charts show it. */
 export function formatTimestamp(t: number): string {
-  const d = new Date(t);
-  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+  return `${format(t, 'MMM d, HH:mm', { in: utc })} UTC`;
 }
-
-const pad = (n: number) => String(n).padStart(2, '0');
 
 /** Index of the point nearest to `t` (points ascending by t), or -1 if there are none. */
 export function nearestIndex(points: ChartPoint[], t: number): number {
@@ -153,10 +145,10 @@ export interface Candle {
  * 30 min, up to 48 h → 1 h, longer → 4 h.
  */
 export function candleSizeFor(spanMs: number): number {
-  if (spanMs <= 6 * HOUR) return 15 * MINUTE;
-  if (spanMs <= DAY) return 30 * MINUTE;
-  if (spanMs <= 2 * DAY) return HOUR;
-  return 4 * HOUR;
+  if (spanMs <= hoursToMilliseconds(6)) return minutesToMilliseconds(15);
+  if (spanMs <= hoursToMilliseconds(24)) return minutesToMilliseconds(30);
+  if (spanMs <= hoursToMilliseconds(48)) return hoursToMilliseconds(1);
+  return hoursToMilliseconds(4);
 }
 
 /**
@@ -191,5 +183,7 @@ export function toCandles(points: readonly ChartPoint[], sizeMs: number): Candle
 
 /** "15 min", "1 h", "4 h": a candle size in words. */
 export function formatDuration(ms: number): string {
-  return ms < HOUR ? `${ms / MINUTE} min` : `${ms / HOUR} h`;
+  return ms < millisecondsInHour
+    ? `${ms / millisecondsInMinute} min`
+    : `${ms / millisecondsInHour} h`;
 }

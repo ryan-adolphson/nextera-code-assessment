@@ -1,4 +1,6 @@
 import type { AlertConfig } from '../alerting/alert-config.model';
+import { hoursToMilliseconds, minutesToMilliseconds } from 'date-fns';
+import { millisecondsInMinute } from 'date-fns/constants';
 
 /** Mirrors TelemetryResponse in packages/shared (API + SSE payload). */
 export interface Telemetry {
@@ -70,11 +72,10 @@ export interface FarmOverview {
 export const TELEMETRY_EVENTS = ['telemetry.received'] as const;
 
 /** A reading that arrived this much after it was measured is flagged as delayed. */
-export const DELAYED_AFTER_MS = 10 * 60_000;
+export const DELAYED_AFTER_MS = minutesToMilliseconds(10);
 
 /** Turbines report every 5 minutes. */
-export const READING_INTERVAL_MS = 5 * 60_000;
-const HOUR_MS = 60 * 60_000;
+export const READING_INTERVAL_MS = minutesToMilliseconds(5);
 
 /**
  * The fleet store re-reads the client clock this often (aligned to the minute), for as long as the
@@ -82,15 +83,15 @@ const HOUR_MS = 60 * 60_000;
  * the turbine page's window: every minute keeps the right edge at most a minute behind, and
  * readings (on 5-minute boundaries, which are minute boundaries) leave the window on time.
  */
-export const CLOCK_TICK_MS = 60_000;
+export const CLOCK_TICK_MS = millisecondsInMinute;
 
 /** Time ranges offered on the turbine page; the API caps a request at 7 days (2016 readings). */
 export const HISTORY_RANGES = [
-  { label: '6h', long: '6 hours', ms: 6 * HOUR_MS },
-  { label: '24h', long: '24 hours', ms: 24 * HOUR_MS },
-  { label: '48h', long: '48 hours', ms: 48 * HOUR_MS },
-  { label: '7d', long: '7 days', ms: 7 * 24 * HOUR_MS },
+  { label: '6h', long: '6 hours', ms: hoursToMilliseconds(6) },
+  { label: '24h', long: '24 hours', ms: hoursToMilliseconds(24) },
+  { label: '48h', long: '48 hours', ms: hoursToMilliseconds(48) },
+  { label: '7d', long: '7 days', ms: hoursToMilliseconds(168) },
 ] as const;
 
-export const DEFAULT_HISTORY_RANGE_MS = 24 * HOUR_MS;
+export const DEFAULT_HISTORY_RANGE_MS = hoursToMilliseconds(24);
 export const MAX_HISTORY_READINGS = 2016;
