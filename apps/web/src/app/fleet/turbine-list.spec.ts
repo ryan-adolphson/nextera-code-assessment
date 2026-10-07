@@ -61,7 +61,7 @@ describe('TurbineList (/turbines)', () => {
       'TURB001',
       'Prairie Ridge FARM01',
       'Reporting',
-      'Yes',
+      'Commissioned',
       'None',
       '1,961',
       '6.7',
@@ -72,7 +72,7 @@ describe('TurbineList (/turbines)', () => {
       'TURB004',
       'High Plains FARM02',
       'No readings yet',
-      'No',
+      'Not commissioned',
       '—',
       '–',
       '–',
@@ -209,10 +209,18 @@ describe('TurbineList (/turbines)', () => {
       await app.stable();
     }
 
-    it('shows Yes or No per turbine', () => {
-      expect(app.text(commissionedCell('TURB001'))).toBe('Yes');
+    it('shows a check mark when commissioned and an X when not, with screen-reader text', () => {
+      const icon = (id: string) =>
+        commissionedCell(id).querySelector('[data-testid=commissioned-icon]');
+
+      expect(icon('TURB001')!.getAttribute('data-icon')).toBe('check');
+      expect(icon('TURB001')!.getAttribute('aria-hidden')).toBe('true');
+      expect(app.text(commissionedCell('TURB001'))).toBe('Commissioned');
       expect(commissionedCell('TURB001').getAttribute('data-commissioned')).toBe('true');
-      expect(app.text(commissionedCell('TURB007'))).toBe('No');
+
+      expect(icon('TURB007')!.getAttribute('data-icon')).toBe('x');
+      expect(icon('TURB007')!.getAttribute('aria-hidden')).toBe('true');
+      expect(app.text(commissionedCell('TURB007'))).toBe('Not commissioned');
       expect(commissionedCell('TURB007').getAttribute('data-commissioned')).toBe('false');
     });
 
@@ -286,7 +294,7 @@ describe('TurbineList (/turbines)', () => {
       'TURB004',
       'High Plains FARM02',
       'Reporting',
-      'No',
+      'Not commissioned',
       'None',
       '2,500',
       '10.2',

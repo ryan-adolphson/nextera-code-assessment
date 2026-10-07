@@ -53,7 +53,7 @@ const COLUMNS: {
     value: (t) => STALENESS_ORDER.indexOf(t.staleness),
   },
   {
-    // Commissioned ("Yes") first, like Status: in service first.
+    // Commissioned (check mark) first, like Status: in service first.
     key: 'commissioned',
     label: 'Commissioned',
     numeric: false,
