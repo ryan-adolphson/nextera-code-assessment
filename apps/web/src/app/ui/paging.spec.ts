@@ -73,4 +73,19 @@ describe('PagingDirective', () => {
     await fixture.whenStable();
     expect(state()).toEqual([3, 0, 5, [5, 10]]);
   });
+
+  it('stops listening to the paginator when it is destroyed', async () => {
+    const fixture = TestBed.createComponent(PagingHost);
+    await fixture.whenStable();
+    const paginator = fixture.componentInstance.paginator();
+    const onPage = vi.spyOn(fixture.componentInstance.paging, 'onPage');
+
+    paginator.page.emit({ pageIndex: 1, pageSize: 5, length: 12 });
+    expect(onPage).toHaveBeenCalledOnce();
+
+    fixture.destroy();
+    paginator.page.emit({ pageIndex: 2, pageSize: 5, length: 12 });
+    expect(onPage).toHaveBeenCalledOnce(); // not again
+    expect(paginator.page.observed).toBe(false);
+  });
 });

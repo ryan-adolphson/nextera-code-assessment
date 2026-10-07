@@ -216,6 +216,18 @@ describe('ReportingPage (/reporting)', () => {
     expect(app.text(q('report-range-error'))).toBe('Choose at most 31 days.');
   });
 
+  it("keeps the date picker's own checks: a day after today (max) is not sent", async () => {
+    await choose('TURB002', 'TURB002 · High Plains');
+    await setDays('1/1/2026', '1/10/2026'); // today is Jan 3
+    run();
+
+    app.http.expectNone(REPORT_URL);
+    expect(q('report-to')!.closest('mat-form-field')!.classList).toContain(
+      'mat-form-field-invalid',
+    );
+    expect(app.text(app.root().querySelector('mat-error'))).toBe('Choose the start and end dates.');
+  });
+
   it('shows a load error with a retry, and an empty range', async () => {
     await choose('TURB002', 'TURB002 · High Plains');
     await setDays('1/1/2026', '1/2/2026');

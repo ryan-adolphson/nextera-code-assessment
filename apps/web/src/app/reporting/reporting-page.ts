@@ -1,14 +1,6 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
-import { Component, computed, inject } from '@angular/core';
-import { toSignal } from '@angular/core/rxjs-interop';
-import {
-  AbstractControl,
-  FormControl,
-  FormGroup,
-  ReactiveFormsModule,
-  ValidationErrors,
-  Validators,
-} from '@angular/forms';
+import { Component, computed, inject, signal } from '@angular/core';
+import { FormField, FormRoot, form, required, validate } from '@angular/forms/signals';
 import { MatAutocomplete, MatAutocompleteTrigger } from '@angular/material/autocomplete';
 import { MatButton } from '@angular/material/button';
 import { MatOptgroup, MatOption, provideNativeDateAdapter } from '@angular/material/core';
@@ -21,7 +13,6 @@ import {
 } from '@angular/material/datepicker';
 import { MatError, MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
-import { map, startWith } from 'rxjs';
 import { AlertsCell } from '../alerting/alerts-cell';
 import { AlertSeries } from '../charts/alert-series';
 import { ChartGroup } from '../charts/chart-group';
@@ -57,18 +48,11 @@ import { ReportApi, ReportRequest } from './report-api.service';
 /** The scope field holds the chosen option, or the text typed so far (not a choice yet). */
 type ScopeValue = ScopeOption | string | null;
 
-/** A farm or turbine picked from the list (typed text alone doesn't count). */
-function chosenOption(control: AbstractControl<ScopeValue>): ValidationErrors | null {
-  return typeof control.value === 'string' && control.value ? { chooseOption: true } : null;
-}
-
-/** The days form a valid range (the API's checks); missing days are `required`'s job. */
-function validRange(group: AbstractControl): ValidationErrors | null {
-  const start = dayOf(group.get('start')?.value ?? null);
-  const end = dayOf(group.get('end')?.value ?? null);
-  if (start === null || end === null) return null;
-  const message = rangeError(start, end);
-  return message ? { range: message } : null;
+/** The report form's model: the scope and the picked days (local-midnight Dates, null if empty). */
+interface ReportModel {
+  scope: ScopeValue;
+  start: Date | null;
+  end: Date | null;
 }
 
 /**
@@ -100,7 +84,8 @@ function validRange(group: AbstractControl): ValidationErrors | null {
     MatOption,
     MatStartDate,
     MatSuffix,
-    ReactiveFormsModule,
+    FormField,
+    FormRoot,
     StatTile,
     TABLE_IMPORTS,
   ],
@@ -112,34 +97,47 @@ export class ReportingPage {
   private readonly api = inject(ReportApi);
   private readonly fleet = inject(FleetStore);
 
-  protected readonly form = new FormGroup(
-    {
-      scope: new FormControl<ScopeValue>(null, [Validators.required, chosenOption]),
-      start: new FormControl<Date | null>(null, Validators.required),
-      end: new FormControl<Date | null>(null, Validators.required),
-    },
-    { validators: validRange },
-  );
+  private readonly model = signal<ReportModel>({ scope: null, start: null, end: null });
+  protected readonly reportForm = form(this.model, (report) => {
+    required(report.scope);
+    // A farm or turbine picked from the list (typed text alone doesn't count).
+    validate(report.scope, ({ value }) => {
+      const scope = value();
+      return typeof scope === 'string' && scope ? { kind: 'chooseOption' } : undefined;
+    });
+    required(report.start);
+    required(report.end);
+    // The days form a valid range (the API's checks); missing days are `required`'s job.
+    validate(report, ({ value }) => {
+      const start = dayOf(value().start);
+      const end = dayOf(value().end);
+      if (start === null || end === null) return undefined;
+      const message = rangeError(start, end);
+      return message ? { kind: 'range', message } : undefined;
+    });
+  });
+  /** The range error (on the form itself, not a field), once a field was touched or changed. */
+  protected readonly rangeMessage = computed(() => {
+    const state = this.reportForm();
+    if (!state.touched() && !state.dirty()) return null;
+    return state.errors().find((e) => e.kind === 'range')?.message ?? null;
+  });
   /** No future days to pick: the last selectable day is today (UTC). */
   protected readonly maxDate = pickerDate(defaultDays(inject(NOW)()).end);
 
   private readonly options = computed(() =>
     scopeOptions(this.fleet.farms(), this.fleet.turbines()),
   );
-  private readonly typed = toSignal(
-    this.form.controls.scope.valueChanges.pipe(
-      startWith(this.form.controls.scope.value),
-      map((value) => (typeof value === 'string' ? value : (value?.label ?? ''))),
-    ),
-    { initialValue: '' },
-  );
+  /** The autocomplete's `displayWith`: a chosen option's label, or the typed text. */
+  protected readonly displayOption = (value: ScopeValue): string =>
+    typeof value === 'string' ? value : (value?.label ?? '');
+  /** What was typed (or the chosen option's label), to filter the options by. */
+  private readonly typed = computed(() => this.displayOption(this.model().scope));
   /** The autocomplete's groups, filtered by what was typed. */
   protected readonly filtered = computed(() => ({
     farms: filterOptions(this.options().farms, this.typed()),
     turbines: filterOptions(this.options().turbines, this.typed()),
   }));
-  protected readonly displayOption = (value: ScopeValue): string =>
-    typeof value === 'string' ? value : (value?.label ?? '');
 
   /** The latest run's report (an earlier run's late answer is dropped); kept when a run fails. */
   private readonly reportLoad = latestLoad(
@@ -192,13 +190,16 @@ export class ReportingPage {
   protected readonly metrics = METRICS;
   protected readonly trackById = (_: number, r: Telemetry) => r.id;
 
-  /** Runs the report for the chosen scope and days (or shows what is missing). */
+  /**
+   * Runs the report for the chosen scope and days (or shows what is missing). `[formRoot]` keeps
+   * the browser from submitting the form; this is its `(submit)` handler.
+   */
   protected run(): void {
-    if (this.form.invalid) {
-      this.form.markAllAsTouched();
+    if (this.reportForm().invalid()) {
+      this.reportForm().markAsTouched();
       return;
     }
-    const { scope, start, end } = this.form.getRawValue();
+    const { scope, start, end } = this.model();
     const option = scope as ScopeOption;
     this.reportLoad.run({
       kind: option.kind,

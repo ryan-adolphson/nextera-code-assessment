@@ -66,6 +66,8 @@ describe('AlertRulesPage (/alerting/rules)', () => {
   async function choose(testId: string, value: string) {
     const select = q<HTMLSelectElement>(testId)!;
     select.value = value;
+    // A browser fires both; Signal Forms reads a native select on `input`.
+    select.dispatchEvent(new Event('input'));
     select.dispatchEvent(new Event('change'));
     await settle();
   }
