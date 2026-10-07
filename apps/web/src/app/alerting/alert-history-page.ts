@@ -21,15 +21,8 @@ import { FleetStore } from '../fleet/fleet.store';
 import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
 import { AlertHistoryApi } from './alert-history-api.service';
-import {
-  TurbineAlerts,
-  dayRange,
-  defaultDays,
-  groupAlertsByTurbine,
-  pickerDate,
-  rangeError,
-  utcDayOf,
-} from './alert-history';
+import { TurbineAlerts, groupAlertsByTurbine } from './alert-history';
+import { dayRange, defaultDays, pickerDate, rangeError, utcDayOf } from '../core/utc-days';
 import { AlertingTabs } from './alerting-tabs';
 import { describeTriggerWithLevel } from './alert-text';
 

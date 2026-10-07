@@ -23,21 +23,8 @@ import { DELAYED_AFTER_MS, HISTORY_RANGES, READING_INTERVAL_MS, Telemetry } from
 import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
 import { FleetStore } from './fleet.store';
+import { METRICS, Metric } from './metrics';
 import { StalenessBadge } from './staleness-badge';
-
-type Metric = keyof Pick<
-  Telemetry,
-  'powerOutputKw' | 'windSpeedMs' | 'rotorRpm' | 'bladePitchDeg' | 'gearboxTempC'
->;
-
-/** One chart per measured value (small multiples sharing the time axis). */
-export const METRICS: { key: Metric; title: string; unit: string; decimals: number }[] = [
-  { key: 'powerOutputKw', title: 'Power output', unit: 'kW', decimals: 0 },
-  { key: 'windSpeedMs', title: 'Wind speed', unit: 'm/s', decimals: 1 },
-  { key: 'rotorRpm', title: 'Rotor speed', unit: 'rpm', decimals: 1 },
-  { key: 'bladePitchDeg', title: 'Blade pitch', unit: '°', decimals: 1 },
-  { key: 'gearboxTempC', title: 'Gearbox temperature', unit: '°C', decimals: 1 },
-];
 
 /** /farms/:farmId/turbines/:turbineId: one turbine's status, charts per metric and readings. */
 @Component({
