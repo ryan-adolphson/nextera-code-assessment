@@ -97,7 +97,8 @@
         "test": {
           "builder": "@angular/build:unit-test",
           "options": {
-            "setupFiles": ["src/testing/test-setup.ts"]
+            "setupFiles": ["src/testing/test-setup.ts"],
+            "runnerConfig": "vitest-base.config.mts"
           }
         }
       }
