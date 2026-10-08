@@ -12,6 +12,13 @@ map "$status $uri" $nextera_cache_control {
   default                              "no-cache";
 }
 
+# The API origin for the CSP's connect-src, written at container start by 40-runtime-config.sh from
+# API_BASE_URL (that script runs after envsubst, so the value can't be a template variable). nginx
+# refuses to start if the file is missing, so the policy never goes out without it.
+map $host $nextera_api_origin {
+  include /usr/share/nginx/runtime/api-origin.map;
+}
+
 server {
   listen ${PORT};
   server_name _;
@@ -21,11 +28,24 @@ server {
   # Behind Cloud Run's TLS front end: never redirect to http://<host>:${PORT}.
   absolute_redirect off;
 
-  # On every response (a location without its own add_header inherits these).
+  # On every response, errors included (`always`). A location with its own add_header would drop
+  # ALL of these, so no location below may use add_header.
   add_header Cache-Control $nextera_cache_control always;
   add_header X-Content-Type-Options "nosniff" always;
   add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  # Superseded by frame-ancestors in browsers with CSP; kept for old ones.
   add_header X-Frame-Options "DENY" always;
+  # Ignored by browsers over plain http (compose on http://localhost:8082). No includeSubDomains or
+  # preload: web_domain may sit under a parent domain we don't own.
+  add_header Strict-Transport-Security "max-age=31536000" always;
+  # The JWT lives in localStorage (accepted PoC trade-off), so this is the main XSS defence in depth.
+  # - script-src 'self': no inline scripts; the build turns off critical-CSS inlining (its
+  #   <link onload>/inline script would need 'unsafe-inline').
+  # - style-src 'unsafe-inline': Angular adds Material/CDK component styles as <style> elements at
+  #   runtime, and ECharts' SVG renderer and Angular templates set style="" attributes.
+  # - img-src: OpenStreetMap tiles (map-view.ts) and data: URIs; connect-src: the API (REST + SSE)
+  #   and /config.json.
+  add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org; font-src 'self'; connect-src 'self' $nextera_api_origin; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
 
   # Cloud Run doesn't compress responses; Firebase Hosting used to.
   gzip on;
