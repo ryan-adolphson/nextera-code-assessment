@@ -60,4 +60,30 @@ cd apps/web && npm install && npm start   # web app on http://localhost:4200
 
 Tests: `npm run lint && npm run typecheck && npm test && npm run test:e2e` at the repo root (e2e needs Docker), and `npm test` in `apps/web`.
 
+## Ask the fleet from Claude
+
+`apps/mcp` is a local, read-only [MCP](https://modelcontextprotocol.io) server: Claude can answer "which turbines stopped reporting?", "which turbines alerted in the last 24 h?" or "what's TURB002's gearbox doing?" straight from Postgres. Its tools are `list_farms`, `get_turbine`, `get_telemetry`, `get_telemetry_stats`, `list_alerts`, `list_alert_rules` and `get_report_summary`. Every database session is read-only, so it can't change any data.
+
+```bash
+docker compose up -d --wait postgres && npm run db:deploy && npm run db:seed:demo   # data to ask about
+npm run build -w @nextera/mcp
+```
+
+- **Claude Code:** the repo's `.mcp.json` already registers it as `nextera` (it reads `DATABASE_URL` from the root `.env`). Restart Claude Code in the repo, approve the server (`/mcp` shows it), and ask.
+- **Claude Desktop:** add it to `claude_desktop_config.json` (Settings → Developer → Edit Config) with an absolute path, then restart Claude Desktop. It reads the repo-root `.env` next to the script; `env` overrides it:
+
+  ```json
+  {
+    "mcpServers": {
+      "nextera": {
+        "command": "node",
+        "args": ["/absolute/path/to/nextera-code-assessment/apps/mcp/dist/main.js"],
+        "env": { "DATABASE_URL": "postgresql://nextera:change-me@localhost:5433/nextera" }
+      }
+    }
+  }
+  ```
+
+Use `MCP_DATABASE_URL` to point it at another database (in GCP: a role with only `SELECT`). Try the tools by hand with `npx @modelcontextprotocol/inspector node apps/mcp/dist/main.js`.
+
 `CLAUDE.md` has the full reference: architecture, data model, auth, conventions and deployment.

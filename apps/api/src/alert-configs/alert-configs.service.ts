@@ -10,6 +10,7 @@ import {
   EventStore,
   Prisma,
   PrismaService,
+  listAlertRules,
   toAlertConfigResponse,
   type AlertConfigChangedEvent,
   type AlertConfigResponse,
@@ -18,18 +19,6 @@ import {
   CreateAlertConfigDto,
   UpdateAlertConfigDto,
 } from './dto/alert-config.dto.js';
-
-/**
- * List order: metric (telemetry column order), then level severity (info, warn, error), then the
- * threshold value. Postgres sorts enums by declaration order, which is exactly that.
- */
-const LIST_ORDER: Prisma.AlertConfigOrderByWithRelationInput[] = [
-  { measurementMetric: 'asc' },
-  { alertLevel: 'asc' },
-  { valueMetric: 'asc' },
-  { comparison: 'asc' },
-  { id: 'asc' },
-];
 
 const isPrismaError = (error: unknown, code: string) =>
   error instanceof Prisma.PrismaClientKnownRequestError && error.code === code;
@@ -44,11 +33,9 @@ export class AlertConfigsService {
     private readonly events: EventStore,
   ) {}
 
-  async list(): Promise<AlertConfigResponse[]> {
-    const rows = await this.prisma.alertConfig.findMany({
-      orderBy: LIST_ORDER,
-    });
-    return rows.map(toAlertConfigResponse);
+  /** Every rule (disabled ones too), in the shared ALERT_RULE_ORDER (metric, level, value). */
+  list(): Promise<AlertConfigResponse[]> {
+    return listAlertRules(this.prisma);
   }
 
   async get(id: string): Promise<AlertConfigResponse> {

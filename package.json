@@ -6,7 +6,8 @@
     "packages/shared",
     "packages/testing",
     "apps/api",
-    "apps/ingestion"
+    "apps/ingestion",
+    "apps/mcp"
   ],
   "engines": {
     "node": ">=24.15"

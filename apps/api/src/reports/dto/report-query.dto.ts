@@ -1,12 +1,10 @@
 import { IsUtcTimestamp } from '@nextera/shared';
 import { IsOptional, IsString, MaxLength } from 'class-validator';
 
-/** The widest report range: at most 31 days (the web app picks whole UTC days). */
-export const MAX_REPORT_RANGE_DAYS = 31;
-
 /**
  * GET /api/reports/telemetry?farmId=|turbineId=&from=&to=: exactly one of farmId (e.g. "FARM01")
- * or turbineId (the business key, e.g. "TURB001"), and a required [from, to) range.
+ * or turbineId (the business key, e.g. "TURB001"), and a required [from, to) range of at most
+ * MAX_QUERY_RANGE_DAYS (31, `@nextera/shared`; the web app picks whole UTC days).
  */
 export class ReportQueryDto {
   @IsOptional()
