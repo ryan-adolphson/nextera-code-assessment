@@ -202,14 +202,11 @@ describe('TelemetryIngestionService', () => {
     expect(prisma.telemetry.createManyAndReturn).not.toHaveBeenCalled();
   });
 
-  it('removes the row when publishing fails, so the Pub/Sub retry stores and publishes it again', async () => {
+  it('keeps the committed row and acks when publishing fails (the live event is best-effort)', async () => {
     events.publish.mockRejectedValue(new Error('redis down'));
-    prisma.telemetry.delete.mockResolvedValue(stored);
 
-    await expect(service.ingest(dto)).rejects.toThrow('redis down');
-    expect(prisma.telemetry.delete).toHaveBeenCalledWith({
-      where: { id: 'r1' },
-    });
+    await expect(service.ingest(dto)).resolves.toBe('stored');
+    expect(prisma.telemetry.delete).not.toHaveBeenCalled();
   });
 
   describe('ingestBatch (CSV upload)', () => {

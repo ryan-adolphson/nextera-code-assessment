@@ -69,19 +69,18 @@ export class TelemetryIngestionService {
     });
     if (!reading) return 'duplicate';
 
-    // Published only after the row is committed.
+    // Published only after the row is committed. The row is the source of truth and the live event
+    // is best-effort: a Redis failure is logged and the push still acked, so a Redis outage never
+    // sends committed readings to the dead-letter topic; dashboards catch up on their next load.
     try {
       await this.events.publish(
         TELEMETRY_RECEIVED,
         toTelemetryResponse(reading),
       );
     } catch (error) {
-      // Remove the row (its telemetry_alerts cascade) so Pub/Sub's retry stores and publishes it
-      // again; otherwise the retry would be skipped as a duplicate and the event lost.
-      await this.prisma.telemetry
-        .delete({ where: { id: reading.id } })
-        .catch(() => undefined);
-      throw error;
+      this.logger.warn(
+        `Reading ${reading.turbineId} at ${reading.timestamp.toISOString()} stored, but live update failed: ${(error as Error).message}`,
+      );
     }
     return 'stored';
   }
