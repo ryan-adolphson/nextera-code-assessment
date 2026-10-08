@@ -115,7 +115,16 @@ describe('Reports API (e2e, CSV seed data)', () => {
       400,
       'Provide exactly one of farmId or turbineId',
     ],
-    ['?turbineId=TURB002', 400, 'from must be an ISO 8601 date'],
+    [
+      '?turbineId=TURB002',
+      400,
+      'from must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
+    ],
+    [
+      '?turbineId=TURB002&from=2026-W01-4&to=2026-01-03T00:00:00Z',
+      400,
+      'from must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
+    ],
     [
       '?turbineId=TURB002&from=2026-01-03T00:00:00Z&to=2026-01-01T00:00:00Z',
       400,

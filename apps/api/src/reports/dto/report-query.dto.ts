@@ -1,4 +1,5 @@
-import { IsISO8601, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsUtcTimestamp } from '@nextera/shared';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
 
 /** The widest report range: at most 31 days (the web app picks whole UTC days). */
 export const MAX_REPORT_RANGE_DAYS = 31;
@@ -18,11 +19,14 @@ export class ReportQueryDto {
   @MaxLength(64)
   turbineId?: string;
 
-  /** Inclusive lower bound on the measurement timestamp (ISO 8601). */
-  @IsISO8601({ strict: true }, { message: 'from must be an ISO 8601 date' })
+  /** Inclusive lower bound on the measurement timestamp (ISO 8601 date-time with a zone). */
+  @IsUtcTimestamp({ allowFuture: true })
   from: string;
 
-  /** Exclusive upper bound on the measurement timestamp (ISO 8601); after `from`. */
-  @IsISO8601({ strict: true }, { message: 'to must be an ISO 8601 date' })
+  /**
+   * Exclusive upper bound on the measurement timestamp (ISO 8601 date-time with a zone); after
+   * `from`. May be in the future (whole UTC days end at tomorrow 00:00Z).
+   */
+  @IsUtcTimestamp({ allowFuture: true })
   to: string;
 }

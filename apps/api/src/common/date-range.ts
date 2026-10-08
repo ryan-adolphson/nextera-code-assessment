@@ -3,7 +3,7 @@ import { BadRequestException } from '@nestjs/common';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Parses a [from, to) range of ISO dates (already validated as ISO 8601 by the DTO) and rejects an
+ * Parses a [from, to) range of ISO dates (already validated by the DTO's IsUtcTimestamp) and rejects an
  * empty or reversed range, or one longer than `maxDays`, with 400.
  */
 export function assertRange(

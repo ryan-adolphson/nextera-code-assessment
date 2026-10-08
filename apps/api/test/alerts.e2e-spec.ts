@@ -114,11 +114,26 @@ describe('Alerts API (e2e, CSV seed data)', () => {
   });
 
   it.each([
-    ['', 'from must be an ISO 8601 date'],
-    ['?from=2026-01-02T00:00:00Z', 'to must be an ISO 8601 date'],
+    [
+      '',
+      'from must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
+    ],
+    [
+      '?from=2026-01-02T00:00:00Z',
+      'to must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
+    ],
     [
       '?from=yesterday&to=2026-01-02T00:00:00Z',
-      'from must be an ISO 8601 date',
+      'from must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
+    ],
+    // A week date: IsISO8601 accepted it, but new Date() makes it Invalid Date.
+    [
+      '?from=2026-W01-4&to=2026-01-02T00:00:00Z',
+      'from must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
+    ],
+    [
+      '?from=2026-01-01T00:00:00Z&to=2026-01-02',
+      'to must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
     ],
     [
       '?from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z',

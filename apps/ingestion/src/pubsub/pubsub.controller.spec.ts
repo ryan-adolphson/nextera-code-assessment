@@ -76,4 +76,40 @@ describe('PubSubController', () => {
       expect(ingestion.ingest).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    ['null', null],
+    ['a string', 'x'],
+    ['a number', 42],
+    ['an array', []],
+    ['a boolean', true],
+  ])(
+    'rejects %s as data with 400 "data must be a JSON object", never a 500',
+    async (_, payload) => {
+      const pushed = envelope(payload);
+      // envelope() sends strings raw; JSON-encode them so the data is a valid JSON string.
+      pushed.message.data = Buffer.from(JSON.stringify(payload)).toString(
+        'base64',
+      );
+
+      const error = await controller.telemetry(pushed).catch((e) => e);
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).message).toBe(
+        'Message m1: data must be a JSON object',
+      );
+      expect(ingestion.ingest).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['a week date', '2026-W02-3'],
+    ['an ordinal date', '2026-008'],
+    ['a zone-less date-time', '2026-01-01T00:00:00'],
+    ['a far-future timestamp', '2099-01-01T00:00:00Z'],
+  ])('rejects %s with 400', async (_, timestamp) => {
+    await expect(
+      controller.telemetry(envelope({ ...reading, timestamp })),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(ingestion.ingest).not.toHaveBeenCalled();
+  });
 });

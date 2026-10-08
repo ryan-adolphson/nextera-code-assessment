@@ -202,6 +202,19 @@ describe('TelemetryIngestionService', () => {
     expect(prisma.telemetry.createManyAndReturn).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['timestamp', { ...dto, timestamp: '2026-W02-3' }],
+    ['received_at', { ...dto, received_at: 'not a date' }],
+  ])(
+    'never passes an Invalid Date %s to Prisma (400 even if validation was skipped)',
+    async (field, unvalidated) => {
+      await expect(service.ingest(unvalidated)).rejects.toThrow(
+        new BadRequestException(`${field} is not a valid date`),
+      );
+      expect(prisma.telemetry.createManyAndReturn).not.toHaveBeenCalled();
+    },
+  );
+
   it('keeps the committed row and acks when publishing fails (the live event is best-effort)', async () => {
     events.publish.mockRejectedValue(new Error('redis down'));
 

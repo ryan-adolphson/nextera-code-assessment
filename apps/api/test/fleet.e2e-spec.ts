@@ -287,10 +287,35 @@ describe('Fleet API (e2e, CSV seed data)', () => {
       expect((await res.json()).message).toEqual(
         expect.arrayContaining([
           'property x should not exist',
-          'from must be a valid ISO 8601 date string',
+          'from must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
           'limit must not be less than 1',
         ]),
       );
+    });
+
+    // IsISO8601 accepted these, but new Date() makes a week date Invalid Date and a zone-less
+    // value server-local time.
+    it.each(['/telemetry', '/telemetry/stats'])(
+      'rejects a week-date or zone-less bound on %s with 400',
+      async (path) => {
+        const res = await get(
+          `/turbines/TURB001${path}?from=2026-W01-4&to=2026-01-02T00:00:00`,
+        );
+
+        expect(res.status).toBe(400);
+        expect((await res.json()).message).toEqual([
+          'from must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
+          'to must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
+        ]);
+      },
+    );
+
+    it('accepts a future to (whole UTC days end at tomorrow 00:00Z)', async () => {
+      const res = await get(
+        '/turbines/TURB001/telemetry?from=2026-01-01T00:00:00.000Z&to=2099-01-01T00:00:00.000Z&limit=1',
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toHaveLength(1);
     });
   });
 
@@ -407,7 +432,7 @@ describe('Fleet API (e2e, CSV seed data)', () => {
       expect((await res.json()).message).toEqual(
         expect.arrayContaining([
           'property x should not exist',
-          'to must be a valid ISO 8601 date string',
+          'to must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
           'limit must not be greater than 2016',
         ]),
       );

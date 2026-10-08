@@ -221,10 +221,31 @@ describe('CSV upload: POST /ingest/telemetry (e2e, real Postgres + Redis)', () =
         line: 3,
         errors: [
           'wind_speed_ms is required',
-          'timestamp must be a valid ISO 8601 date string',
+          'timestamp must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
         ],
       },
     ]);
+  });
+
+  it('reports a week-date timestamp as a line error (400, not 500) and stores nothing', async () => {
+    const res = await upload(
+      csv(
+        'TURB001,FARM01,2026-03-01T00:00:00Z,,2000,7,12,4,80',
+        'TURB001,FARM01,2026-W02-3,,2000,7,12,4,80',
+      ),
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).errors).toEqual([
+      {
+        line: 3,
+        errors: [
+          'timestamp must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
+        ],
+      },
+    ]);
+    expect(await t.prisma.telemetry.count()).toBe(0);
+    expect(await publishedEvents()).toHaveLength(0);
   });
 
   it('rejects a file with the wrong columns', async () => {

@@ -5,7 +5,7 @@
  *   A late reading:     npm run ingest:publish -- --delay-minutes 20
  *   GCP:                PUBSUB_EMULATOR_HOST= GOOGLE_CLOUD_PROJECT=<project> npm run ingest:publish
  * Readings are timestamped at the current 5-minute boundary (stepping back for --count > 1),
- * like real turbines. Re-publishing the same turbine + timestamp is ignored by the worker.
+ * like real turbines; with --delay-minutes, at the boundary that many minutes ago. Re-publishing the same turbine + timestamp is ignored by the worker.
  */
 import { parseArgs } from 'node:util';
 import { config } from 'dotenv';
@@ -31,7 +31,10 @@ const farmId = TURBINE_FARMS[turbineId] ?? 'FARM01';
 const pubsub = new PubSub({ projectId: process.env.GOOGLE_CLOUD_PROJECT ?? 'nextera-local' });
 const topic = pubsub.topic(values.topic);
 const round1 = (n: number) => Math.round(n * 10) / 10;
-const now = Math.floor(Date.now() / INTERVAL_MS) * INTERVAL_MS;
+const delayMs = Number(values['delay-minutes'] ?? 0) * 60_000;
+// A late reading was measured delayMs ago and arrives now: received_at must not be in the future
+// (the worker rejects anything more than MAX_FUTURE_SKEW_MS ahead).
+const now = Math.floor((Date.now() - delayMs) / INTERVAL_MS) * INTERVAL_MS;
 
 for (let i = 0; i < Number(values.count); i++) {
   const measuredAt = new Date(now - i * INTERVAL_MS);
@@ -41,7 +44,7 @@ for (let i = 0; i < Number(values.count); i++) {
     farm_id: farmId,
     timestamp: measuredAt.toISOString(),
     ...(values['delay-minutes'] && {
-      received_at: new Date(measuredAt.getTime() + Number(values['delay-minutes']) * 60_000).toISOString(),
+      received_at: new Date(measuredAt.getTime() + delayMs).toISOString(),
     }),
     power_output_kw: round1(Math.min(3500, 35 * wind ** 1.8)),
     wind_speed_ms: round1(wind),

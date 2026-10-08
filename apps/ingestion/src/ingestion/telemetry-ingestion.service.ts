@@ -200,12 +200,23 @@ function toRow(dto: IngestTelemetryDto, receivedAt: Date) {
   return {
     turbineId: dto.turbine_id,
     farmId: dto.farm_id,
-    timestamp: new Date(dto.timestamp),
-    receivedAt,
+    timestamp: validDate(new Date(dto.timestamp), 'timestamp'),
+    receivedAt: validDate(receivedAt, 'received_at'),
     powerOutputKw: dto.power_output_kw,
     windSpeedMs: dto.wind_speed_ms,
     rotorRpm: dto.rotor_rpm,
     bladePitchDeg: dto.blade_pitch_deg,
     gearboxTempC: dto.gearbox_temp_c,
   };
+}
+
+/**
+ * Validation (IsUtcTimestamp) makes an Invalid Date unreachable here; this keeps one from ever
+ * reaching Prisma (a 500 and a retry loop) if a caller skips it.
+ */
+function validDate(date: Date, field: string): Date {
+  if (Number.isNaN(date.getTime())) {
+    throw new BadRequestException(`${field} is not a valid date`);
+  }
+  return date;
 }

@@ -191,6 +191,36 @@ describe('Ingestion worker (e2e, real Postgres + Redis)', () => {
     expect(await prisma.telemetry.count()).toBe(0);
   });
 
+  it('rejects a week-date timestamp with 400 (not a Prisma 500)', async () => {
+    const res = await push(url, reading({ timestamp: '2026-W02-3' }));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).message).toEqual([
+      'timestamp must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
+    ]);
+    expect(await prisma.telemetry.count()).toBe(0);
+  });
+
+  it('rejects a far-future timestamp with 400 and stores nothing (it would stay "latest" forever)', async () => {
+    const res = await push(url, reading({ timestamp: '2099-01-01T00:00:00Z' }));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).message).toEqual([
+      'timestamp must not be more than 5 minutes in the future',
+    ]);
+    expect(await prisma.telemetry.count()).toBe(0);
+    expect(await publishedEvents()).toHaveLength(0);
+  });
+
+  it('rejects a null payload with 400 (not a TypeError 500)', async () => {
+    const res = await push(url, null, 'null-message');
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).message).toBe(
+      'Message null-message: data must be a JSON object',
+    );
+  });
+
   it('rejects a malformed push envelope with 400', async () => {
     const res = await fetch(`${url}/pubsub/telemetry`, {
       method: 'POST',

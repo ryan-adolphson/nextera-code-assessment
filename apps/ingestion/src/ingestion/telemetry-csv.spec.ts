@@ -60,12 +60,33 @@ describe('parseTelemetryCsv', () => {
 
     expect(rows.map((r) => r.line)).toEqual([2]);
     expect(rowErrors).toEqual([
-      { line: 3, errors: ['timestamp must be a valid ISO 8601 date string'] },
+      {
+        line: 3,
+        errors: [
+          'timestamp must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
+        ],
+      },
       {
         line: 4,
         errors: [
           'wind_speed_ms is required',
           'power_output_kw must not be less than 0',
+        ],
+      },
+    ]);
+  });
+
+  it('reports a week-date timestamp as a line error instead of storing a bad date', () => {
+    const { rows, rowErrors } = parseTelemetryCsv(
+      csv(ROW, 'TURB001,FARM01,2026-W02-3,,2331.2,8.0,14.0,3.6,81.6'),
+    );
+
+    expect(rows.map((r) => r.line)).toEqual([2]);
+    expect(rowErrors).toEqual([
+      {
+        line: 3,
+        errors: [
+          'timestamp must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)',
         ],
       },
     ]);

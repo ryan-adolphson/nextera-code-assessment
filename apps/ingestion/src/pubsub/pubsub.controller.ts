@@ -49,6 +49,14 @@ export class PubSubController {
       throw new BadRequestException(`Message ${messageId}: data is not JSON`);
     }
 
+    // plainToInstance/validate throw a TypeError (a 500) on null or a string, and give an
+    // unhelpful message for numbers and arrays: only a plain object can be a reading.
+    if (typeof json !== 'object' || json === null || Array.isArray(json)) {
+      throw new BadRequestException(
+        `Message ${messageId}: data must be a JSON object`,
+      );
+    }
+
     const dto = plainToInstance(IngestTelemetryDto, json);
     const errors = await validate(dto, {
       whitelist: true,

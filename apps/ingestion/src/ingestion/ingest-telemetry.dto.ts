@@ -1,5 +1,5 @@
+import { IsUtcTimestamp, MIN_TIMESTAMP_MS } from '@nextera/shared';
 import {
-  IsISO8601,
   IsNumber,
   IsOptional,
   IsString,
@@ -27,13 +27,16 @@ export class IngestTelemetryDto {
   @Length(1, 64)
   farm_id: string;
 
-  /** When the turbine measured the values (ISO 8601, UTC). */
-  @IsISO8601({ strict: true })
+  /**
+   * When the turbine measured the values: an ISO 8601 date-time with a zone (Z or ±HH:MM), from
+   * 2000-01-01T00:00Z to now + MAX_FUTURE_SKEW_MS.
+   */
+  @IsUtcTimestamp({ minMs: MIN_TIMESTAMP_MS })
   timestamp: string;
 
   /** Optional for live data (Pub/Sub publish time is used); set when backfilling. */
   @IsOptional()
-  @IsISO8601({ strict: true })
+  @IsUtcTimestamp()
   received_at?: string;
 
   @IsNumber(number)

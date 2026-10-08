@@ -77,6 +77,15 @@ export type {
 export { ROLE_RANK, ROLES, hasRole, isRole } from './auth/roles.js';
 export { PASSWORD_HASH_OPTIONS, normalizeEmail } from './auth/passwords.js';
 
+// Validation: strict ISO 8601 instants (ingestion payloads, API from/to query bounds)
+export {
+  IsUtcTimestamp,
+  MAX_FUTURE_SKEW_MS,
+  MIN_TIMESTAMP_MS,
+  timestampProblem,
+} from './validation/is-utc-timestamp.js';
+export type { UtcTimestampOptions } from './validation/is-utc-timestamp.js';
+
 // Seed data loader (prisma/seed.ts and e2e tests)
 export {
   TELEMETRY_CSV_COLUMNS,
