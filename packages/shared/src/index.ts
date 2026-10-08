@@ -57,6 +57,11 @@ export {
   triggeredAlerts,
 } from './wind/evaluate-alerts.js';
 export type { AlertableReading } from './wind/evaluate-alerts.js';
+export {
+  enabledAlertRules,
+  insertTelemetryWithAlerts,
+  storeAlerts,
+} from './wind/store-telemetry.js';
 
 // Alert thresholds (alerts_config): response shape, mapper and change event
 export {
@@ -76,6 +81,7 @@ export { PASSWORD_HASH_OPTIONS, normalizeEmail } from './auth/passwords.js';
 export {
   TELEMETRY_CSV_COLUMNS,
   parseCsv,
+  seedFarmsFromCsv,
   seedFromCsv,
 } from './seed/seed-from-csv.js';
 export type { SeedResult } from './seed/seed-from-csv.js';
@@ -84,3 +90,28 @@ export {
   SEED_USERS,
   seedUsers,
 } from './seed/seed-users.js';
+
+// Demo data: generated telemetry for the last hours (npm run db:seed:demo, npm run demo:feed)
+export {
+  DEMO_ALERT_RULES,
+  DEMO_SEED,
+  DEMO_TURBINES,
+} from './seed/demo-fleet.js';
+export type { DemoTurbine } from './seed/demo-fleet.js';
+export {
+  DEMO_ANOMALIES,
+  TELEMETRY_STEP_MINUTES,
+  floorToTelemetryStep,
+  generateTelemetry,
+} from './seed/generate-telemetry.js';
+export type {
+  GenerateTelemetryOptions,
+  GeneratedTelemetryRow,
+} from './seed/generate-telemetry.js';
+export {
+  DEMO_SEED_HOURS,
+  DEMO_SEED_MAX_HOURS,
+  parseDemoSeedEnv,
+  seedDemo,
+} from './seed/seed-demo.js';
+export type { DemoSeedOptions, DemoSeedResult } from './seed/seed-demo.js';

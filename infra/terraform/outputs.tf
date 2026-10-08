@@ -55,6 +55,11 @@ output "services" {
   }
 }
 
+output "demo_feed_job" {
+  description = "Cloud Run Job of the live demo feed (null unless demo_feed_enabled). Run a tick now: gcloud run jobs execute <this> --region <region>."
+  value       = var.demo_feed_enabled ? google_cloud_run_v2_job.demo_feed[0].name : null
+}
+
 output "github_workload_identity_provider" {
   description = "Workload Identity Federation provider for google-github-actions/auth (GitHub variable GCP_WIF_PROVIDER)."
   value       = google_iam_workload_identity_pool_provider.github.name
@@ -66,13 +71,13 @@ output "github_deployer_service_account" {
 }
 
 output "github_actions_variables" {
-  description = "Repository variables for .github/workflows/deploy.yml (not secrets). See CLAUDE.md, Deploying."
-  value = {
+  description = "Repository variables for .github/workflows/deploy.yml (not secrets). See CLAUDE.md, Deploying. DEMO_FEED_JOB only when demo_feed_enabled (delete it with `gh variable delete DEMO_FEED_JOB` after turning the feed off)."
+  value = merge({
     GCP_PROJECT_ID    = var.project_id
     GCP_REGION        = var.region
     GCP_WIF_PROVIDER  = google_iam_workload_identity_pool_provider.github.name
     GCP_DEPLOYER_SA   = google_service_account.deployer.email
     GCP_REGISTRY      = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.images.repository_id}"
     CLOUDSQL_INSTANCE = google_sql_database_instance.main.connection_name
-  }
+  }, var.demo_feed_enabled ? { DEMO_FEED_JOB = google_cloud_run_v2_job.demo_feed[0].name } : {})
 }

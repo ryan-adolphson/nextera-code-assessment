@@ -4,6 +4,8 @@
 #   3. `gcloud run deploy` nextera-api and nextera-ingestion
 #   4. `gcloud run deploy` nextera-web, only after 3 succeeded (the new frontend may need the new API).
 #      The web image has no API URL baked in: Terraform sets API_BASE_URL on the service.
+#   5. `gcloud run jobs update` the demo feed job (ingestion image), only if the repository variable
+#      DEMO_FEED_JOB is set (Terraform demo_feed_enabled).
 # Authenticates with Workload Identity Federation (no keys). One-time setup: CLAUDE.md, "Deploying".
 # Repository variables come from `terraform output github_actions_variables`.
 name: Deploy
@@ -49,6 +51,7 @@ jobs:
       CLOUDSQL_INSTANCE: ${{ vars.CLOUDSQL_INSTANCE }}
       WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
       DEPLOYER_SA: ${{ vars.GCP_DEPLOYER_SA }}
+      DEMO_FEED_JOB: ${{ vars.DEMO_FEED_JOB }} # optional: set only while Terraform's demo_feed_enabled is on
       CLOUD_SQL_PROXY_VERSION: v2.26.0
     steps:
       - name: Check repository variables
@@ -173,4 +176,12 @@ jobs:
       - name: Deploy nextera-web
         run: |
           gcloud run deploy nextera-web --image "${REGISTRY}/web:${SHA}" \
+            --project "$PROJECT_ID" --region "$REGION" --quiet
+
+      # --- 5. Demo feed job (optional; demo-feed.tf) ----------------------------------------------
+      # Same ingestion image; the next Cloud Scheduler tick runs it. Skipped without DEMO_FEED_JOB.
+      - name: Update demo feed job
+        if: env.DEMO_FEED_JOB != ''
+        run: |
+          gcloud run jobs update "$DEMO_FEED_JOB" --image "${REGISTRY}/ingestion:${SHA}" \
             --project "$PROJECT_ID" --region "$REGION" --quiet

@@ -8,6 +8,9 @@ name: nextera
 #   api               -> Cloud Run service nextera-api        (localhost:8080)
 #   ingestion         -> Cloud Run service nextera-ingestion  (localhost:8081)
 #   web               -> Cloud Run service nextera-web        (localhost:8082; or `ng serve` on :4200)
+#   demo-feed         -> Cloud Run Job nextera-demo-feed + Cloud Scheduler (Terraform demo_feed_enabled):
+#                        live demo readings via Pub/Sub. Idle unless DEMO_FEED_ENABLED=true in .env (then
+#                        `docker compose up -d demo-feed`); run `npm run db:seed:demo` first.
 # api / ingestion / web images are tagged ${REGISTRY:-nextera}/<service>:${TAG:-latest}, so
 #   docker compose build api ingestion web && docker compose push api ingestion web
 # pushes them to any registry (set REGISTRY/TAG in .env). For Cloud Run they must be linux/amd64:
@@ -155,6 +158,47 @@ services:
         condition: service_healthy
       pubsub-init:
         condition: service_completed_successfully
+    networks:
+      - backend
+
+  # Live demo feed: the ingestion image running dist/demo-feed/main.js, publishing one reading per demo
+  # turbine every DEMO_FEED_INTERVAL_SECONDS to the topic (-> push -> ingestion), like the Cloud Run Job
+  # nextera-demo-feed. DEMO_FEED_ENABLED in .env is the switch: when it isn't "true" the feed logs
+  # "Demo feed disabled" and exits 0, and the container then idles (`sleep`) instead of exiting:
+  # `docker compose up --wait` fails on any exited container that no other service depends on with
+  # service_completed_successfully (unlike migrate / pubsub-init). Toggle: edit .env, then
+  # `docker compose up -d demo-feed`. Needs `npm run db:seed:demo` first: the fixture seed has only
+  # TURB001/TURB002, and the worker answers 400 for unknown turbines, which the emulator (no DLQ)
+  # redelivers forever.
+  demo-feed:
+    image: ${REGISTRY:-nextera}/ingestion:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/ingestion/Dockerfile
+    # Enabled: exec, so node gets SIGTERM directly. init: forwards signals and stops the idle sleep at once.
+    command:
+      - /bin/sh
+      - -c
+      - |
+        [ "$$DEMO_FEED_ENABLED" = true ] && exec node dist/demo-feed/main.js
+        node dist/demo-feed/main.js
+        exec sleep infinity
+    init: true
+    restart: on-failure # a failed start (e.g. a bad DEMO_FEED_INTERVAL_SECONDS) retries with backoff
+    environment:
+      DEMO_FEED_ENABLED: ${DEMO_FEED_ENABLED:-false}
+      DEMO_FEED_INTERVAL_SECONDS: ${DEMO_FEED_INTERVAL_SECONDS:-300}
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-nextera-local}
+      PUBSUB_TOPIC: ${PUBSUB_TOPIC:-telemetry}
+      METADATA_SERVER_DETECTION: none # no GCE metadata server here (silences MetadataLookupWarning)
+    healthcheck:
+      disable: true # the image's HEALTHCHECK probes the worker's HTTP port, which the feed doesn't open
+    depends_on:
+      pubsub-init:
+        condition: service_completed_successfully
+      ingestion:
+        condition: service_healthy
     networks:
       - backend
 

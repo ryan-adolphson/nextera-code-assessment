@@ -22,6 +22,8 @@ export const UUID =
 export interface MigrationDb {
   /** Connected to the throwaway database. */
   db: pg.Client;
+  /** Connection URL of the throwaway database (e.g. for a script under test). */
+  url: string;
   /** Runs the Prisma CLI against the throwaway database and the copied migrations. */
   prisma(...args: string[]): string;
   /** Applies every migration before `target` (with the real `prisma migrate deploy`). */
@@ -82,6 +84,7 @@ export async function openMigrationDb(target: string): Promise<MigrationDb> {
 
   return {
     db,
+    url: url.toString(),
     prisma,
     async migrateBeforeTarget() {
       prisma('migrate', 'deploy');

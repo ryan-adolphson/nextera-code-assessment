@@ -1,13 +1,12 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import {
   EventStore,
-  Prisma,
   PrismaService,
   TELEMETRY_RECEIVED,
+  enabledAlertRules,
+  insertTelemetryWithAlerts,
+  storeAlerts,
   toTelemetryResponse,
-  triggeredAlerts,
-  type AlertConfig,
-  type Telemetry,
   type TelemetryWithAlerts,
 } from '@nextera/shared';
 import { IngestTelemetryDto } from './ingest-telemetry.dto.js';
@@ -60,11 +59,11 @@ export class TelemetryIngestionService {
         ],
         skipDuplicates: true,
       });
-      if (!inserted) return null;
+      if (!inserted) return null; // a duplicate: no rules to read, no alerts to write
       const [withAlerts] = await storeAlerts(
         tx,
         [inserted],
-        await enabledRules(tx),
+        await enabledAlertRules(tx),
       );
       return withAlerts;
     });
@@ -117,14 +116,16 @@ export class TelemetryIngestionService {
     );
     const inserted = await this.prisma.$transaction(
       async (tx) => {
-        const rules = await enabledRules(tx);
+        const rules = await enabledAlertRules(tx);
         const stored: TelemetryWithAlerts[] = [];
         for (let i = 0; i < data.length; i += BATCH_SIZE) {
-          const readings = await tx.telemetry.createManyAndReturn({
-            data: data.slice(i, i + BATCH_SIZE),
-            skipDuplicates: true,
-          });
-          stored.push(...(await storeAlerts(tx, readings, rules)));
+          stored.push(
+            ...(await insertTelemetryWithAlerts(
+              tx,
+              data.slice(i, i + BATCH_SIZE),
+              rules,
+            )),
+          );
         }
         return stored;
       },
@@ -194,34 +195,6 @@ export class TelemetryIngestionService {
       );
     }
   }
-}
-
-/** The rules ingestion evaluates: the enabled ones, read inside the write transaction. */
-function enabledRules(tx: Prisma.TransactionClient): Promise<AlertConfig[]> {
-  return tx.alertConfig.findMany({ where: { enabled: true } });
-}
-
-/**
- * Evaluates new readings against `rules`, stores one telemetry_alerts row per triggered rule, and
- * returns the readings with their alerts (worst first) for the SSE event, without re-reading.
- */
-async function storeAlerts(
-  tx: Prisma.TransactionClient,
-  readings: Telemetry[],
-  rules: AlertConfig[],
-): Promise<TelemetryWithAlerts[]> {
-  const withAlerts = readings.map((reading) => ({
-    ...reading,
-    alerts: triggeredAlerts(reading, rules).map((alert) => ({ alert })),
-  }));
-  const links = withAlerts.flatMap((reading) =>
-    reading.alerts.map(({ alert }) => ({
-      telemetryId: reading.id,
-      alertId: alert.id,
-    })),
-  );
-  if (links.length) await tx.telemetryAlert.createMany({ data: links });
-  return withAlerts;
 }
 
 function toRow(dto: IngestTelemetryDto, receivedAt: Date) {

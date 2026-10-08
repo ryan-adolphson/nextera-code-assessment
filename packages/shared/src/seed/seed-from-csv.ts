@@ -55,18 +55,15 @@ export interface SeedResult {
   telemetrySkipped: number;
 }
 
-/**
- * Loads farms.csv, turbines.csv and telemetry.csv from `dataDir`. Idempotent: farms and turbines
- * are upserted, telemetry rows already present (same turbine + timestamp) are skipped.
- */
-export async function seedFromCsv(
+/** Upserts the farms of `dataDir`/farms.csv (by id) and returns its rows. */
+export async function seedFarmsFromCsv(
   prisma: PrismaClient,
   dataDir: string,
-): Promise<SeedResult> {
-  const read = async (file: string, columns: readonly string[]) =>
-    parseCsv(await readFile(join(dataDir, file), 'utf8'), columns);
-
-  const farms = await read('farms.csv', FARM_COLUMNS);
+): Promise<Record<string, string>[]> {
+  const farms = parseCsv(
+    await readFile(join(dataDir, 'farms.csv'), 'utf8'),
+    FARM_COLUMNS,
+  );
   for (const f of farms) {
     const data = {
       name: f.farm_name,
@@ -79,7 +76,21 @@ export async function seedFromCsv(
       update: data,
     });
   }
+  return farms;
+}
 
+/**
+ * Loads farms.csv, turbines.csv and telemetry.csv from `dataDir`. Idempotent: farms and turbines
+ * are upserted, telemetry rows already present (same turbine + timestamp) are skipped.
+ */
+export async function seedFromCsv(
+  prisma: PrismaClient,
+  dataDir: string,
+): Promise<SeedResult> {
+  const read = async (file: string, columns: readonly string[]) =>
+    parseCsv(await readFile(join(dataDir, file), 'utf8'), columns);
+
+  const farms = await seedFarmsFromCsv(prisma, dataDir);
   const farmNames = new Map(farms.map((f) => [f.farm_id, f.farm_name]));
   const turbines = await read('turbines.csv', TURBINE_COLUMNS);
   for (const t of turbines) {

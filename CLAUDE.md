@@ -34,17 +34,20 @@ apps/
                         #                     CORS for the web app. Dockerfile -> image "api"
   ingestion/            # @nextera/ingestion  NestJS 12: Pub/Sub push POST /pubsub/telemetry,
                         #                     CSV upload POST /ingest/telemetry (multipart field "file"). Dockerfile -> image "ingestion"
-    scripts/            #   publish-sample.ts (npm run ingest:publish)
+    src/demo-feed/      #   live demo feed, not part of the worker: `node dist/demo-feed/main.js [--once]` in the same image
+    scripts/            #   publish-sample.ts (npm run ingest:publish), demo-feed.ts (npm run demo:feed)
   web/                  # Angular 22 app (separate npm project, NOT a workspace). Dockerfile (context apps/web) -> image "web":
                         #                     nginx + runtime /config.json (docker/: nginx template, API_BASE_URL check + tests)
 packages/
-  shared/               # @nextera/shared     Prisma schema + migrations, CSV seed data, PrismaService, EventStore, mappers;
+  shared/               # @nextera/shared     Prisma schema + migrations, CSV seed data, PrismaService, EventStore, mappers,
+                        #                     demo data (src/seed: demo fleet + telemetry generator; prisma/seed-demo.ts);
                         #                     Dockerfile = migration runner for local compose only
   testing/              # @nextera/testing    Testcontainers global setup for e2e tests
 infra/terraform/        # Cloud Run (api, ingestion, web), Pub/Sub + DLQ, Cloud SQL, Memorystore, Secret Manager,
-                        # Artifact Registry, domain mappings, GitHub Actions WIF + deployer SA
-.github/workflows/      # ci.yml (checks on PRs + main), deploy.yml (main: images -> migrate -> Cloud Run)
-docker-compose.yml      # postgres, redis, pubsub emulator (+ init), migrate, api, ingestion, web
+                        # Artifact Registry, domain mappings, GitHub Actions WIF + deployer SA,
+                        # optional demo feed (demo-feed.tf: Cloud Run Job + Cloud Scheduler, demo_feed_enabled)
+.github/workflows/      # ci.yml (checks on PRs + main), deploy.yml (main: images -> migrate -> Cloud Run [-> demo feed job])
+docker-compose.yml      # postgres, redis, pubsub emulator (+ init), migrate, api, ingestion, web, demo-feed
 .env.example            # copy to .env: the ONE env file for compose, both services, Prisma and scripts
 ```
 
@@ -60,6 +63,7 @@ The repo root is an **npm workspace** (`packages/*`, `apps/api`, `apps/ingestion
 | Ingestion worker | `npm run dev:ingestion` (:3001) or compose (:8081) | Cloud Run `nextera-ingestion` (IAM-only) |
 | API & SSE | `npm run dev:api` (:3000) or compose (:8080) | Cloud Run `nextera-api`, `api_domain` |
 | Angular | `cd apps/web && npm start` (:4200 → API on :3000), `npm run start:docker` (→ compose API on :8080), or compose `web` (:8082) | Cloud Run `nextera-web` (public; `web_url` output, `web_domain`) |
+| Demo feed (off by default) | `npm run demo:feed` or compose `demo-feed`, both on `DEMO_FEED_ENABLED=true` in `.env` | Cloud Run Job `nextera-demo-feed` + Cloud Scheduler every 5 min (`demo_feed_enabled`, `demo_feed_paused`) |
 | Migrations | `npm run db:migrate` / compose `migrate` | GitHub Actions `deploy.yml`: `prisma migrate deploy` via Cloud SQL Auth Proxy, before each deploy |
 | CI/CD | `npm run lint && …` (see below) | GitHub Actions (`ci.yml`, `deploy.yml`), Workload Identity Federation, `production` environment |
 | Secrets | `.env` (gitignored) | Secret Manager (`database-url`, `redis-url`, `jwt-secret`) |
@@ -69,10 +73,11 @@ There is exactly one local database (the compose Postgres) and one Prisma schema
 ## Conventions
 
 - **TypeScript:** `strict` everywhere. NestJS 12 services are ESM, so relative imports end in `.js`.
-- **Shared code:** both services import Prisma, `EventStore`, the `to*Response` mappers and the event names from `@nextera/shared`. Never duplicate them.
+- **Shared code:** both services import Prisma, `EventStore`, the `to*Response` mappers and the event names from `@nextera/shared`; ingestion and the demo seed store readings with `insertTelemetryWithAlerts` / `storeAlerts` / `enabledAlertRules`; the demo seed and feed share `DEMO_TURBINES`, `DEMO_SEED`, `DEMO_ANOMALIES` and `generateTelemetry` (deterministic, so the feed continues the seeded curve). Never duplicate them.
 - **Data:** Prisma only. Migrations must be backward-compatible with the running revision (one accepted exception: `20261006233000_turbines_uuid_id_commissioned`), are committed, and are applied only by `migrate deploy`. Write column renames by hand (`RENAME COLUMN`): `migrate dev`/`migrate diff` would drop and re-add the column.
 - **Events:** publish to Redis via `EventStore` only **after** the database transaction commits.
-- **Data model:** `farms` → `turbines` → `telemetry`. `turbines`: UUID `id` (internal, never exposed by the API), business key `turbine_id` ('TURB001', unique; used by payloads, CSVs, API ids, SSE and URLs), `commissioned` (default false). `telemetry`: UUID id; composite FK `(turbine_id, farm_id)` → `turbines(turbine_id, farm_id)`; unique `(turbine_id, timestamp)`. `created_at` (default now(), set by Postgres) is the real insert time; `received_at` can come from the payload/CSV for backfills; neither `created_at` nor the internal ids are in API responses. "Latest" and trends use the measurement `timestamp`, never `received_at` or `created_at`. Aggregates such as `/telemetry/stats` are computed in Postgres over exactly the rows the matching list endpoint returns. `alerts_config` holds alert thresholds: `measurement_metric` (enum of the telemetry metric columns), `comparison` (`above`/`below`), `value_metric`, `alert_level` (`info`/`warn`/`error`), `enabled` (default true; disabled rules are kept but not evaluated); one rule per (metric, comparison, level). `telemetry_alerts` (PK `(telemetry_id, alert_id)`): the rules each reading triggered, a join table (not an array column) so both ids are real FKs; `telemetry_id` CASCADE, `alert_id` RESTRICT (Postgres 23001, Prisma P2003): `DELETE /api/alert-configs/:id` of a rule that readings triggered returns 409, disable it instead (`PATCH {enabled: false}`). Ingestion (Pub/Sub and CSV) evaluates the enabled rules in the insert's transaction with `triggeredAlerts` (`@nextera/shared`, strict `>`/`<`); reads `include: TELEMETRY_ALERTS_INCLUDE`, and `TelemetryResponse.alerts` (API + SSE) is the joined rules as they are now (no snapshot), worst level first. No backfill: older readings have none. `users`: UUID `id` (the JWT `sub`), unique normalised (trimmed, lower-case) `email`, `password_hash` (argon2id), `role` (enum `role`: `viewer`/`owner`/`admin`), `active` (default true), `created_at`, `updated_at`; rows come only from `npm run db:seed`. UUID ids are generated by Postgres (`gen_random_uuid()`).
+- **Data model:** `farms` → `turbines` → `telemetry`. `turbines`: UUID `id` (internal, never exposed by the API), business key `turbine_id` ('TURB001', unique; used by payloads, CSVs, API ids, SSE and URLs), `commissioned` (default false). `telemetry`: UUID id; composite FK `(turbine_id, farm_id)` → `turbines(turbine_id, farm_id)`; unique `(turbine_id, timestamp)`. `created_at` (default now(), set by Postgres) is the real insert time; `received_at` can come from the payload/CSV for backfills; neither `created_at` nor the internal ids are in API responses. "Latest" and trends use the measurement `timestamp`, never `received_at` or `created_at`. Aggregates such as `/telemetry/stats` are computed in Postgres over exactly the rows the matching list endpoint returns. `alerts_config` holds alert thresholds: `measurement_metric` (enum of the telemetry metric columns), `comparison` (`above`/`below`), `value_metric`, `alert_level` (`info`/`warn`/`error`), `enabled` (default true; disabled rules are kept but not evaluated); one rule per (metric, comparison, level). `telemetry_alerts` (PK `(telemetry_id, alert_id)`): the rules each reading triggered, a join table (not an array column) so both ids are real FKs; `telemetry_id` CASCADE, `alert_id` RESTRICT (Postgres 23001, Prisma P2003): `DELETE /api/alert-configs/:id` of a rule that readings triggered returns 409, disable it instead (`PATCH {enabled: false}`). Ingestion (Pub/Sub and CSV) evaluates the enabled rules in the insert's transaction with `triggeredAlerts` (`@nextera/shared`, strict `>`/`<`); reads `include: TELEMETRY_ALERTS_INCLUDE`, and `TelemetryResponse.alerts` (API + SSE) is the joined rules as they are now (no snapshot), worst level first. No backfill: older readings have none. `users`: UUID `id` (the JWT `sub`), unique normalised (trimmed, lower-case) `email`, `password_hash` (argon2id), `role` (enum `role`: `viewer`/`owner`/`admin`), `active` (default true), `created_at`, `updated_at`; rows come only from `npm run db:seed` (or `db:seed:demo`). UUID ids are generated by Postgres (`gen_random_uuid()`).
+- **Demo data:** `npm run db:seed` stays the fixed fixture (the CSVs: TURB001/TURB002, 2 days in Jan 2026) that tests rely on. `npm run db:seed:demo` is for demos: the fixture farms, 25 `DEMO_TURBINES` (TURB001–TURB025, 2–3 per farm), the default rules (gearbox > 100 °C error, power < 100 kW warn, pitch > 30° info; existing rules kept), 72 h of generated telemetry ending now with `telemetry_alerts`, and the test users. Idempotent: a re-run tops up to now (`SEED_NOW` ISO, `SEED_HOURS` 1–744 override). Anomalies, relative to the seed's end: TURB001 frozen at 0 kW in strong wind (−50 h), TURB002 pitch spike (−30 h) and gearbox stuck at 126.5 °C (−6 h), TURB013 stopped (last reading −40 min; the feed never publishes it, so it goes stale), TURB008 gap (−20 h), late `received_at` on TURB005/014/021. The live feed (`apps/ingestion/src/demo-feed`) publishes one reading per demo turbine (24, not TURB013) per tick at the current 5-min boundary to `PUBSUB_TOPIC`, through Pub/Sub → ingestion like a real turbine (alerts, SSE). Env only: `DEMO_FEED_ENABLED` (must be `true`, else it logs "Demo feed disabled" and exits 0), `DEMO_FEED_INTERVAL_SECONDS` (300), `--once`/`DEMO_FEED_ONCE=true`; no DB, Redis or JWT. **Run `db:seed:demo` before enabling the feed:** the fixture has only TURB001/TURB002, readings for unknown turbines get 400, and the emulator (no DLQ) redelivers them forever (GCP: DLQ after `pubsub_max_delivery_attempts`).
 - **Ingestion:** payload fields and CSV uploads both use the `telemetry.csv` format. Each new reading's triggered enabled rules are stored in `telemetry_alerts` in the same transaction. CSV uploads are all-or-nothing: every error is reported by line and nothing is stored if any row is invalid. Duplicates are skipped and counted. Idempotent on `(turbine_id, timestamp)`. Anomalous readings are stored. Invalid payloads, unknown turbines and farm mismatches return 400 (→ DLQ after retries).
 - **API:** DTO validation and Prisma error mapping. CORS is limited to `CORS_ORIGINS` (`http://localhost:4200` locally, plus the compose `web` origin for the compose `api`; in GCP Terraform sets `https://nextera-web-<project number>.<region>.run.app` + `web_domain`. The hashed run.app URL is not allowed: use the `web_url` output). Every route needs a signed-in user unless it is `@Public()` (see **Auth**); each `/api/alert-configs` write publishes `alert-config.changed` (`ALERT_CONFIG_CHANGED` in `@nextera/shared`) after the commit.
 - **Auth (MVP, owned by `auth-engineer`):** `POST /api/auth/login` (`{ email, password }` → `{ accessToken, expiresAt, user: { email, role } }`; every failure is 401 "Invalid email or password") issues one **HS256 JWT valid for 24 h** (`jose`; claims `sub` = user id, `role`, `iss` `JWT_ISSUER`, `aud` `JWT_AUDIENCE`, `iat`, `exp`, `jti`; algorithm pinned on verify, 30 s clock tolerance). No refresh tokens or revocation list: the `AuthGuard` reloads the user on every request, so deactivating a user or changing a role applies at once. Passwords are argon2id (m = 19 MiB, t = 2, p = 1, `PASSWORD_HASH_OPTIONS` in `@nextera/shared`); unknown emails verify a dummy hash. Global guards in `AppModule` (default deny): `AuthGuard` (Bearer header; `?access_token=` only on `GET /api/events`, marked `@AllowQueryToken()`, since `EventSource` can't send headers) answers a missing, invalid or expired token or an inactive user with **401** + `WWW-Authenticate: Bearer`; `RolesGuard` reads `@Roles(minRole)` (handler, then controller; routes without it are admin-only) and answers a too-low role with **404**, the exact body of an unknown route (`Cannot GET /api/...`). Roles are hierarchical, `viewer < owner < admin` (`Role`, `ROLE_RANK`, `hasRole` in `@nextera/shared`; mirrored by hand in `apps/web/src/app/core/auth/roles.ts`). Access matrix (prefix `/api`): public `GET /health/live`, `/health/ready`, `POST /auth/login`; viewer `GET /auth/me`, `/farms`, `/turbines/:id/telemetry` (+ `/stats`), `/events`, `/alerts`, `/alert-configs` (+ `/:id`); owner `POST`/`PATCH`/`DELETE /alert-configs`, `GET /reports/telemetry`; admin everything. The SSE stream ends when its token expires. The ingestion worker stays IAM-only (no user auth). CORS allows the `Authorization` header (no cookies, so no `credentials`). The web app keeps the session in **localStorage** for at most 24 h (`AuthStore`), adds the Bearer token to `API_BASE_URL` requests only (`authInterceptor`, a 401 → sign out → `/login`), guards `FleetShell` with `canMatch` (`/login` is outside it, so no fleet load or SSE before sign-in) and `/reporting` with `roleGuard('owner')`, and hides Reporting in the nav and Add/Edit/Delete on the Rules page for viewers. **Accepted PoC trade-offs:** a token in localStorage is readable by XSS; the SSE token in the query string appears in Cloud Run request logs; tokens can't be revoked before their 24 h end except by deactivating the user or rotating `JWT_SECRET` (which ends every session); no login rate limiting yet. Env: `JWT_SECRET` (≥ 32 characters, no default, `openssl rand -base64 48`; Secret Manager `jwt-secret` in GCP), `JWT_ISSUER` (default `nextera-api`), `JWT_AUDIENCE` (default `nextera-web`); `SEED_USER_PASSWORD` for the seed. Test users from `npm run db:seed`: `viewer@nextera.local`, `owner@nextera.local`, `admin@nextera.local`, all with `SEED_USER_PASSWORD`.
@@ -125,6 +130,10 @@ npm run ingest:publish -- --delay-minutes 20  # a late-arriving reading
 curl -F file=@readings.csv localhost:3001/ingest/telemetry   # bulk upload (telemetry.csv format; compose: :8081)
 npm run db:migrate -- --name <change>         # create + apply a migration
 npm run db:seed                               # load prisma/data/*.csv + the viewer@/owner@/admin@nextera.local users (idempotent; needs SEED_USER_PASSWORD)
+npm run db:seed:demo                          # demo data instead: 25 turbines, default rules, 72 h up to now + anomalies (re-run tops up; SEED_HOURS/SEED_NOW)
+DEMO_FEED_ENABLED=true npm run demo:feed      # live demo readings every DEMO_FEED_INTERVAL_SECONDS to the emulator (-- --once: one tick); db:seed:demo first
+# compose demo-feed: set DEMO_FEED_ENABLED=true (or false) in .env, then `docker compose up -d demo-feed`. Disabled it
+# logs "Demo feed disabled" and idles instead of exiting, so a bare `docker compose up -d --wait` still succeeds.
 npm run lint && npm run typecheck && npm test && npm run test:e2e && npm run build
 
 # Angular (apps/web)
@@ -149,6 +158,7 @@ Pushes to `main` deploy automatically: when **CI** succeeds on `main`, `.github/
 3. Starts the Cloud SQL Auth Proxy with `--unix-socket /cloudsql`, reads the `database-url` secret (the same `/cloudsql/<connection>` socket URL Cloud Run uses), and runs `npm run db:deploy` (`prisma migrate deploy`). **The workflow stops here if the migration fails**; the running services are untouched.
 4. `gcloud run deploy nextera-api` and `nextera-ingestion` with the new images.
 5. `gcloud run deploy nextera-web` with the new image, only after step 4 succeeded (the new frontend may need the new API).
+6. `gcloud run jobs update` the demo feed job with the new ingestion image, only if the repository variable `DEMO_FEED_JOB` is set (see **Demo feed** below).
 
 **API URL of the web app:** runtime config, not build-time. Terraform sets `API_BASE_URL` (`api_url` output + `/api`) on `nextera-web`. At startup `apps/web/docker/40-runtime-config.sh` validates it (https, ends in `/api`, not an `example.*` placeholder) and writes `/config.json`, which `src/main.ts` fetches before bootstrapping. A bad value stops the container, so Cloud Run keeps serving the previous revision. Changing `api_domain` only needs `tf apply`, no rebuild.
 
@@ -169,7 +179,7 @@ cd infra/terraform && tf init -backend-config=... && tf plan && tf apply
 docker run --rm -v "$PWD":/w -w /w -v ~/.config/gcloud:/root/.config/gcloud hashicorp/terraform:latest \
   output -json github_actions_variables | jq -r 'to_entries[] | "\(.key)=\(.value)"' > /tmp/gh-vars.env
 gh variable set -f /tmp/gh-vars.env   # GCP_PROJECT_ID, GCP_REGION, GCP_WIF_PROVIDER, GCP_DEPLOYER_SA,
-                                      # GCP_REGISTRY, CLOUDSQL_INSTANCE
+                                      # GCP_REGISTRY, CLOUDSQL_INSTANCE (+ DEMO_FEED_JOB if demo_feed_enabled)
 ```
 
 #### Auth secrets
@@ -195,6 +205,20 @@ Until the first deploy, the Cloud Run services (including `nextera-web`) serve T
 
 Then push to `main` (or run **Deploy** manually).
 
+### Demo feed (optional)
+
+`demo_feed_enabled = true` (default false) creates the Cloud Run Job `nextera-demo-feed` (ingestion image, `node dist/demo-feed/main.js --once`, its own SA with `roles/pubsub.publisher` on `telemetry` only) and a Cloud Scheduler job that runs it every 5 min through the Cloud Run Admin API (OAuth, a scheduler SA with `roles/run.invoker` on that job only), and enables `cloudscheduler.googleapis.com`. `demo_feed_paused = true` keeps both but pauses the schedule. The job image is a placeholder until `ingestion_image` or a deploy sets it (Terraform ignores image changes afterwards), and executions fail on the placeholder. Seed first, as above but with `npm run db:seed:demo` (unknown turbines → 400 → DLQ):
+
+```bash
+DATABASE_URL="$(gcloud secrets versions access latest --secret database-url)" SEED_USER_PASSWORD='…' npm run db:seed:demo
+# on: demo_feed_enabled = true in terraform.tfvars, then (the -var gives the new job a real image at once)
+tf apply -var ingestion_image=$REG/ingestion:$SHA && gh variable set DEMO_FEED_JOB --body nextera-demo-feed
+gcloud run jobs execute nextera-demo-feed --region $REGION   # a tick now (else the next 5-min schedule)
+# pause / resume: demo_feed_paused = true / false, then tf apply
+# off: delete the variable first (else the next deploy fails on the missing job), then demo_feed_enabled = false
+gh variable delete DEMO_FEED_JOB && tf apply
+```
+
 ### Manual deploy (break-glass)
 
 With `roles/cloudsql.client` and access to the `database-url` secret (`REG` = `registry` output, `SHA` = git commit, `CONN` = `sql_connection_name` output):
@@ -208,6 +232,7 @@ DATABASE_URL="$(gcloud secrets versions access latest --secret database-url)" np
 gcloud run deploy nextera-api       --image $REG/api:$SHA       --region $REGION
 gcloud run deploy nextera-ingestion --image $REG/ingestion:$SHA --region $REGION
 gcloud run deploy nextera-web       --image $REG/web:$SHA       --region $REGION   # only after the API is up
+gcloud run jobs update nextera-demo-feed --image $REG/ingestion:$SHA --region $REGION  # only if demo_feed_enabled
 ```
 
 To redeploy only the web app: `REGISTRY=$REG TAG=$SHA npm run docker:build:web && docker push $REG/web:$SHA`, then the `nextera-web` line above. Its `API_BASE_URL` stays as Terraform set it.

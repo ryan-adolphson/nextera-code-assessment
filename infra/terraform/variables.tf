@@ -123,6 +123,20 @@ variable "ingestion_invokers" {
   default     = []
 }
 
+# --- Demo feed (demo-feed.tf) -------------------------------------------------
+
+variable "demo_feed_enabled" {
+  description = "Create the live demo feed: Cloud Run Job nextera-demo-feed (one reading per demo turbine to the telemetry topic) + a Cloud Scheduler trigger every 5 minutes. Run `npm run db:seed:demo` against Cloud SQL first."
+  type        = bool
+  default     = false
+}
+
+variable "demo_feed_paused" {
+  description = "Pause the demo feed's Cloud Scheduler trigger (keeps the job). Only used when demo_feed_enabled."
+  type        = bool
+  default     = false
+}
+
 # --- GitHub Actions (CI/CD) ---------------------------------------------------
 
 variable "github_repository" {

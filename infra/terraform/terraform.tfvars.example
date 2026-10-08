@@ -20,3 +20,5 @@ github_repository = "my-org/nextera-code-assessment"
 # db_pool_max             = 4
 # jwt_issuer              = "nextera-api"   # JWT iss/aud the API signs and requires
 # jwt_audience            = "nextera-web"
+# demo_feed_enabled       = true    # live demo telemetry every 5 min (run `npm run db:seed:demo` first)
+# demo_feed_paused        = true    # keep the demo feed, stop its schedule
