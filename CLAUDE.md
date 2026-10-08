@@ -13,11 +13,12 @@ turbines → Pub/Sub "telemetry" ─push→ Ingestion Worker ─→ Postgres + R
 
 ## Specialist agents
 
-Four subagents in `.claude/agents/` hold the patterns to follow and the gotchas already hit. Use them for work in their area:
+Seven subagents in `.claude/agents/` hold the patterns to follow and the gotchas already hit. Use them for work in their area:
 - **`angular-engineer`** ([.claude/agents/angular-engineer.md](.claude/agents/angular-engineer.md)): anything in `apps/web` (pages, Material, Tailwind, charts, maps, `FleetStore`, the web image, Angular tests). Preloads the `angular-developer` skill.
 - **`nestjs-engineer`** ([.claude/agents/nestjs-engineer.md](.claude/agents/nestjs-engineer.md)): `apps/api`, `apps/ingestion` and `packages/shared` (endpoints, DTOs, Prisma and migrations, ingestion, `EventStore`/SSE, the service images, backend tests). Preloads the `nestjs-professional-software-engineering` and `nestjs-features-performance` skills.
 - **`fullstack-architect`** ([.claude/agents/fullstack-architect.md](.claude/agents/fullstack-architect.md)): architecture, changes that span the backend and the web app (API/SSE contracts, the data model end to end), docker-compose, Cloud Run, Terraform and CI/CD. Preloads the `terraform-style-guide`, `terraform-test` and `cloud-run-basics` skills.
 - **`auth-engineer`** ([.claude/agents/auth-engineer.md](.claude/agents/auth-engineer.md)): authentication and authorization end to end (JWT access tokens, login/logout, password hashing, NestJS guards and `@Roles` with viewer < owner < admin, the Angular login page, interceptor and route guards, SSE auth, the `users` model, signing keys). Preloads the `nestjs-features-performance`, `nestjs-professional-software-engineering` and `angular-developer` skills.
+- **`playwright-test-planner`**, **`playwright-test-generator`**, **`playwright-test-healer`** (Playwright's own generated agents; don't edit them): the planner explores the app and writes plans to `e2e/specs/*.md`, the generator turns plan scenarios into `e2e/tests/**`, the healer debugs and fixes failing tests. They need the `playwright-test` MCP server (`.mcp.json`) and the running compose stack + `db:seed` fixture (see **Tests**).
 
 **Skills:** installed with `npx skills` into `.agents/skills/` (pinned in `skills-lock.json`) and symlinked into `.claude/skills/`, where Claude Code discovers them. After `npx skills add`, symlink any new skill the same way. The agent files take precedence over the general skill guidance (e.g. no component CSS, Cloud Run + Pub/Sub push).
 
@@ -47,12 +48,16 @@ packages/
                         #                     demo data (src/seed: demo fleet + telemetry generator; prisma/seed-demo.ts);
                         #                     Dockerfile = migration runner for local compose only
   testing/              # @nextera/testing    Testcontainers global setup for e2e tests
+e2e/                    # Playwright browser E2E (separate npm project, NOT a workspace) against the compose stack (web :8082):
+                        #   playwright.config.ts (projects read-only + data), tests/seed.spec.ts (fixed clock + sign-in;
+                        #   the agents' seed), tests/data/** ([DATA] tests, serial), specs/*.md (test plans)
 infra/terraform/        # Cloud Run (api, ingestion, web), Pub/Sub + DLQ, Cloud SQL, Memorystore, Secret Manager,
                         # Artifact Registry, domain mappings, GitHub Actions WIF + deployer SA,
                         # optional demo feed (demo-feed.tf: Cloud Run Job + Cloud Scheduler, demo_feed_enabled)
-.github/workflows/      # ci.yml (checks on PRs + main), deploy.yml (main: images -> migrate -> Cloud Run [-> demo feed job])
+.github/workflows/      # ci.yml (checks + browser E2E on PRs + main), deploy.yml (main: images -> migrate -> Cloud Run [-> demo feed job])
 docker-compose.yml      # postgres, redis, pubsub emulator (+ init), migrate, api, ingestion, web, demo-feed
 .env.example            # copy to .env: the ONE env file for compose, both services, Prisma and scripts
+.mcp.json               # MCP servers for Claude Code: playwright-test (e2e agents) and nextera (apps/mcp, read-only fleet tools)
 ```
 
 The repo root is an **npm workspace** (`packages/*`, `apps/api`, `apps/ingestion`, `apps/mcp`). Install from the root. `apps/web` has its own `package.json`, because Angular and NestJS 12 need different TypeScript versions.
@@ -95,12 +100,13 @@ There is exactly one local database (the compose Postgres) and one Prisma schema
   - **Staleness** uses the client clock (`NOW` token, `FleetStore` ticks every minute): more than 15/30/60 min since the latest measurement → "No data in 15/30/60 min" (yellow/orange/red pills, `fleet/staleness.ts`); only `ok` turbines count as reporting.
 - **Containers:** one image per service: `apps/api/Dockerfile` and `apps/ingestion/Dockerfile` (build context = repo root, because both need `packages/shared` and the root lockfile; each installs only its own workspace + `@nextera/shared` via `npm ci -w <app> -w @nextera/shared --include-workspace-root`), and `apps/web/Dockerfile` (build context = `apps/web`; Node build stage, unprivileged nginx runtime). Images are non-root, `linux/amd64` for Cloud Run, listen on `$PORT`, and contain no dev packages or secrets. The web image has no API URL baked in: it refuses to start unless `API_BASE_URL` is `https://…/api` (http only for localhost). Its nginx sends a CSP and HSTS (`max-age=31536000`, no `includeSubDomains`) on every response; the CSP's `connect-src` is `'self'` + the API origin that `docker/40-runtime-config.sh` derives from `API_BASE_URL` at startup (an nginx `map` include), `script-src 'self'` only (the production build turns off `inlineCritical`, whose inline script it would block; `autoCsp` is still experimental), `style-src 'self' 'unsafe-inline'` for the `<style>` elements Angular/Material inject. Tags: `$REGISTRY/api:$TAG`, `$REGISTRY/ingestion:$TAG`, `$REGISTRY/web:$TAG`.
 - **Infrastructure:** change GCP only through `infra/terraform`. Run `terraform fmt -check` + `validate` before committing.
-- **CI/CD:** `.github/workflows/ci.yml` runs every check on PRs and `main`; `deploy.yml` runs after a green CI on `main` (or manually on `main`). It authenticates with Workload Identity Federation (no service account keys), uses only repository **variables** (nothing secret), and pins action major versions. Deploys never run concurrently.
+- **CI/CD:** `.github/workflows/ci.yml` runs every check on PRs and `main`, including the `browser-e2e` job (compose stack + `db:seed` + Playwright, throwaway `.env`), so a failing browser test blocks deploys; `deploy.yml` runs after a green CI on `main` (or manually on `main`). It authenticates with Workload Identity Federation (no service account keys), uses only repository **variables** (nothing secret), and pins action major versions. Deploys never run concurrently.
 - **Never commit:** secrets, `.env`, `*.tfvars` or Terraform state.
 - **Tests:** every change includes tests.
   - **Backend unit tests** (`*.spec.ts`, Vitest) mock Prisma with `vitest-mock-extended`.
   - **Backend e2e tests** (`test/*.e2e-spec.ts`) run against Testcontainers Postgres 18 + Redis 8 (Docker required). Migration tests live in `packages/shared/test` (existing data survives the migration, no drift).
   - **Angular tests** use Vitest + TestBed with a `FakeEventSource`. ECharts (SVG renderer) runs in jsdom without a canvas mock (`src/testing/test-setup.ts` stubs `ResizeObserver`). jsdom has no layout, so verify chart rendering in a browser.
+  - **Browser E2E** (`e2e/`, Playwright, Chromium) tests the built compose `web` image (`E2E_WEB_URL`, default :8082), so rebuild it after app changes (`docker compose up -d --wait --build api ingestion web`). It needs the `db:seed` fixture and fixes the browser clock at the seed test's `SEED_NOW` (2026-01-03T00:00Z); `SEED_USER_PASSWORD` comes from `.env`. Prefer role, label and `data-testid` locators. Projects: `read-only` (fully parallel; everything outside `tests/data/`) and then `data` (`tests/data/**`, one worker): [DATA] tests (rule CRUD, CSV uploads to ingestion :8081) go there and clean up after themselves. `--project read-only` or `--no-deps` skips the dependency.
 
 ## Common commands
 
@@ -140,6 +146,11 @@ DEMO_FEED_ENABLED=true npm run demo:feed      # live demo readings every DEMO_FE
 # compose demo-feed: set DEMO_FEED_ENABLED=true (or false) in .env, then `docker compose up -d demo-feed`. Disabled it
 # logs "Demo feed disabled" and idles instead of exiting, so a bare `docker compose up -d --wait` still succeeds.
 npm run lint && npm run typecheck && npm test && npm run test:e2e && npm run build
+
+# Browser E2E (e2e/, Playwright) against the compose stack
+(cd e2e && npm ci && npx playwright install chromium)                     # once
+docker compose up -d --wait --build api ingestion web && npm run db:seed  # stack (rebuilt) + fixture
+cd e2e && npx playwright test                 # read-only project, then the serial data project (--list, --ui)
 
 # MCP server (apps/mcp): read-only fleet tools for Claude Code (.mcp.json "nextera") / Claude Desktop
 npm run build -w @nextera/mcp                 # then restart Claude Code and approve the "nextera" server

@@ -1,8 +1,10 @@
 # Nextera Frontend E2E Test Plan
 
+> [DATA] tests live under `tests/data/` (Playwright project `data`: one worker, runs after the parallel `read-only` project); everything else goes elsewhere under `tests/`.
+
 ## Application Overview
 
-E2E plan for the Nextera Angular app at http://localhost:8082 (production web image, API on :8080, ingestion on :8081). Conventions: every scenario starts from tests/seed.spec.ts (browser clock fixed at 2026-01-03T00:00:00Z, signed in as admin@nextera.local, on /farms) unless it says otherwise. Intended seed data: 10 farms, TURB001/TURB002, readings every 5 min 2026-01-01T00:00Z to 2026-01-02T23:55Z, with anomalies TURB001 Jan 1 13:40-13:50 (0 kW at 15.8 m/s), TURB002 Jan 1 18:10 (44 deg pitch spike) and TURB002 Jan 2 03:20-03:30 (gearbox stuck at 126.5 C). Passwords come from the SEED_USER_PASSWORD env var and must never be written into specs. Viewer and owner scenarios sign in as viewer@nextera.local / owner@nextera.local via /login (they were planned from code, not explored live). Tests are tagged [DATA] when they change data (rule CRUD, CSV upload) and must run serially (single worker, one describe.serial) with cleanup (delete created rules, re-enable disabled rules). Prefer data-testid, roles and labels. ENVIRONMENT CAVEAT found during exploration: the local DB did NOT match the described seed (50 turbines, TURB001 in FARM01 'not commissioned', TURB002..TURB050 in FARM02, latest readings Oct 6-7 of the current year, no January 2026 readings, no flagged readings, 2 rules: Power below 2500 kW Error, Gearbox above 55 C Warning). Data-dependent scenarios (marked [SEED]) need the DB reset and re-seeded with the January 2026 CSV data first; verify preconditions in a beforeAll.
+E2E plan for the Nextera Angular app at http://localhost:8082 (production web image, API on :8080, ingestion on :8081). Conventions: every scenario starts from tests/seed.spec.ts (browser clock fixed at 2026-01-03T00:00:00Z, signed in as admin@nextera.local, on /farms) unless it says otherwise. Intended seed data: 10 farms, TURB001/TURB002, readings every 5 min 2026-01-01T00:00Z to 2026-01-02T23:55Z, with anomalies TURB001 Jan 1 13:40-13:50 (0 kW at 15.8 m/s), TURB002 Jan 1 18:10 (44 deg pitch spike) and TURB002 Jan 2 03:20-03:30 (gearbox stuck at 126.5 C). Passwords come from the SEED_USER_PASSWORD env var and must never be written into specs. Viewer and owner scenarios sign in as viewer@nextera.local / owner@nextera.local via /login (they were planned from code, not explored live). Tests are tagged [DATA] when they change data (rule CRUD, CSV upload) and must run serially (single worker, one describe.serial) with cleanup (delete created rules, re-enable disabled rules). Prefer data-testid, roles and labels. TEST DATA: load the fixture with `npm run db:seed` (compose postgres; it is idempotent): 10 farms, 2 turbines (TURB001 on FARM01, TURB002 on FARM02, both not commissioned), readings every 5 min 2026-01-01T00:00Z to 2026-01-02T23:55Z, the three users, and NO alert rules or flagged readings (the seed does not evaluate rules, and readings stored before a rule exists are never flagged). Scenarios that need flagged readings create their rules and then upload readings through the ingestion service's CSV endpoint (http://localhost:8081/ingest/telemetry, multipart field `file`; the compose `ingestion` service must be running) at timestamps the fixture doesn't use (e.g. 2026-01-02T12:02:00Z), as [DATA] tests. Live-update scenarios need `ingestion` running too. Verify preconditions in a beforeAll.
 
 ## Test Scenarios
 
@@ -308,9 +310,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 **Steps:**
   1. Open /turbines.
     - expect: Heading 'Turbines'; filter row (text, Status, Commissioned)
-    - expect: turbine-count '50 of 50 turbines' (current DB; seed value may differ)
+    - expect: turbine-count '2 of 2 turbines' (fixture)
     - expect: Columns Turbine, Farm, Status, Commissioned, Power, Wind, Gearbox, Last reading (UTC)
-    - expect: 25 rows per page, paginator '1 – 25 of N'
+    - expect: one page (25 rows per page), paginator '1 – 2 of 2'; paging itself is covered by mocking GET /api/farms with page.route
 
 #### 4.2. Row click opens turbine page
 
@@ -373,7 +375,7 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 **File:** `tests/turbines/pagination.spec.ts`
 
 **Steps:**
-  1. Click Next page, change items per page to 10 and 50.
+  1. The fixture has only 2 turbines, so mock GET /api/farms with page.route to return 50 turbines. Click Next page, change items per page to 10 and 50.
     - expect: Label '26 – 50 of 50'; Previous enabled; page size change resets to page 1; first page has Previous disabled
 
 ### 5. 5. Staleness
@@ -444,12 +446,12 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
   1. Open history in the current DB (no readings were flagged) or pick a range with no alerts.
     - expect: '0 flagged readings on 0 turbines' and history-empty 'No alerts in this range.'; paginator '0 of 0' (verified)
 
-#### 6.4. [SEED] Flagged readings grouped by turbine
+#### 6.4. [SEED] [DATA] Flagged readings grouped by turbine
 
 **File:** `tests/alerting/history-rows.spec.ts`
 
 **Steps:**
-  1. Precondition: rules exist (Power below 2500 kW error, Gearbox above 55 C warn) and readings were ingested after them. Open history.
+  1. Setup: as owner, create two rules (e.g. Gearbox above 120 °C error, Blade pitch above 30° info), then upload a CSV with a TURB002 reading at 2026-01-02T12:02:00Z (gearbox 126.5) and one at 2026-01-01T18:12:00Z (pitch 44). Cleanup: delete the readings is not possible through the API, so disable (PATCH enabled false) the rules afterwards. Open history for 1/1/2026–1/2/2026.
     - expect: One summary row per turbine with Turbine, Farm, Latest (UTC), Alerts pills 'Error: n' / 'Warning: n' worst level first
     - expect: Counts equal sum of rules triggered across that turbine's readings
   2. Click history-expand on a row.
@@ -492,7 +494,7 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 **File:** `tests/alerting/history-paging.spec.ts`
 
 **Steps:**
-  1. With more than 25 turbines flagged, view history.
+  1. Neither seed has more than 25 turbines (fixture 2, demo 25), and only seeds create turbines, so mock GET /api/alerts with page.route to return readings for 30 turbines, then view history.
     - expect: history-paginator shows 1 – 25 of N; Next shows the remainder; expansion state does not leak across pages
 
 ### 7. 7. Alert rules (serial, mutating)
@@ -505,7 +507,7 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 **Steps:**
   1. Open /alerting/rules as admin.
-    - expect: Heading '<n> rules'; table columns Metric, Condition, Threshold, Level, Actions; rows like 'Power output (kW) | below | 2500 kW | Error' (verified); edit/delete buttons labelled 'Edit rule: ...'; paginator '1 – n of n'
+    - expect: Heading '<n> rules'; table columns Metric, Condition, Threshold, Level, Actions; with the fixture there are no rules ('0 rules' and the empty state); after creating one, a row like 'Power output (kW) | below | 100 kW | Warning'; edit/delete buttons labelled 'Edit rule: ...'; paginator '1 – n of n'
     - expect: Add rule button (add-rule) visible
 
 #### 7.2. [DATA] Create a rule

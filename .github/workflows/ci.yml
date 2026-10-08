@@ -1,4 +1,5 @@
-# Checks every pull request and every push to main. A successful run on main triggers deploy.yml.
+# Checks every pull request and every push to main. A successful run on main (every job, including the
+# browser E2E suite) triggers deploy.yml.
 name: CI
 
 on:
@@ -55,6 +56,71 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npx ng build
+
+  browser-e2e:
+    name: Browser E2E (Playwright vs the compose stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            e2e/package-lock.json
+
+      # Throwaway values, generated per run (nothing secret is stored in GitHub). DEMO_FEED_ENABLED
+      # stays false from .env.example, and demo-feed isn't started below anyway.
+      - name: Write .env
+        run: |
+          postgres_password="$(openssl rand -hex 24)"
+          jwt_secret="$(openssl rand -base64 48)"
+          seed_password="$(openssl rand -hex 16)"
+          echo "::add-mask::$postgres_password"
+          echo "::add-mask::$jwt_secret"
+          echo "::add-mask::$seed_password"
+          sed -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$postgres_password|" \
+            -e "s|^DATABASE_URL=postgresql://nextera:change-me@|DATABASE_URL=postgresql://nextera:$postgres_password@|" \
+            -e "s|^JWT_SECRET=.*|JWT_SECRET=$jwt_secret|" \
+            -e "s|^SEED_USER_PASSWORD=.*|SEED_USER_PASSWORD=$seed_password|" \
+            .env.example > .env
+          grep -q "^DATABASE_URL=postgresql://nextera:$postgres_password@" .env
+          grep -q '^DEMO_FEED_ENABLED=false$' .env
+
+      # Builds the api, ingestion and web images; pulls in postgres, redis, pubsub(-init) and migrate.
+      - name: Start the stack
+        run: docker compose up -d --wait --build api ingestion web
+
+      # Also builds @nextera/shared (Prisma client + dist) through its `prepare` script.
+      - run: npm ci
+      - name: Seed the fixture (npm run db:seed)
+        run: npm run db:seed
+
+      - name: Install Playwright + Chromium
+        working-directory: e2e
+        run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Playwright
+        working-directory: e2e
+        run: npx playwright test
+
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Compose logs
+        if: failure()
+        run: docker compose logs --no-color --timestamps
 
   terraform:
     name: Terraform (fmt, validate)

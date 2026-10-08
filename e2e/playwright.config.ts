@@ -2,7 +2,10 @@ import { existsSync } from 'node:fs';
 import { defineConfig, devices } from '@playwright/test';
 
 // Browser E2E tests against the docker-compose stack (web :8082 -> api :8080).
-// SEED_USER_PASSWORD comes from the repo's single .env, like every other tool here.
+// SEED_USER_PASSWORD comes from the repo's single .env, like every other tool here (real env vars win).
+// Two projects that never interleave: `read-only` (everything outside tests/data, incl. the agents'
+// tests/seed.spec.ts) runs fully parallel; `data` ([DATA] tests that change rules or upload readings,
+// tests/data/**) runs afterwards, one test at a time. `--project read-only` or `--no-deps` skips the wait.
 const rootEnv = new URL('../.env', import.meta.url);
 if (existsSync(rootEnv)) process.loadEnvFile(rootEnv);
 
@@ -17,5 +20,19 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    {
+      name: 'read-only',
+      testIgnore: 'data/**',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'data',
+      testMatch: 'data/**/*.spec.ts',
+      dependencies: ['read-only'],
+      fullyParallel: false,
+      workers: 1,
+      use: { ...devices['Desktop Chrome'] },
+    },
+  ],
 });

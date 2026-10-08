@@ -60,6 +60,8 @@ cd apps/web && npm install && npm start   # web app on http://localhost:4200
 
 Tests: `npm run lint && npm run typecheck && npm test && npm run test:e2e` at the repo root (e2e needs Docker), and `npm test` in `apps/web`.
 
+Browser tests: `e2e/` is a Playwright suite that drives the built web image of the compose stack. Set it up once with `cd e2e && npm ci && npx playwright install chromium`, start the stack and load the fixture with `docker compose up -d --wait --build api ingestion web && npm run db:seed` (rebuild after app changes), then run `cd e2e && npx playwright test`. CI runs the same suite (`browser-e2e`) before anything deploys.
+
 ## Ask the fleet from Claude
 
 `apps/mcp` is a local, read-only [MCP](https://modelcontextprotocol.io) server: Claude can answer "which turbines stopped reporting?", "which turbines alerted in the last 24 h?" or "what's TURB002's gearbox doing?" straight from Postgres. Its tools are `list_farms`, `get_turbine`, `get_telemetry`, `get_telemetry_stats`, `list_alerts`, `list_alert_rules` and `get_report_summary`. Every database session is read-only, so it can't change any data.
