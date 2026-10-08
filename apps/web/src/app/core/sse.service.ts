@@ -10,8 +10,13 @@ export type SseEvent<T> =
  * Wraps EventSource in an Observable: unsubscribing closes the connection.
  * The API sends NAMED events (`event: order.created`), so listeners are registered per type;
  * `onmessage` would only see unnamed events.
- * EventSource reconnects by itself after network errors and the Cloud Run 60-minute limit, sending
- * Last-Event-ID so the API replays what was missed; the stream only errors once it is fully CLOSED.
+ * One subscription = one EventSource. It reconnects by itself after network errors and the Cloud
+ * Run 60-minute limit (status `reconnecting`, then `open` again), sending Last-Event-ID so the API
+ * replays what was missed. But when a (re)connect gets an HTTP error or a non-event-stream response
+ * (a 503 during a deploy or cold start, a 502 from a proxy, a 401 for an expired token), the browser
+ * fails the connection for good (readyState CLOSED, no more retries): the Observable then errors.
+ * Retrying is the caller's job, with a new subscription (a new EventSource, which can't send
+ * Last-Event-ID, so the caller must reload what it may have missed): see `FleetStore.connectLive`.
  */
 @Injectable({ providedIn: 'root' })
 export class SseService {

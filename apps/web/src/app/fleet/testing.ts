@@ -204,7 +204,8 @@ class LayoutlessInteractivityChecker extends InteractivityChecker {
 
 /** Test doubles for FleetApi and SseService: push SSE events with `sse.push(...)`. */
 export function fakes(farms: FarmOverview[] = farmsFixture()) {
-  const events = new Subject<SseEvent<unknown>>();
+  // One stream per connect() (like a new EventSource): after `fail()`, a retry gets a fresh one.
+  let events = new Subject<SseEvent<unknown>>();
   const api = {
     eventsUrl: 'http://api/events',
     farms: vi.fn((): Observable<FarmOverview[]> => of(farms)),
@@ -214,7 +215,10 @@ export function fakes(farms: FarmOverview[] = farmsFixture()) {
     ),
   };
   const sse = {
-    connect: vi.fn(() => events.asObservable()),
+    connect: vi.fn(() => {
+      if (events.hasError || events.closed) events = new Subject<SseEvent<unknown>>();
+      return events.asObservable();
+    }),
     push: (data: Telemetry) =>
       events.next({ kind: 'message', id: '1-0', type: 'telemetry.received', data }),
     /** Any named event, e.g. `alert-config.changed`. */
@@ -222,8 +226,9 @@ export function fakes(farms: FarmOverview[] = farmsFixture()) {
       events.next({ kind: 'message', id: '2-0', type, data }),
     status: (status: 'connecting' | 'open' | 'reconnecting') =>
       events.next({ kind: 'status', status }),
+    /** The connection is CLOSED (the store retries after its backoff with a new connect). */
     fail: () => events.error(new Error('closed')),
-    /** Whether anything (FleetStore) is still subscribed to the live stream. */
+    /** Whether anything (FleetStore) is still subscribed to the current live stream. */
     observed: () => events.observed,
   };
   return { api, sse };

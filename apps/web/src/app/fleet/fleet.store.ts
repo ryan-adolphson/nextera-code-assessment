@@ -1,8 +1,22 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Subject, Subscription, catchError, of, switchMap } from 'rxjs';
+import { secondsToMilliseconds } from 'date-fns';
+import {
+  Subject,
+  Subscription,
+  catchError,
+  defer,
+  map,
+  of,
+  retry,
+  switchMap,
+  tap,
+  throwError,
+  timer,
+} from 'rxjs';
+import { AuthStore } from '../core/auth/auth.store';
 import { NOW } from '../core/clock';
-import { SseService, SseStatus } from '../core/sse.service';
+import { SseEvent, SseService, SseStatus } from '../core/sse.service';
 import { FleetApi, TelemetryWindow } from './fleet-api.service';
 import {
   CLOCK_TICK_MS,
@@ -17,11 +31,33 @@ import {
 } from './fleet.model';
 import { ALERT_CONFIG_CHANGED } from '../alerting/alert-config.model';
 
+const FLEET_LOAD_ERROR = 'Could not load the fleet.';
+
 /** Every SSE event type the shell's one connection listens for. */
 const LIVE_EVENTS = [...TELEMETRY_EVENTS, ALERT_CONFIG_CHANGED];
 import { Staleness, freshestStaleness, stalenessOf } from './staleness';
 
+/**
+ * The live connection: `connecting` (first attempt), `open`, `reconnecting` (the browser's own
+ * reconnect, or our backoff and the new connection after it) and `offline` (signed out: no more
+ * retries; the sign-out flow takes over).
+ */
 export type LiveStatus = SseStatus | 'offline';
+
+/** First wait before a new EventSource once the browser gave up on one; doubles per failure. */
+export const RECONNECT_BASE_MS = secondsToMilliseconds(1);
+/** The longest wait between reconnect attempts. */
+export const RECONNECT_MAX_MS = secondsToMilliseconds(30);
+
+/**
+ * Wait before reconnect attempt `failures + 1`: 1 s, 2 s, 4 s … capped at 30 s, minus up to half
+ * of it at random (`random` in [0, 1)), so browsers that lost the API together don't all return at
+ * once.
+ */
+export function reconnectDelayMs(failures: number, random = Math.random()): number {
+  const capped = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** failures);
+  return Math.round(capped * (1 - random / 2));
+}
 
 /** A turbine with its farm's name, its latest reading (by measurement time) and staleness. */
 export interface FleetTurbine extends TurbineOverview {
@@ -54,10 +90,12 @@ export class FleetStore {
   private readonly sse = inject(SseService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly clock = inject(NOW);
+  private readonly auth = inject(AuthStore);
 
   private readonly farmList = signal<FarmOverview[]>([]);
   private readonly latestByTurbine = signal(new Map<string, Telemetry>());
   private historySub?: Subscription;
+  private farmsSub?: Subscription;
   /** The selected turbine's loaded and live readings, newest first (may extend past the window). */
   private readonly loadedHistory = signal<Telemetry[]>([]);
   /** Live readings received while the history request is pending (merged into its response). */
@@ -185,9 +223,57 @@ export class FleetStore {
   init(): void {
     this.now.set(this.clock());
     this.startTicking();
-    this.sse
-      .connect<unknown>(this.api.eventsUrl, LIVE_EVENTS)
-      .pipe(takeUntilDestroyed(this.destroyRef))
+    this.connectLive();
+    this.loadFarms({ resync: false });
+  }
+
+  /**
+   * The live connection, kept up while the store lives. The browser reconnects an EventSource by
+   * itself after a network drop or the end of a stream (sending Last-Event-ID, so the API replays
+   * what was missed), but gives up for good when a reconnect gets an HTTP error (a 503 during a
+   * deploy, a 502 from a proxy, a 401): SseService then errors. Here that means: `reconnecting`,
+   * wait `reconnectDelayMs` (1 s, 2 s, 4 s … 30 s, jittered; back to 1 s after an open), then a new
+   * EventSource with a freshly read URL (the token may have changed). A new EventSource can't send
+   * Last-Event-ID, so when one of ours opens, `resync()` reloads what the outage may have missed.
+   * Signed out (e.g. the session expired): no more attempts, `offline`.
+   *
+   * (`retry`'s `resetOnSuccess` doesn't fit: every attempt emits `connecting` at once, which would
+   * reset the count before the connection ever opened; `failures` is reset on `open` instead.)
+   */
+  private connectLive(): void {
+    let failures = 0;
+    let attempts = 0;
+    defer(() => {
+      if (!this.auth.isAuthenticated()) return throwError(() => new Error('Signed out'));
+      const reconnect = attempts++ > 0;
+      let opened = false;
+      return this.sse.connect<unknown>(this.api.eventsUrl, LIVE_EVENTS).pipe(
+        // A retry's new connection is still "Reconnecting…" until it opens, not "Connecting…".
+        map((event): SseEvent<unknown> =>
+          reconnect && event.kind === 'status' && event.status === 'connecting'
+            ? { kind: 'status', status: 'reconnecting' }
+            : event,
+        ),
+        tap((event) => {
+          if (event.kind !== 'status' || event.status !== 'open') return;
+          failures = 0;
+          // Only the first open of our new EventSource: later opens are the browser's own
+          // reconnects, which resume with Last-Event-ID.
+          if (reconnect && !opened) this.resync();
+          opened = true;
+        }),
+      );
+    })
+      .pipe(
+        retry({
+          delay: (error: unknown) => {
+            if (!this.auth.isAuthenticated()) return throwError(() => error);
+            this.liveStatus.set('reconnecting');
+            return timer(reconnectDelayMs(failures++));
+          },
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
         next: (event) => {
           if (event.kind === 'status') this.liveStatus.set(event.status);
@@ -197,8 +283,31 @@ export class FleetStore {
         },
         error: () => this.liveStatus.set('offline'),
       });
+  }
 
-    this.api
+  /**
+   * After our own reconnect: the API replays nothing to a new EventSource, so reload what the
+   * outage may have missed. The live stream is already open, so nothing arriving from now on is
+   * lost (as in `init`): latest readings (`applyLatest` keeps whichever is newer), the selected
+   * turbine's history and stats (same range, kept on screen while they reload), and the rule pages
+   * (missed `alert-config.changed`).
+   */
+  private resync(): void {
+    this.loadFarms({ resync: true });
+    const selected = this.selectedTurbineId();
+    if (selected) this.select(selected);
+    this.alertConfigVersion.update((v) => v + 1);
+  }
+
+  /**
+   * Loads the farms and each turbine's latest reading (replacing a pending load). The first load
+   * drives `loading`/`error`; a resync once that finished updates the fleet quietly: a failure keeps
+   * what is shown, a success clears a failed first load's error.
+   */
+  private loadFarms({ resync }: { resync: boolean }): void {
+    const quiet = resync && !this.loading();
+    this.farmsSub?.unsubscribe();
+    this.farmsSub = this.api
       .farms()
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
@@ -208,9 +317,11 @@ export class FleetStore {
             if (turbine.latest) this.applyLatest(turbine.latest);
           }
           this.loading.set(false);
+          if (this.error() === FLEET_LOAD_ERROR) this.error.set(null);
         },
         error: () => {
-          this.error.set('Could not load the fleet.');
+          if (quiet) return;
+          this.error.set(FLEET_LOAD_ERROR);
           this.loading.set(false);
         },
       });

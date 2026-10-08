@@ -1,11 +1,17 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Subject, of, throwError } from 'rxjs';
+import { FakeEventSource } from '../../testing/fake-event-source';
+import { AuthStore } from '../core/auth/auth.store';
 import { NOW as NOW_TOKEN } from '../core/clock';
 import { SseService } from '../core/sse.service';
 import { FleetApi } from './fleet-api.service';
 import { FarmOverview, TelemetryStats } from './fleet.model';
-import { FleetStore } from './fleet.store';
+import { FleetStore, reconnectDelayMs } from './fleet.store';
 import { fakes, farmsFixture, reading, statsFixture } from './testing';
+
+/** The part of AuthStore the FleetStore reads: whether to keep retrying the live connection. */
+const fakeAuth = (signedIn = true) => ({ isAuthenticated: signal(signedIn) });
 
 /** The client clock in these tests: 5 minutes after TURB001's latest reading (23:55). */
 const NOW = Date.parse('2026-01-03T00:00:00.000Z');
@@ -24,6 +30,7 @@ describe('FleetStore', () => {
         FleetStore,
         { provide: FleetApi, useValue: api },
         { provide: SseService, useValue: sse },
+        { provide: AuthStore, useValue: fakeAuth() },
       ],
     });
     const store = TestBed.inject(FleetStore);
@@ -250,6 +257,7 @@ describe('FleetStore', () => {
           FleetStore,
           { provide: FleetApi, useValue: api },
           { provide: SseService, useValue: sse },
+          { provide: AuthStore, useValue: fakeAuth() },
           { provide: NOW_TOKEN, useValue: () => at('2030-01-01T00:00:00.000Z') },
         ],
       });
@@ -571,8 +579,239 @@ describe('FleetStore', () => {
 
     sse.status('open');
     expect(store.liveStatus()).toBe('open');
-    sse.fail();
-    expect(store.liveStatus()).toBe('offline');
+    sse.status('reconnecting'); // the browser's own reconnect
+    expect(store.liveStatus()).toBe('reconnecting');
+    sse.status('open');
+    sse.fail(); // CLOSED: the store retries (see 'live connection retry')
+    expect(store.liveStatus()).toBe('reconnecting');
+    vi.advanceTimersByTime(1_000);
+    expect(sse.connect).toHaveBeenCalledTimes(2);
+  });
+
+  describe('live connection retry (real SseService, fake EventSource)', () => {
+    const SECOND = 1_000;
+    let auth: ReturnType<typeof fakeAuth>;
+
+    beforeEach(() => {
+      FakeEventSource.instances = [];
+      vi.stubGlobal('EventSource', FakeEventSource);
+      vi.spyOn(Math, 'random').mockReturnValue(0); // no jitter: exactly 1 s, 2 s, 4 s …
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    function setupLive() {
+      const { api } = fakes();
+      auth = fakeAuth();
+      TestBed.configureTestingModule({
+        providers: [
+          FleetStore,
+          { provide: FleetApi, useValue: api },
+          { provide: AuthStore, useValue: auth },
+        ],
+      });
+      const store = TestBed.inject(FleetStore);
+      store.init();
+      const sources = FakeEventSource.instances;
+      return { store, api, sources, last: () => sources.at(-1)! };
+    }
+
+    it('reconnects with a new EventSource after the backoff once the browser gave up', () => {
+      const { store, sources, last } = setupLive();
+      last().open();
+      expect(store.liveStatus()).toBe('open');
+
+      last().fail(); // e.g. a 503 while the browser reconnected during a deploy
+      expect(store.liveStatus()).toBe('reconnecting');
+      expect(sources[0].close).toHaveBeenCalled();
+      expect(sources).toHaveLength(1);
+
+      vi.advanceTimersByTime(SECOND);
+      expect(sources).toHaveLength(2);
+      expect(last().url).toBe('http://api/events');
+      expect(store.liveStatus()).toBe('reconnecting'); // not "Connecting…" again
+      last().open();
+      expect(store.liveStatus()).toBe('open');
+    });
+
+    it('re-reads the events URL on every attempt (the token may have changed)', () => {
+      const { api, sources, last } = setupLive();
+      last().fail();
+      api.eventsUrl = 'http://api/events?access_token=new';
+
+      vi.advanceTimersByTime(SECOND);
+      expect(sources[1].url).toBe('http://api/events?access_token=new');
+    });
+
+    it('backs off 1 s, 2 s, 4 s … and starts over after a successful open', () => {
+      const { sources, last } = setupLive();
+      const failAndWait = (ms: number) => {
+        const before = sources.length;
+        last().fail();
+        vi.advanceTimersByTime(ms - 1);
+        expect(sources).toHaveLength(before);
+        vi.advanceTimersByTime(1);
+        expect(sources).toHaveLength(before + 1);
+      };
+
+      failAndWait(SECOND); // the first connection never opened (e.g. a cold start)
+      failAndWait(2 * SECOND);
+      failAndWait(4 * SECOND);
+      last().open();
+      failAndWait(SECOND);
+    });
+
+    it('caps the backoff at 30 s and jitters it down by at most half', () => {
+      expect([0, 1, 2, 3, 4, 5, 6, 20].map((n) => reconnectDelayMs(n, 0))).toEqual([
+        1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000,
+      ]);
+      expect(reconnectDelayMs(2, 0.5)).toBe(3_000);
+      expect(reconnectDelayMs(10, 0.999)).toBeGreaterThan(15_000);
+    });
+
+    it('resyncs after its own reconnect: latest readings, the selected history and the rules', () => {
+      const { store, api, last } = setupLive();
+      store.select('TURB001');
+      last().open();
+      expect(api.farms).toHaveBeenCalledTimes(1);
+      expect(api.telemetry).toHaveBeenCalledTimes(1);
+
+      last().fail();
+      vi.advanceTimersByTime(SECOND);
+      const farms = new Subject<FarmOverview[]>();
+      api.farms.mockReturnValue(farms);
+      last().open();
+
+      expect(api.farms).toHaveBeenCalledTimes(2);
+      expect(api.telemetry).toHaveBeenCalledTimes(2);
+      expect(api.telemetry).toHaveBeenLastCalledWith('TURB001', expect.anything());
+      expect(store.alertConfigVersion()).toBe(1);
+      expect(store.loading()).toBe(false); // no loading screen for a resync
+
+      // A live reading newer than the resync's response is not replaced by it.
+      last().emit(
+        'telemetry.received',
+        reading({ timestamp: '2026-01-03T00:05:00.000Z', powerOutputKw: 3000 }),
+      );
+      const fixture = farmsFixture();
+      fixture[0].turbines[0].latest = reading({
+        timestamp: '2026-01-03T00:00:00.000Z',
+        powerOutputKw: 2500,
+      });
+      farms.next(fixture);
+      farms.complete();
+      expect(store.turbines()[0].latest?.powerOutputKw).toBe(3000);
+      expect(store.loading()).toBe(false);
+      expect(store.error()).toBeNull();
+    });
+
+    it('applies readings missed during the outage', () => {
+      const { store, api, last } = setupLive();
+      last().open();
+      last().fail();
+      vi.advanceTimersByTime(SECOND);
+      const fixture = farmsFixture();
+      fixture[0].turbines[0].latest = reading({
+        timestamp: '2026-01-03T00:00:00.000Z',
+        powerOutputKw: 2500,
+      });
+      api.farms.mockReturnValue(of(fixture));
+      last().open();
+
+      expect(store.turbines()[0].latest?.powerOutputKw).toBe(2500);
+      expect(api.telemetry).not.toHaveBeenCalled(); // nothing selected
+    });
+
+    it('keeps the fleet and shows no error when a resync fails', () => {
+      const { store, api, last } = setupLive();
+      last().fail();
+      vi.advanceTimersByTime(SECOND);
+      api.farms.mockReturnValue(throwError(() => new Error('down')));
+      last().open();
+
+      expect(store.turbines()).toHaveLength(2);
+      expect(store.error()).toBeNull();
+      expect(store.liveStatus()).toBe('open');
+    });
+
+    it('loads the fleet on a reconnect after the first load failed, clearing its error', () => {
+      const { api } = fakes();
+      api.farms.mockReturnValueOnce(throwError(() => new Error('down')));
+      TestBed.configureTestingModule({
+        providers: [
+          FleetStore,
+          { provide: FleetApi, useValue: api },
+          { provide: AuthStore, useValue: fakeAuth() },
+        ],
+      });
+      const store = TestBed.inject(FleetStore);
+      store.init();
+      expect(store.error()).toBe('Could not load the fleet.');
+
+      FakeEventSource.instances[0].fail();
+      vi.advanceTimersByTime(SECOND);
+      FakeEventSource.instances[1].open();
+
+      expect(store.error()).toBeNull();
+      expect(store.turbines()).toHaveLength(2);
+    });
+
+    it('does not resync after the browser’s own reconnect (it sends Last-Event-ID)', () => {
+      const { store, api, sources, last } = setupLive();
+      last().open();
+      last().drop(); // readyState CONNECTING: the browser retries by itself
+      expect(store.liveStatus()).toBe('reconnecting');
+      last().open();
+
+      expect(store.liveStatus()).toBe('open');
+      expect(sources).toHaveLength(1);
+      expect(api.farms).toHaveBeenCalledTimes(1);
+      expect(store.alertConfigVersion()).toBe(0);
+    });
+
+    it('resyncs once per reconnect, not again on a later browser reconnect', () => {
+      const { api, last } = setupLive();
+      last().fail();
+      vi.advanceTimersByTime(SECOND);
+      last().open();
+      last().drop();
+      last().open();
+
+      expect(api.farms).toHaveBeenCalledTimes(2);
+    });
+
+    it('stops retrying once signed out (offline)', () => {
+      const { store, sources, last } = setupLive();
+      last().open();
+      auth.isAuthenticated.set(false);
+      last().fail();
+
+      expect(store.liveStatus()).toBe('offline');
+      vi.advanceTimersByTime(60 * SECOND);
+      expect(sources).toHaveLength(1);
+    });
+
+    it('does not reconnect when the session ends during the backoff', () => {
+      const { store, sources, last } = setupLive();
+      last().fail();
+      expect(store.liveStatus()).toBe('reconnecting');
+      auth.isAuthenticated.set(false);
+
+      vi.advanceTimersByTime(60 * SECOND);
+      expect(sources).toHaveLength(1);
+      expect(store.liveStatus()).toBe('offline');
+    });
+
+    it('cancels a pending retry when the store is destroyed', () => {
+      const { sources, last } = setupLive();
+      last().fail();
+
+      TestBed.resetTestingModule(); // destroys the store (the shell is gone)
+      vi.advanceTimersByTime(60 * SECOND);
+      expect(sources).toHaveLength(1);
+    });
   });
 
   it('reports a failed fleet load', () => {
@@ -583,6 +822,7 @@ describe('FleetStore', () => {
         FleetStore,
         { provide: FleetApi, useValue: api },
         { provide: SseService, useValue: sse },
+        { provide: AuthStore, useValue: fakeAuth() },
       ],
     });
     const store = TestBed.inject(FleetStore);
