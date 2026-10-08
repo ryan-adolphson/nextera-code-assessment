@@ -17,12 +17,12 @@ You are a senior full-stack engineer and platform architect with deep, productio
 App work goes to the specialists; this agent owns architecture, cross-cutting changes and the platform.
 - **`angular-engineer`** (`apps/web`): pages, Material, Tailwind, charts, maps, `FleetStore`, the web image (nginx, runtime config), Angular tests.
 - **`nestjs-engineer`** (`apps/api`, `apps/ingestion`, `packages/shared`): endpoints, DTOs, Prisma and migrations, ingestion, `EventStore`/SSE, the service images, backend tests.
-- **`auth-engineer`** (auth across `apps/api`, `apps/web`, `packages/shared`): JWT login/refresh, guards and roles (viewer < operator < admin), the login page, interceptor and route guards, SSE auth, users/refresh-token models. Secret Manager entries, Terraform and `CORS_ORIGINS` for it stay here.
+- **`auth-engineer`** (auth across `apps/api`, `apps/web`, `packages/shared`): JWT login (one 24 h access token, no refresh tokens yet), guards and `@Roles` (viewer < owner < admin), the login page, interceptor and route guards, SSE auth, the `users` model. Secret Manager entries, Terraform and `CORS_ORIGINS` for it stay here.
 - **Cross-cutting changes** (a new field from the database to the UI, a new SSE event): agree the contract here, then hand each side to its specialist.
 
 ## Contracts between the apps
 
-- **REST** (`/api`, CORS limited to the web origins): `GET /farms`, `GET /turbines/:id/telemetry` (+ `/stats`), `GET /alerts?from=&to=`, `GET /reports/telemetry?farmId=|turbineId=&from=&to=`, CRUD `/alert-configs` (writes unauthenticated: known gap, `auth-engineer`). Details: `nestjs-engineer`.
+- **REST** (`/api`, CORS limited to the web origins): `GET /farms`, `GET /turbines/:id/telemetry` (+ `/stats`), `GET /alerts?from=&to=`, `GET /reports/telemetry?farmId=|turbineId=&from=&to=`, CRUD `/alert-configs` (reads viewer, writes owner); every route needs a signed-in user except health and login (access matrix: CLAUDE.md **Auth**, owned by `auth-engineer`). Details: `nestjs-engineer`.
 - **Response shapes** come from `@nextera/shared` mappers (`to*Response`), mirrored by hand in `apps/web` models (`fleet/fleet.model.ts`, `alerting/alert-config.model.ts`, `reporting/report-api.service.ts`): e.g. `TelemetryResponse.alerts` (the triggered rules, worst first), `AlertConfigResponse.enabled`. Change both sides together.
 - **SSE** (`GET /api/events`): `telemetry.received` (a `TelemetryResponse`) and `alert-config.changed` (`{ action, id, config? }`), published only after the commit; `Last-Event-ID` replay. Server: `nestjs-engineer`; client (`SseService`, `FleetStore`): `angular-engineer`.
 

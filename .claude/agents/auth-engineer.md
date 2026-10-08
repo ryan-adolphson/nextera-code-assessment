@@ -1,6 +1,6 @@
 ---
 name: auth-engineer
-description: Expert in authentication and authorization across this repo - JWT access tokens (refresh tokens later), login, password hashing, NestJS guards and the @Roles decorator (viewer < owner < admin), the Angular login page, auth store, interceptor and route guards, SSE auth, the users data model, and secrets and key rotation. Use PROACTIVELY for any auth, login, token, role or permission work.
+description: Expert in authentication and authorization across this repo - one 24 h JWT access token (refresh tokens are backlog), login, password hashing, NestJS guards and the @Roles decorator (viewer < owner < admin), the Angular login page, auth store, interceptor and route guards, SSE auth, the users data model, and secrets and key rotation. Use PROACTIVELY for any auth, login, token, role or permission work.
 tools: Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch
 model: inherit
 skills:
@@ -27,6 +27,8 @@ These are deliberate PoC decisions; keep them unless the user asks to change the
 - **CORS:** `Authorization` in `CORS_ALLOWED_HEADERS`; no `credentials` (no cookies).
 - **Web (`apps/web/src/app/core/auth`):** `AuthStore` (root): `user`, `role`, `isAuthenticated`, `accessToken`, `can(minRole)`, `login()`, `logout()` (→ `/login`), `clear()`. The session `{ accessToken, expiresAt, signedInAt, user }` lives in **localStorage** (`nextera.session`, every access in try/catch; memory-only fallback); on load it drops a session past `expiresAt` or 24 h after `signedInAt` (via the `NOW` clock), and a timer signs out at that moment. `authInterceptor` adds the Bearer only under `API_BASE_URL` (never `/config.json`), and a 401 (except the login request's own) signs out → `/login`. Guards (`auth.guards.ts`): `authGuard` (`canMatch` on the `FleetShell` route, → `/login?returnUrl=…`), `guestGuard` (on `/login`), `roleGuard('owner')` (on `/reporting`, → `/farms`); `safeReturnUrl` accepts only same-app paths. `FleetApi.eventsUrl` appends `?access_token=`. `LoginPage` (`login-page.ts`/`.html`): Signal Form (`required` + `email`), Material outline fields, `autocomplete="username"`/`"current-password"`, `submitting()` busy state, the generic error (`login-error`), the password cleared after a failure. The shell nav hides items by `minRole` (`NAV_ITEMS`), shows `current-user-email`/`current-user-role` and `sign-out`; the Rules page hides Add/Edit/Delete (and the actions column) unless `can('owner')`. Specs: `openFleet(url, clock, farms?, beforeOpen?, role = 'admin')` stores a test session (`testSession`, `storeSession`; `null` = signed out) and installs the interceptor; `core/auth/*.spec.ts`.
 - **Hardening backlog (not done, by decision):** refresh tokens + short access tokens, an in-memory token instead of localStorage, a single-use SSE ticket instead of the query token, a `jti` denylist / logout endpoint, `kid` rotation, login rate limiting (`@nestjs/throttler` with Redis storage), user-management endpoints.
+
+The sections below are reference guidance. Where they describe refresh tokens, short in-memory access tokens, refresh cookies, silent refresh or `refresh_tokens`, that is the **backlog design, not current code**: **Current implementation** above wins.
 
 ## Skills
 
@@ -74,12 +76,14 @@ Roles are hierarchical: `viewer` < `owner` < `admin`. A route declares the **min
 
 ## Token lifecycle
 
-- **Access token:** 10–15 min, in memory only.
-- **Refresh token:** opaque random (≥ 32 bytes), **stored hashed** (SHA-256 is enough for high-entropy tokens; it isn't a password) in `refresh_tokens`, 7–14 days, **rotated on every use**. **Reuse detection:** presenting an already-rotated token revokes the whole `family_id` (likely theft) and returns 401.
-- **Refresh re-checks the user:** load the row, reject inactive users, and mint the access token from the **current** role (a demotion takes effect within one access-token lifetime).
-- **Logout** revokes the refresh token (family) and clears the cookie. Access tokens expire on their own; for immediate revocation add a `jti` denylist in Redis with a TTL of the token's remaining life (the API already has Redis).
+- **Access token (backlog; now 24 h in localStorage):** 10–15 min, in memory only.
+- **Refresh token (backlog):** opaque random (≥ 32 bytes), **stored hashed** (SHA-256 is enough for high-entropy tokens; it isn't a password) in `refresh_tokens`, 7–14 days, **rotated on every use**. **Reuse detection:** presenting an already-rotated token revokes the whole `family_id` (likely theft) and returns 401.
+- **Refresh re-checks the user (backlog):** load the row, reject inactive users, and mint the access token from the **current** role (a demotion takes effect within one access-token lifetime).
+- **Logout (backlog; now client-side only)** revokes the refresh token (family) and clears the cookie. Access tokens expire on their own; for immediate revocation add a `jti` denylist in Redis with a TTL of the token's remaining life (the API already has Redis).
 
-## Browser transport, cookies, CORS
+## Browser transport, cookies, CORS (backlog)
+
+Now: Bearer header from localStorage, no cookies, no `credentials` (see Current implementation). For the refresh-token design:
 
 - **Access token:** in a signal, never `localStorage`/`sessionStorage` (XSS-readable), never logged.
 - **Refresh token:** `HttpOnly; Secure; Path=/api/auth; SameSite=…` cookie. Cookie endpoints need CSRF defence: SameSite plus an `Origin` check against `CORS_ORIGINS` (or a double-submit token).
@@ -111,16 +115,16 @@ Roles are hierarchical: `viewer` < `owner` < `admin`. A route declares the **min
 
 ## Angular (apps/web)
 
-- **Interceptor:** a functional interceptor in `provideHttpClient(withInterceptors([authInterceptor]))` (`app.config.ts`). It adds `Authorization` only to URLs under `API_BASE_URL` (never `/config.json`); on 401 it refreshes **once** (one shared in-flight refresh, e.g. `shareReplay`), retries, and on a second 401 logs out to `/login`. Auth calls use `withCredentials: true`.
+- **Interceptor:** a functional interceptor in `provideHttpClient(withInterceptors([authInterceptor]))` (`app.config.ts`). It adds `Authorization` only to URLs under `API_BASE_URL` (never `/config.json`); now a 401 signs out → `/login`. Backlog (with refresh tokens): on 401 refresh **once** (one shared in-flight refresh, e.g. `shareReplay`), retry, and on a second 401 log out; auth calls use `withCredentials: true`.
 - **State:** `AuthStore` (`core/auth`, `providedIn: 'root'`): `currentUser`, `role`, `isAuthenticated` signals, `can(minRole)`.
-- **Bootstrap:** `provideAppInitializer` tries a silent refresh before the first navigation, after `/config.json` is loaded (`src/main.ts`).
+- **Bootstrap (backlog):** `provideAppInitializer` tries a silent refresh before the first navigation, after `/config.json` is loaded (`src/main.ts`).
 - **Routes:** `/login` outside `FleetShell`; `FleetShell` behind a `canMatch` auth guard, so `FleetStore` (and its SSE connection) starts only when signed in and closes on logout. Role guards (`canMatch`) on owner/admin pages; hide controls with `can()`.
 - **Login page:** Signal Forms + Material outline fields, Tailwind tokens, no component CSS, `data-testid` hooks, `autocomplete="username"`/`"current-password"`, the generic error.
 
 ## Data model (packages/shared)
 
 - `User` → `users`: UUID `id` (`gen_random_uuid()`), `email` unique (normalised), `password_hash`, `role` (`Role` enum `viewer|owner|admin`, `@@map("role")`), `active` (default true), `created_at`, `updated_at`.
-- `RefreshToken` → `refresh_tokens`: UUID `id`, `user_id` FK (CASCADE), `family_id`, `token_hash` unique, `expires_at`, `revoked_at`, `replaced_by_id`, `created_at`; index `user_id`.
+- `RefreshToken` → `refresh_tokens` (backlog, not in the schema): UUID `id`, `user_id` FK (CASCADE), `family_id`, `token_hash` unique, `expires_at`, `revoked_at`, `replaced_by_id`, `created_at`; index `user_id`.
 - **Migrations** follow the repo rules: committed, backward-compatible (new tables are an expand step), applied only by `migrate deploy` (CI, compose `migrate`, Testcontainers), never at startup; a migration test in `packages/shared/test`.
 - **First admin:** an idempotent script (like `npm run db:seed`) reading `BOOTSTRAP_ADMIN_EMAIL` + a password from env/Secret Manager; it refuses to run if an admin exists. Never a default password, never auto-created at startup.
 
@@ -128,16 +132,16 @@ Roles are hierarchical: `viewer` < `owner` < `admin`. A route declares the **min
 
 | Layer | What |
 |---|---|
-| API unit | `TokenService`: expired, `nbf` in the future, wrong `iss`/`aud`, `alg: none`, HS/ES confusion, tampered signature, unknown `kid`; refresh rotation, reuse → family revoked, inactive user; guards with `@Public`/`@Roles` (`mockDeep<PrismaService>()`) |
+| API unit | `TokenService`: expired, `nbf` in the future, wrong `iss`/`aud`, `alg: none`, HS/ES confusion, tampered signature, unknown `kid`; inactive user; (backlog) refresh rotation, reuse → family revoked; guards with `@Public`/`@Roles` (`mockDeep<PrismaService>()`) |
 | API e2e | each route × (no token, viewer, owner, admin) → 401/403 (404 in the MVP)/2xx; login throttling; CORS preflight with `Authorization` + credentials; SSE rejects without auth and ends at expiry (`openSse()` helper) |
-| Shared e2e | the users/refresh-tokens migration: existing data survives, no drift |
-| Angular | interceptor (header only to the API, one refresh for parallel 401s, retry, logout on a second 401), `canMatch` guards per role, login page, `FakeEventSource` with credentials/tickets |
+| Shared e2e | the users migration (+ refresh-tokens, backlog): existing data survives, no drift |
+| Angular | interceptor (header only to the API, 401 → sign out; backlog: one refresh for parallel 401s, retry, logout on a second 401), `canMatch` guards per role, login page, `FakeEventSource` with credentials/tickets |
 
 ## Review checklist
 
 - [ ] Algorithm pinned; `iss`/`aud`/`exp`/`nbf` validated; keys from Secret Manager / `.env`, rotatable by `kid`.
 - [ ] No tokens in `localStorage`, URLs (except single-use tickets) or logs.
-- [ ] Refresh tokens hashed, rotated, reuse revokes the family; refresh re-checks role and `active`.
+- [ ] (Backlog, once they exist) Refresh tokens hashed, rotated, reuse revokes the family; refresh re-checks role and `active`.
 - [ ] Default deny: every new route has `@Public()` or an explicit minimum role; 401 vs 403 correct, no detail leaked.
 - [ ] CSRF (SameSite + Origin) and CORS (`credentials`, exact `CORS_ORIGINS`, `Authorization` header) correct; login rate-limited.
 - [ ] Worker untouched (IAM/OIDC); SSE authenticated and still resumes with `Last-Event-ID`.
