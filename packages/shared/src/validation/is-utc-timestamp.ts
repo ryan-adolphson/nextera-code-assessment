@@ -34,7 +34,7 @@ export interface UtcTimestampOptions {
   allowFuture?: boolean;
 }
 
-type Problem = 'format' | 'calendar' | 'future' | 'past';
+export type TimestampProblem = 'format' | 'calendar' | 'future' | 'past';
 
 /**
  * Why `value` isn't an accepted timestamp, or undefined if it is. Reads the clock (Date.now) unless
@@ -43,7 +43,7 @@ type Problem = 'format' | 'calendar' | 'future' | 'past';
 export function timestampProblem(
   value: unknown,
   { minMs, allowFuture = false }: UtcTimestampOptions = {},
-): Problem | undefined {
+): TimestampProblem | undefined {
   if (typeof value !== 'string') return 'format';
   const match = DATE_TIME.exec(value);
   if (!match) return 'format';
@@ -71,16 +71,27 @@ export function timestampProblem(
   return undefined;
 }
 
-const MESSAGES: Record<Problem, (property: string, minMs?: number) => string> =
-  {
-    format: (p) =>
-      `${p} must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)`,
-    calendar: (p) => `${p} must be a real calendar date and time`,
-    future: (p) =>
-      `${p} must not be more than ${MAX_FUTURE_SKEW_MS / 60_000} minutes in the future`,
-    past: (p, minMs) =>
-      `${p} must not be before ${new Date(minMs ?? 0).toISOString().replace('.000Z', 'Z')}`,
-  };
+/** The validation message for `problem` on the field `property` (e.g. "from"). */
+export function timestampProblemMessage(
+  problem: TimestampProblem,
+  property: string,
+  minMs?: number,
+): string {
+  return MESSAGES[problem](property, minMs);
+}
+
+const MESSAGES: Record<
+  TimestampProblem,
+  (property: string, minMs?: number) => string
+> = {
+  format: (p) =>
+    `${p} must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)`,
+  calendar: (p) => `${p} must be a real calendar date and time`,
+  future: (p) =>
+    `${p} must not be more than ${MAX_FUTURE_SKEW_MS / 60_000} minutes in the future`,
+  past: (p, minMs) =>
+    `${p} must not be before ${new Date(minMs ?? 0).toISOString().replace('.000Z', 'Z')}`,
+};
 
 /**
  * An instant: a full date-time with an explicit zone (see DATE_TIME) and a real calendar date; by

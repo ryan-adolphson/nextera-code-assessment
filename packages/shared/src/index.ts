@@ -63,6 +63,39 @@ export {
   storeAlerts,
 } from './wind/store-telemetry.js';
 
+// Read queries (API + MCP server): fleet overview, telemetry windows and stats, alerts, reports
+export {
+  ALERT_RULE_ORDER,
+  DEFAULT_TELEMETRY_LIMIT,
+  MAX_QUERY_RANGE_DAYS,
+  MAX_TELEMETRY_LIMIT,
+  QueryError,
+  QueryInputError,
+  QueryNotFoundError,
+  alertsInRange,
+  getTurbine,
+  listAlertRules,
+  listFarms,
+  parseRange,
+  reportSummary,
+  reportTelemetry,
+  telemetryStats,
+  turbineTelemetry,
+} from './wind/queries.js';
+export type {
+  FarmOverview,
+  MetricSummary,
+  ReadClient,
+  ReportQuery,
+  ReportScope,
+  TelemetryReport,
+  TelemetryReportSummary,
+  TelemetryWindow,
+  TimeRange,
+  TurbineDetail,
+  TurbineOverview,
+} from './wind/queries.js';
+
 // Alert thresholds (alerts_config): response shape, mapper and change event
 export {
   ALERT_CONFIG_CHANGED,
@@ -83,8 +116,12 @@ export {
   MAX_FUTURE_SKEW_MS,
   MIN_TIMESTAMP_MS,
   timestampProblem,
+  timestampProblemMessage,
 } from './validation/is-utc-timestamp.js';
-export type { UtcTimestampOptions } from './validation/is-utc-timestamp.js';
+export type {
+  TimestampProblem,
+  UtcTimestampOptions,
+} from './validation/is-utc-timestamp.js';
 
 // Seed data loader (prisma/seed.ts and e2e tests)
 export {
