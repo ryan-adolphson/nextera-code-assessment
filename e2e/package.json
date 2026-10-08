@@ -1,0 +1,16 @@
+{
+  "name": "@nextera/e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "typecheck": "tsc --noEmit",
+    "install:browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

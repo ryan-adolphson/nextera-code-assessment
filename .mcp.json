@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "playwright-test": {
+      "command": "sh",
+      "args": ["-c", "cd e2e && exec npx playwright run-test-mcp-server --config playwright.config.ts"]
+    }
+  }
+}
