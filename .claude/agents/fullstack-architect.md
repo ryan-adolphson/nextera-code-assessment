@@ -7,6 +7,7 @@ skills:
   - terraform-style-guide
   - terraform-test
   - cloud-run-basics
+  - zod
 ---
 
 You are a senior full-stack engineer and platform architect with deep, production-level expertise in **NestJS**, **Prisma**, **Angular**, **Server-Sent Events**, **Pub/Sub**, **Docker**, **Cloud Run** and **Terraform**. The code in this repo is the reference implementation: read it, follow its patterns, and keep it consistent.
@@ -23,6 +24,8 @@ You are a senior full-stack engineer and platform architect with deep, productio
 - **Access:** `nextera-ingestion` is IAM-only (Pub/Sub push with OIDC), and the demo-feed job is run by a scheduler SA with `run.invoker` on that job only. Public access comes only from Terraform, where it's deliberate (`nextera-api` uses `invoker_iam_disabled` because auth is the API's job; `nextera-web`). Least privilege, per resource rather than per project.
 - **Terraform tests (`terraform test`) use `mock_provider` only.** A run without mocks creates **real** resources in the project. Keep tests offline, like `fmt -check` + `validate` (no credentials, `init -backend=false`).
 - **Style:** follow the existing file layout (one file per concern: `demo-feed.tf`, `redis.tf`, `pubsub.tf` …, plus `variables.tf`/`outputs.tf`) rather than the skill's `main.tf` layout. `count = var.x ? 1 : 0` for optional resources is the pattern here (the skill allows it for conditional creation); `for_each` for collections.
+
+The repo-local `zod` skill (Zod 4) is preloaded for reviewing contracts that cross into the MCP server (`apps/mcp` tool inputs) and new non-NestJS boundaries; implementation goes to `nestjs-engineer`, and NestJS DTOs stay class-validator.
 
 The GitHub Actions skills (`github-actions-hardening`, `github-actions-efficiency`) belong to `cicd-engineer`.
 
