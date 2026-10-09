@@ -99,6 +99,18 @@ describe('MCP server (mocked Prisma)', () => {
         'limit',
       ],
       ['a missing turbineId', 'get_telemetry_stats', {}, 'turbineId'],
+      [
+        'a limit given as a string (no coercion)',
+        'get_telemetry',
+        { turbineId: 'TURB001', limit: '12' },
+        'limit',
+      ],
+      [
+        'a whitespace-only turbineId',
+        'get_telemetry',
+        { turbineId: '  ' },
+        'turbineId',
+      ],
     ])('rejects %s', async (_, tool, args, message) => {
       const result = await mcp.call(tool, args);
 
