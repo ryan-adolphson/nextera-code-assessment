@@ -11,7 +11,7 @@ The repo uses **Zod 4** (`zod` 4.6.x; check `node_modules/zod/package.json` befo
 
 | Boundary | Validation |
 |---|---|
-| MCP tool arguments (`apps/mcp/src/tools/*`) | **Zod** raw shapes, validated by `@modelcontextprotocol/sdk` before `run` |
+| MCP tool arguments (`apps/mcp/src/tools/*`) | **Zod** strict objects (`defineTool` builds one from each tool's fields), validated by `@modelcontextprotocol/sdk` before `run` |
 | A new non-NestJS boundary (a script's CLI flags or env, a stdio protocol) | Zod is fine |
 | NestJS request DTOs, query params, Pub/Sub payloads, CSV rows (`apps/api`, `apps/ingestion`) | **class-validator**, under the global `ValidationPipe` and with the shared decorators (`IsUtcTimestamp`, …). **Don't convert them to Zod**, and don't validate one boundary with both |
 | Angular forms (`apps/web`) | Signal Forms schema validators. No Zod (the web app can't import `@nextera/shared` either) |
@@ -24,7 +24,8 @@ Shared rules live once in `@nextera/shared`: limits (`MAX_TELEMETRY_LIMIT`, `DEF
 import { MAX_TELEMETRY_LIMIT, DEFAULT_TELEMETRY_LIMIT, timestampProblem, timestampProblemMessage } from '@nextera/shared';
 import { z } from 'zod';
 
-// A tool: name, description, a RAW SHAPE (an object of Zod fields, not z.object(...)) and run().
+// A tool: name, description, its fields (an object of Zod fields) and run(). defineTool turns the
+// fields into z.strictObject(fields), so every tool rejects unknown arguments; don't wrap them yourself.
 export const getTelemetryTool = defineTool({
   name: 'get_telemetry',
   title: 'Readings of one turbine',
@@ -33,8 +34,11 @@ export const getTelemetryTool = defineTool({
     turbineId: businessKey('A turbine id, e.g. "TURB001".'),
     ...telemetryWindow, // shared fields spread into the shape
   },
-  run({ db }, args) { /* args: z.infer<z.ZodObject<typeof inputSchema>>, fully typed */ },
+  run({ db }, args) { /* args: z.output of the strict object, fully typed */ },
 });
+// defineTool returns the erased `Tool` ({ name, title, description, inputSchema: strict ZodObject,
+// run(ctx, args: unknown) }): its run parses with the tool's own schema and calls the typed run,
+// so TOOLS is a plain `readonly Tool[]` and server.ts passes `args` through, with no casts.
 
 // A reusable field: delegate to the shared check, report it as a custom issue.
 export const timestamp = (field: string, description: string) =>
@@ -55,7 +59,8 @@ limit: z.number().int().min(1).max(MAX_TELEMETRY_LIMIT).default(DEFAULT_TELEMETR
 
 - **`.describe()` every field:** the model reads it to choose arguments. Say the format, the unit, the bounds and an example.
 - **Error messages say what to send instead.** A failed input comes back to the model as an `isError` result with Zod's message, so "timestamp must be an ISO 8601 date-time with a time zone (e.g. 2026-01-01T00:00:00Z)" beats "Invalid input".
-- **Cross-field rules** ("give exactly one of `farmId` and `turbineId`"): a raw shape can't carry an object-level refinement, so check them in `run` and throw `ToolInputError` (or let the shared query throw `QueryInputError`); `runTool` turns both into `isError` results.
+- **Unknown arguments are rejected.** A plain object schema strips unknown keys, so `form` for `from` used to be dropped and the tool answered with the default 24 h window. With the strict object the model gets `isError` and `… Invalid arguments for tool get_telemetry: Unrecognized key: "form"` (Zod's default message; several keys: `Unrecognized keys: "form", "too"`), and the query never runs. `list_farms` (no fields) is strict too: `{}` or no arguments pass, any key is rejected.
+- **Cross-field rules** ("give exactly one of `farmId` and `turbineId`"): a strict object could carry a refinement, but these rules live in the shared query (`QueryInputError` in `packages/shared/src/wind/queries.ts`), so the API and the MCP tools give one message. Don't copy them into a Zod refinement; for a rule only a tool has, throw `ToolInputError` in `run`. `runTool` turns both into `isError` results.
 - **Reuse field builders** (`timestamp`, `businessKey`, `telemetryWindow`) instead of copying chains between tools.
 - **Read-only:** schemas validate arguments only; tools never write (see CLAUDE.md, MCP server).
 
@@ -114,12 +119,13 @@ type LimitOut = z.output<typeof Limit>; // number
 
 ## MCP SDK specifics (`@modelcontextprotocol/sdk` 1.32.x)
 
-- **`server.registerTool(name, { title, description, inputSchema, annotations }, handler)`** (`tool()` is deprecated). `inputSchema` is a **raw shape**; the SDK wraps it in an object schema and accepts Zod v3.25+ or v4 shapes.
-- **Validation happens before the handler.** Invalid arguments become an `isError` result with the Zod message; the handler never sees them.
+- **`server.registerTool(name, { title, description, inputSchema, annotations }, handler)`** (`tool()` is deprecated). `inputSchema` may be a raw shape or an object schema. The SDK wraps a **raw shape** in a plain (v4 Mini) object, which **strips unknown keys**; a v4 object schema is used as it is (`normalizeObjectSchema` in `server/zod-compat.js`). So the server passes each tool's `z.strictObject` (verified over `InMemoryTransport`): `tools/list` emits the same JSON schema as the raw shape did (descriptions, bounds, defaults, `required`) plus `additionalProperties: false`, also for the empty `list_farms` schema.
+- **Validation happens before the handler.** Invalid arguments become an `isError` result, `MCP error -32602: Input validation error: Invalid arguments for tool <name>: <issue message>[ at <path>]`, one line per issue; the handler never sees them.
 - **Every tool here declares `annotations: { readOnlyHint: true, destructiveHint: false }`.** Keep that.
 
 ## Testing
 
+- **Unknown keys:** a new tool gets a row in the "rejects an unknown argument, naming it" table in `server.spec.ts`, and `tools/list` must show `additionalProperties: false`.
 - **Schemas:** unit-test the field builders directly. `safeParse` a good value (`success: true`, the parsed value) and each bad form, asserting the exact `issues[0].message`.
 - **Tools:** go through the real server over `InMemoryTransport` with a mocked read client, as `apps/mcp/src/server.spec.ts` does, so you test what the model sees (`isError`, message text, JSON result), including `tools/list` input schemas.
 - **Run:** `npm test -w @nextera/mcp`, `npm run test:e2e -w @nextera/mcp` (Testcontainers), `npm run typecheck -w @nextera/mcp`.

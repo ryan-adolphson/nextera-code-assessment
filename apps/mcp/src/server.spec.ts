@@ -61,6 +61,8 @@ describe('MCP server (mocked Prisma)', () => {
         destructiveHint: false,
       });
       expect(tool.description).toBeTruthy();
+      // Strict objects: a client that validates against the schema rejects unknown keys too.
+      expect(tool.inputSchema.additionalProperties).toBe(false);
     }
     const telemetry = tools.find((t) => t.name === 'get_telemetry')!;
     expect(telemetry.inputSchema.required).toEqual(['turbineId']);
@@ -69,6 +71,22 @@ describe('MCP server (mocked Prisma)', () => {
       minimum: 1,
       maximum: 2016,
       default: 288,
+    });
+    expect(telemetry.inputSchema.properties!.from).toMatchObject({
+      type: 'string',
+      description: expect.stringContaining('Inclusive lower bound'),
+    });
+    expect(Object.keys(telemetry.inputSchema.properties!)).toEqual([
+      'turbineId',
+      'from',
+      'to',
+      'limit',
+    ]);
+    const farms = tools.find((t) => t.name === 'list_farms')!;
+    expect(farms.inputSchema).toMatchObject({
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
     });
   });
 
@@ -118,6 +136,41 @@ describe('MCP server (mocked Prisma)', () => {
       expect(result.text).toContain(message);
       expect(prisma.turbine.findUnique).not.toHaveBeenCalled();
       expect(prisma.telemetry.findMany).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('rejects a misspelled argument instead of dropping it (get_telemetry form → from)', async () => {
+      const result = await mcp.call('get_telemetry', {
+        turbineId: 'TURB001',
+        form: '2026-01-01T00:00:00Z',
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toBe(
+        'MCP error -32602: Input validation error: Invalid arguments for tool get_telemetry: ' +
+          'Unrecognized key: "form"',
+      );
+      expect(prisma.turbine.findUnique).not.toHaveBeenCalled();
+      expect(prisma.telemetry.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['list_farms', { farmId: 'FARM01' }, 'farmId'],
+      ['get_turbine', { turbineId: 'TURB001', id: 'TURB001' }, 'id'],
+      ['get_telemetry_stats', { turbineId: 'TURB001', since: 'x' }, 'since'],
+      ['list_alerts', { ...RANGE, turbineId: 'TURB001' }, 'turbineId'],
+      ['list_alert_rules', { enabled: true }, 'enabled'],
+      ['get_report_summary', { farmId: 'FARM01', ...RANGE, limit: 5 }, 'limit'],
+    ])('%s rejects an unknown argument, naming it', async (tool, args, key) => {
+      const result = await mcp.call(tool, args);
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain(`Unrecognized key: "${key}"`);
+      expect(prisma.farm.findMany).not.toHaveBeenCalled();
+      expect(prisma.farm.findUnique).not.toHaveBeenCalled();
+      expect(prisma.turbine.findUnique).not.toHaveBeenCalled();
+      expect(prisma.telemetry.findMany).not.toHaveBeenCalled();
+      expect(prisma.alertConfig.findMany).not.toHaveBeenCalled();
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
 

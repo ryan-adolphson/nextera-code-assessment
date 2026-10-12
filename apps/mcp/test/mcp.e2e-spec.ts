@@ -74,6 +74,19 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
       'list_alerts',
       'list_farms',
     ]);
+    for (const tool of tools) {
+      expect(tool.inputSchema.additionalProperties).toBe(false);
+    }
+  });
+
+  it('rejects an unknown argument instead of answering with the default window', async () => {
+    const result = await mcp.call('get_telemetry', {
+      turbineId: 'TURB001',
+      form: '2026-01-01T13:40:00Z',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('Unrecognized key: "form"');
   });
 
   it('list_farms: the fixture fleet with each turbine’s status', async () => {

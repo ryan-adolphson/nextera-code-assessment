@@ -14,18 +14,50 @@ export interface ToolContext {
   now: () => number;
 }
 
-/** One MCP tool: a zod input shape (validated by the SDK before `run`) and a JSON result. */
-export interface Tool<Shape extends z.ZodRawShape = z.ZodRawShape> {
+/** A tool as its author writes it: `args` in `run` is typed by its own input shape. */
+export interface ToolDefinition<Shape extends z.ZodRawShape> {
   name: string;
   title: string;
   description: string;
+  /** The fields; `defineTool` makes them a strict object, so unknown arguments are rejected. */
   inputSchema: Shape;
-  run(ctx: ToolContext, args: z.infer<z.ZodObject<Shape>>): Promise<unknown>;
+  run(
+    ctx: ToolContext,
+    args: z.output<z.ZodObject<Shape, z.core.$strict>>,
+  ): Promise<unknown>;
 }
 
-/** Keeps each tool's `args` typed by its own input shape. */
-export const defineTool = <Shape extends z.ZodRawShape>(tool: Tool<Shape>) =>
-  tool;
+/** One MCP tool as the server registers it: its typed `run` is closed over by `defineTool`. */
+export interface Tool {
+  name: string;
+  title: string;
+  description: string;
+  /**
+   * A strict object: the SDK validates the arguments against it before `run`, and a key it
+   * doesn't know (`form` for `from`) is an error naming that key instead of being dropped, which
+   * would silently answer with the default window.
+   */
+  inputSchema: z.ZodObject<z.ZodRawShape, z.core.$strict>;
+  run(ctx: ToolContext, args: unknown): Promise<unknown>;
+}
+
+/**
+ * Builds a tool from its definition. `run` parses its arguments with the tool's own schema, which
+ * is what types them: the list of tools needs no cast, and `run` can't be handed unvalidated
+ * arguments. (Through the server the SDK has already rejected bad ones with the same schema.)
+ */
+export function defineTool<Shape extends z.ZodRawShape>(
+  definition: ToolDefinition<Shape>,
+): Tool {
+  const inputSchema = z.strictObject(definition.inputSchema);
+  return {
+    name: definition.name,
+    title: definition.title,
+    description: definition.description,
+    inputSchema,
+    run: (ctx, args) => definition.run(ctx, inputSchema.parse(args)),
+  };
+}
 
 /** An error the tool reports to the model as it is (bad arguments beyond the input schema). */
 export class ToolInputError extends Error {}
@@ -62,6 +94,9 @@ export async function runTool(
   } catch (error) {
     if (error instanceof QueryError || error instanceof ToolInputError) {
       return errorResult(error.message);
+    }
+    if (error instanceof z.ZodError) {
+      return errorResult(`Invalid arguments: ${z.prettifyError(error)}`);
     }
     log(
       `Tool failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,

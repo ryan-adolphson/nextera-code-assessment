@@ -46,8 +46,7 @@ export function createServer(
           openWorldHint: false,
         },
       },
-      (args: Record<string, unknown>) =>
-        runTool(() => tool.run(ctx, args as never), log),
+      (args) => runTool(() => tool.run(ctx, args), log),
     );
   }
   return server;

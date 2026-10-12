@@ -123,6 +123,12 @@ export type {
   UtcTimestampOptions,
 } from './validation/is-utc-timestamp.js';
 
+// Environment validation: the variables both services read; each service extends the class
+export {
+  CommonEnvironmentVariables,
+  validateEnvironment,
+} from './config/env.validation.js';
+
 // Seed data loader (prisma/seed.ts and e2e tests)
 export {
   TELEMETRY_CSV_COLUMNS,

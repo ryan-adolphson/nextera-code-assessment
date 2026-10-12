@@ -8,7 +8,7 @@ import { listFarmsTool } from './list-farms.js';
 import type { Tool } from './tool.js';
 
 /** Every tool the server registers. All of them only read. */
-export const TOOLS = [
+export const TOOLS: readonly Tool[] = [
   listFarmsTool,
   getTurbineTool,
   getTelemetryTool,
@@ -16,4 +16,4 @@ export const TOOLS = [
   listAlertsTool,
   listAlertRulesTool,
   getReportSummaryTool,
-] as unknown as readonly Tool[];
+];

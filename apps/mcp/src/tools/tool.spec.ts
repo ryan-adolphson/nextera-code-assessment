@@ -5,7 +5,13 @@ import {
   timestampProblemMessage,
 } from '@nextera/shared';
 import { z } from 'zod';
-import { businessKey, timestamp } from './tool.js';
+import {
+  businessKey,
+  defineTool,
+  runTool,
+  timestamp,
+  type ToolContext,
+} from './tool.js';
 import { telemetryWindow } from './window.js';
 
 describe('timestamp', () => {
@@ -82,5 +88,78 @@ describe('telemetryWindow', () => {
 
     expect(result.success).toBe(false);
     expect(result.error!.issues[0].path).toEqual(['limit']);
+  });
+});
+
+describe('defineTool', () => {
+  const ctx = {} as ToolContext;
+  const run = vi.fn(
+    async (_: ToolContext, args: { turbineId: string; limit: number }) => args,
+  );
+  const tool = defineTool({
+    name: 'probe',
+    title: 'Probe',
+    description: 'x',
+    inputSchema: { turbineId: businessKey('x'), limit: telemetryWindow.limit },
+    run,
+  });
+
+  beforeEach(() => run.mockClear());
+
+  it('makes the shape a strict object: an unknown key is an issue naming it', () => {
+    const result = tool.inputSchema.safeParse({
+      turbineId: 'TURB001',
+      form: '2026-01-01T00:00:00Z',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error!.issues).toEqual([
+      expect.objectContaining({
+        code: 'unrecognized_keys',
+        keys: ['form'],
+        message: 'Unrecognized key: "form"',
+      }),
+    ]);
+  });
+
+  it('runs with the parsed arguments (trimmed, defaults applied)', async () => {
+    await expect(tool.run(ctx, { turbineId: ' TURB001 ' })).resolves.toEqual({
+      turbineId: 'TURB001',
+      limit: DEFAULT_TELEMETRY_LIMIT,
+    });
+  });
+
+  it('never runs with arguments its schema rejects, even when called directly', async () => {
+    const log = vi.fn<(message: string) => void>();
+
+    const result = await runTool(
+      async () => tool.run(ctx, { turbineId: 'TURB001', form: 'x' }),
+      log,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([
+      {
+        type: 'text',
+        text: expect.stringContaining('Unrecognized key: "form"'),
+      },
+    ]);
+    expect(run).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('accepts no arguments at all for a tool without fields, and rejects stray ones', () => {
+    const empty = defineTool({
+      name: 'none',
+      title: 'None',
+      description: 'x',
+      inputSchema: {},
+      run: async () => null,
+    });
+
+    expect(empty.inputSchema.safeParse({}).success).toBe(true);
+    expect(empty.inputSchema.safeParse({ farmId: 'FARM01' }).success).toBe(
+      false,
+    );
   });
 });
