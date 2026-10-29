@@ -589,6 +589,80 @@ describe('LineChart (ECharts)', () => {
   });
 });
 
+/** jsdom has no matchMedia or real ResizeObserver: stand-ins the test can fire. */
+describe('LineChart (colour scheme and resizing)', () => {
+  let schemeListeners: (() => void)[];
+  let resizeCallbacks: (() => void)[];
+  const media = {
+    addEventListener: vi.fn((_: string, listener: () => void) => schemeListeners.push(listener)),
+    removeEventListener: vi.fn((_: string, listener: () => void) => {
+      schemeListeners = schemeListeners.filter((l) => l !== listener);
+    }),
+  };
+
+  beforeEach(() => {
+    schemeListeners = [];
+    resizeCallbacks = [];
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => media),
+    );
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          resizeCallbacks.push(callback);
+        }
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.documentElement.style.removeProperty('--text');
+  });
+
+  async function render() {
+    const fixture = TestBed.createComponent(Host);
+    fixture.componentInstance.gearboxStats.set({ median: 82.1, high: 126.5, low: 81.9 });
+    await fixture.whenStable();
+    const chart = () => (fixture.debugElement.children[0].componentInstance as LineChart).chart!;
+    const medianColour = () =>
+      (chart().getOption() as unknown as Option).series[0].markLine.data[0].lineStyle.color;
+    return { fixture, chart, medianColour };
+  }
+
+  it('re-reads the theme colours when the OS switches between light and dark', async () => {
+    const { medianColour } = await render();
+    expect(window.matchMedia).toHaveBeenCalledWith('(prefers-color-scheme: dark)');
+    expect(medianColour()).toBe('#1a1a1a'); // the fallback: no CSS variables in jsdom
+
+    document.documentElement.style.setProperty('--text', '#f5f5f5'); // dark mode
+    schemeListeners.forEach((listener) => listener());
+
+    expect(medianColour()).toBe('#f5f5f5');
+  });
+
+  it('stops following the colour scheme once destroyed', async () => {
+    const { fixture } = await render();
+    expect(schemeListeners).toHaveLength(2); // one per chart
+
+    fixture.destroy();
+
+    expect(schemeListeners).toHaveLength(0);
+  });
+
+  it('resizes the chart when its container changes size', async () => {
+    const { chart } = await render();
+    const resize = vi.spyOn(chart(), 'resize');
+
+    resizeCallbacks[0]();
+
+    expect(resize).toHaveBeenCalledOnce();
+  });
+});
+
 /** One candlestick chart (a metric on the turbine page) over the gearbox anomaly. */
 @Component({
   imports: [LineChart],

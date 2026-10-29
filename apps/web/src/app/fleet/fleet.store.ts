@@ -22,6 +22,7 @@ import {
   CLOCK_TICK_MS,
   DEFAULT_HISTORY_RANGE_MS,
   FarmOverview,
+  LIVE_FUTURE_TOLERANCE_MS,
   MAX_HISTORY_READINGS,
   TurbineOverview,
   READING_INTERVAL_MS,
@@ -94,6 +95,14 @@ export class FleetStore {
 
   private readonly farmList = signal<FarmOverview[]>([]);
   private readonly latestByTurbine = signal(new Map<string, Telemetry>());
+  /** The turbine ids the loaded fleet lists: live readings for any other id are ignored. */
+  private readonly listedTurbineIds = computed(
+    () => new Set(this.farmList().flatMap((f) => f.turbines.map((t) => t.id))),
+  );
+  /** Whether a fleet load has succeeded yet (until then, the listed ids are not known). */
+  private fleetLoaded = false;
+  /** Unlisted turbine ids already warned about (one warning per id). */
+  private readonly warnedUnlisted = new Set<string>();
   private historySub?: Subscription;
   private farmsSub?: Subscription;
   /** The selected turbine's loaded and live readings, newest first (may extend past the window). */
@@ -313,6 +322,13 @@ export class FleetStore {
       .subscribe({
         next: (farms) => {
           this.farmList.set(farms);
+          this.fleetLoaded = true;
+          // Live readings that arrived before this load may be for turbines it doesn't list:
+          // keep only the listed turbines (also drops turbines removed since the last load).
+          const listed = this.listedTurbineIds();
+          this.latestByTurbine.update(
+            (current) => new Map([...current].filter(([id]) => listed.has(id))),
+          );
           for (const turbine of farms.flatMap((f) => f.turbines)) {
             if (turbine.latest) this.applyLatest(turbine.latest);
           }
@@ -397,7 +413,28 @@ export class FleetStore {
       });
   }
 
+  /**
+   * A live reading: becomes its turbine's latest if newer, and joins the selected turbine's history.
+   * Ignored (with a console warning) when dated more than `LIVE_FUTURE_TOLERANCE_MS` ahead of the
+   * client clock, or once the fleet has loaded, for a turbine it doesn't list (warned once per id).
+   * Ingestion rejects both already; this keeps a bad event from moving "data as of", the highlight,
+   * staleness or the charts. Before the first successful load the listed turbines aren't known, so
+   * such readings are kept, and `loadFarms` then drops any for turbines it doesn't list.
+   */
   private receive(reading: Telemetry): void {
+    if (Date.parse(reading.timestamp) > this.clock() + LIVE_FUTURE_TOLERANCE_MS) {
+      console.warn(
+        `Ignoring a live reading for ${reading.turbineId} dated in the future: ${reading.timestamp}`,
+      );
+      return;
+    }
+    if (this.fleetLoaded && !this.listedTurbineIds().has(reading.turbineId)) {
+      if (!this.warnedUnlisted.has(reading.turbineId)) {
+        this.warnedUnlisted.add(reading.turbineId);
+        console.warn(`Ignoring live readings for ${reading.turbineId}: not in the loaded fleet`);
+      }
+      return;
+    }
     if (this.applyLatest(reading)) this.recentlyUpdated.set(reading.turbineId);
     if (reading.turbineId !== this.selectedTurbineId()) return;
     this.now.set(this.clock());

@@ -8,6 +8,7 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test --watch=false && npm run test:docker",
+    "test:coverage": "ng test --watch=false --coverage",
     "test:watch": "ng test",
     "test:docker": "node --test \"docker/*.test.mts\"",
     "format": "prettier --write \"src/**/*.{ts,html,css}\""
@@ -40,6 +41,7 @@
     "@angular/compiler-cli": "^22.2.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/leaflet": "^1.9.22",
+    "@vitest/coverage-v8": "^4.1.12",
     "jsdom": "^28.0.0",
     "postcss": "^8.5.3",
     "prettier": "^3.8.1",

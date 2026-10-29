@@ -1,5 +1,8 @@
-import { signal } from '@angular/core';
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { WritableSignal, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { API_BASE_URL } from '../core/api-base-url';
 import { Subject, of, throwError } from 'rxjs';
 import { FakeEventSource } from '../../testing/fake-event-source';
 import { AuthStore } from '../core/auth/auth.store';
@@ -107,6 +110,99 @@ describe('FleetStore', () => {
 
     expect(store.turbines()[0].latest?.powerOutputKw).toBe(1960.5);
     expect(store.recentlyUpdated()).toBeNull();
+  });
+
+  it('dates the fleet ("data as of") by its newest reading, or not at all before any', () => {
+    expect(setup().store.fleetTime()).toBe(Date.parse('2026-01-02T23:55:00.000Z'));
+    TestBed.resetTestingModule();
+
+    const silent = farmsFixture().map((f) => ({
+      ...f,
+      turbines: f.turbines.map((t) => ({ ...t, latest: null })),
+    }));
+    expect(setup(silent).store.fleetTime()).toBeNull();
+  });
+
+  it('ignores a re-delivered reading (exact duplicate of the latest)', () => {
+    const { store, sse } = setup();
+    const latest = farmsFixture()[0].turbines[0].latest!;
+
+    sse.push({ ...latest });
+
+    expect(store.turbines()[0].latest).toEqual(latest);
+    expect(store.recentlyUpdated()).toBeNull();
+  });
+
+  it('keeps the first reading for an instant when another arrives later for the same timestamp', () => {
+    const { store, sse } = setup();
+
+    sse.push(
+      reading({
+        timestamp: '2026-01-02T23:55:00.000Z', // the same instant as the current latest
+        receivedAt: '2026-01-03T00:10:00.000Z', // received later: not newer data
+        powerOutputKw: 1,
+      }),
+    );
+
+    expect(store.turbines()[0].latest?.powerOutputKw).toBe(1960.5);
+    expect(store.recentlyUpdated()).toBeNull();
+  });
+
+  describe('a reading for a turbine the fleet does not list (e.g. added since the load)', () => {
+    const unknown = () =>
+      reading({
+        id: 'new-1',
+        turbineId: 'TURB999',
+        farmId: 'FARM01',
+        timestamp: '2026-01-03T00:00:00.000Z',
+        powerOutputKw: 500,
+      });
+
+    it('does not add it to the turbines or the totals', () => {
+      const { store, sse } = setup();
+      const fleetBefore = store.fleet();
+
+      sse.push(unknown());
+
+      expect(store.turbines().map((t) => t.id)).toEqual(['TURB001', 'TURB002']);
+      expect(store.fleet()).toEqual(fleetBefore);
+    });
+
+    it('keeps it, so the turbine shows that reading once a reload lists it', () => {
+      const { store, api, sse } = setup();
+      sse.push(unknown());
+
+      const fixture = farmsFixture();
+      fixture[0].turbines.push({
+        id: 'TURB999',
+        farmId: 'FARM01',
+        latitude: 41.26,
+        longitude: -96.52,
+        commissioned: false,
+        latest: null, // the API's answer predates the live reading
+      });
+      api.farms.mockReturnValue(of(fixture));
+      sse.fail(); // our own reconnect resyncs the fleet
+      vi.advanceTimersByTime(1_000);
+      sse.status('open');
+
+      expect(store.turbines().find((t) => t.id === 'TURB999')).toMatchObject({
+        latest: { id: 'new-1', powerOutputKw: 500 },
+        staleness: 'ok',
+      });
+    });
+
+    // FINDING (low, product decision): `fleetTime` ("Data as of" on /farms) is the newest reading
+    // the store holds, including turbines no farm lists, so it can name a time no listed turbine
+    // has. Expected: only the listed turbines count (iterate `turbines()`, not `latestByTurbine`).
+    it.fails('does not move "data as of" past the listed turbines', () => {
+      const { store, sse } = setup();
+      const before = store.fleetTime();
+
+      sse.push(unknown());
+
+      expect(store.fleetTime()).toBe(before);
+    });
   });
 
   describe('staleness (age of the latest reading on the client clock)', () => {
@@ -219,6 +315,17 @@ describe('FleetStore', () => {
 
     expect(store.history().map((r) => r.id)).toEqual(['c', 'b', 'a', 'late']);
     expect(store.selectedTurbine()?.id).toBe('TURB001');
+  });
+
+  it('reports a failed history load for the selected turbine and stops loading', () => {
+    const { store, api } = setup();
+    api.telemetry.mockReturnValue(throwError(() => new Error('down')));
+
+    store.select('TURB001');
+
+    expect(store.error()).toBe('Could not load telemetry for TURB001.');
+    expect(store.historyLoading()).toBe(false);
+    expect(store.history()).toEqual([]);
   });
 
   describe('history window (ends at the client clock)', () => {
@@ -811,6 +918,104 @@ describe('FleetStore', () => {
       TestBed.resetTestingModule(); // destroys the store (the shell is gone)
       vi.advanceTimersByTime(60 * SECOND);
       expect(sources).toHaveLength(1);
+    });
+
+    it('leaves no timers behind when destroyed during the backoff', () => {
+      const { last } = setupLive();
+      last().fail();
+      expect(vi.getTimerCount()).toBeGreaterThan(0); // the backoff and the minute tick
+
+      TestBed.resetTestingModule();
+
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('closes the open EventSource when destroyed, and opens no other', () => {
+      const { sources, last } = setupLive();
+      last().open();
+
+      TestBed.resetTestingModule();
+      vi.advanceTimersByTime(60 * SECOND);
+
+      expect(sources[0].close).toHaveBeenCalled();
+      expect(sources).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('stays live after a malformed event and applies the next reading', () => {
+      const { store, sources, last } = setupLive();
+      last().open();
+
+      last().emitRaw('telemetry.received', '{"turbineId": "TURB001", ');
+      last().emit(
+        'telemetry.received',
+        reading({ timestamp: '2026-01-03T00:00:00.000Z', powerOutputKw: 3000 }),
+      );
+
+      expect(store.liveStatus()).toBe('open');
+      expect(store.turbines()[0].latest?.powerOutputKw).toBe(3000);
+      expect(sources).toHaveLength(1);
+    });
+
+    describe('with the real FleetApi (token in the events URL, resync over HTTP)', () => {
+      const BASE = 'http://api.test/api';
+      let http: HttpTestingController;
+      let session: {
+        isAuthenticated: WritableSignal<boolean>;
+        accessToken: WritableSignal<string>;
+      };
+
+      function setupWithApi() {
+        session = { isAuthenticated: signal(true), accessToken: signal('token-1') };
+        TestBed.configureTestingModule({
+          providers: [
+            FleetStore,
+            provideHttpClient(),
+            provideHttpClientTesting(),
+            { provide: API_BASE_URL, useValue: BASE },
+            { provide: AuthStore, useValue: session },
+          ],
+        });
+        http = TestBed.inject(HttpTestingController);
+        const store = TestBed.inject(FleetStore);
+        store.init();
+        http.expectOne(`${BASE}/farms`).flush(farmsFixture());
+        return { store, sources: FakeEventSource.instances };
+      }
+      afterEach(() => http.verify());
+
+      it('reconnects after exactly 1 s with the current token and resyncs farms, history and stats', () => {
+        const { store, sources } = setupWithApi();
+        expect(sources[0].url).toBe(`${BASE}/events?access_token=token-1`);
+        store.select('TURB001');
+        http.expectOne((r) => r.url === `${BASE}/turbines/TURB001/telemetry`).flush([]);
+        http
+          .expectOne((r) => r.url === `${BASE}/turbines/TURB001/telemetry/stats`)
+          .flush(statsFixture());
+        sources[0].open();
+
+        sources[0].fail(); // e.g. a 401: the old token expired
+        session.accessToken.set('token/2+'); // signed in again meanwhile
+        vi.advanceTimersByTime(SECOND - 1);
+        expect(sources).toHaveLength(1);
+        vi.advanceTimersByTime(1);
+
+        expect(sources).toHaveLength(2);
+        expect(sources[1].url).toBe(`${BASE}/events?access_token=token%2F2%2B`);
+        expect(store.liveStatus()).toBe('reconnecting');
+        http.expectNone(`${BASE}/farms`); // nothing reloads before the new stream is open
+
+        sources[1].open();
+
+        http.expectOne(`${BASE}/farms`).flush(farmsFixture());
+        const telemetry = http.expectOne((r) => r.url === `${BASE}/turbines/TURB001/telemetry`);
+        const stats = http.expectOne((r) => r.url === `${BASE}/turbines/TURB001/telemetry/stats`);
+        expect(stats.request.params.toString()).toBe(telemetry.request.params.toString());
+        telemetry.flush([]);
+        stats.flush(statsFixture());
+        expect(store.alertConfigVersion()).toBe(1); // the rules pages reload
+        expect(store.liveStatus()).toBe('open');
+      });
     });
   });
 

@@ -126,6 +126,7 @@ The `angular-developer` skill (`.claude/skills` → `.agents/skills`, from `angu
 | Angular | `apps/web/src/**/*.spec.ts` | Vitest + TestBed, zoneless (`await fixture.whenStable()`), `FakeEventSource` with named events, `HttpTestingController`; shared fakes in `fleet/testing.ts` (excluded from the app build); route-level tests with `RouterTestingHarness` |
 
 - **Run:** `cd apps/web && npx ng test --watch=false` (+ `npm run test:docker` for the container script), `npx tsc -p tsconfig.spec.json --noEmit`, `npm run build`. More Angular test notes (dialogs, harnesses, jsdom stubs, ECharts) are with each topic above.
+- **Test-only work** (raising coverage, SSE test suites, browser E2E in `e2e/`) belongs to `web-test-engineer`. You still write the tests for your own changes. Keep coverage at or above the thresholds (`npm run test:coverage`).
 
 ## Review checklist
 

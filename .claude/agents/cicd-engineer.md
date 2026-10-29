@@ -32,7 +32,7 @@ A CI change that needs a new IAM role, variable output or service setting is a r
 | Job | What it runs |
 |---|---|
 | `backend` (30 min) | `npm ci` (also builds `@nextera/shared` via `prepare`) → `lint` → `typecheck` → `test` → `test:e2e` (Testcontainers Postgres 18 + Redis 8 on the runner's Docker) → `build` |
-| `web` (20 min) | in `apps/web` (its own npm project and lockfile): `npm ci` → `npm test` (Angular + the container script tests) → `npx ng build` |
+| `web` (20 min) | in `apps/web` (its own npm project and lockfile): `npm ci` → `npm run test:coverage` (Angular, fails below the coverage thresholds) → `npm run test:docker` (container script tests) → upload `apps/web/coverage/` (always, 7 days) → `npx ng build` |
 | `browser-e2e` (30 min) | writes a throwaway `.env` from `.env.example` (generated `POSTGRES_PASSWORD`, also put into `DATABASE_URL`; `JWT_SECRET`; `SEED_USER_PASSWORD`; each `::add-mask::`ed, with sanity `grep`s) → `docker compose up -d --wait --build api ingestion web` (never `demo-feed`, and `DEMO_FEED_ENABLED` stays false) → `npm ci` → `npm run db:seed` → in `e2e`: `npm ci && npx playwright install --with-deps chromium` → `npx playwright test`. On failure it uploads `e2e/playwright-report` + `e2e/test-results` (7 days) and prints `docker compose logs` |
 | `terraform` (10 min) | `fmt -check -recursive` → `init -backend=false` → `validate` (Terraform ~1.16, no credentials) |
 

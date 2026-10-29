@@ -54,7 +54,21 @@ jobs:
           cache-dependency-path: apps/web/package-lock.json
 
       - run: npm ci
-      - run: npm test
+      # Angular unit tests run once, with coverage; dropping below the thresholds fails the step.
+      - name: Angular unit tests with coverage (npm run test:coverage)
+        run: npm run test:coverage
+      - name: Container script tests (npm run test:docker)
+        run: npm run test:docker
+
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-coverage
+          path: apps/web/coverage/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - run: npx ng build
 
   browser-e2e:

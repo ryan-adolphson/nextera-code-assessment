@@ -258,6 +258,29 @@ describe('TurbineList (/turbines)', () => {
     ]);
   });
 
+  it('sorts by wind speed, keeping the turbine that never reported last both ways', async () => {
+    await sortBy('wind');
+    expect(ids()).toEqual([
+      'TURB006',
+      'TURB007',
+      'TURB001',
+      'TURB002',
+      'TURB003',
+      'TURB005',
+      'TURB004',
+    ]);
+    await sortBy('wind');
+    expect(ids()).toEqual([
+      'TURB005',
+      'TURB003',
+      'TURB002',
+      'TURB001',
+      'TURB007',
+      'TURB006',
+      'TURB004',
+    ]);
+  });
+
   it('filters by turbine id, farm id or farm name, case-insensitively', async () => {
     await filter('farm02');
     expect(ids()).toEqual(['TURB002', 'TURB004', 'TURB006', 'TURB007']);

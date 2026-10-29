@@ -17,6 +17,8 @@ export type SseEvent<T> =
  * fails the connection for good (readyState CLOSED, no more retries): the Observable then errors.
  * Retrying is the caller's job, with a new subscription (a new EventSource, which can't send
  * Last-Event-ID, so the caller must reload what it may have missed): see `FleetStore.connectLive`.
+ * An event whose data isn't valid JSON is skipped with a `console.warn` (type and id, not the
+ * payload): nothing is emitted, the stream stays open, and nothing throws inside the listener.
  */
 @Injectable({ providedIn: 'root' })
 export class SseService {
@@ -27,13 +29,18 @@ export class SseService {
 
       source.onopen = () => subscriber.next({ kind: 'status', status: 'open' });
 
-      const onEvent = (event: MessageEvent<string>) =>
-        subscriber.next({
-          kind: 'message',
-          id: event.lastEventId,
-          type: event.type,
-          data: JSON.parse(event.data) as T,
-        });
+      const onEvent = (event: MessageEvent<string>) => {
+        let data: T;
+        try {
+          data = JSON.parse(event.data) as T;
+        } catch {
+          console.warn(
+            `Skipped SSE event "${event.type}" (id ${event.lastEventId}): data is not valid JSON`,
+          );
+          return;
+        }
+        subscriber.next({ kind: 'message', id: event.lastEventId, type: event.type, data });
+      };
       types.forEach((type) => source.addEventListener(type, onEvent));
 
       source.onerror = () => {

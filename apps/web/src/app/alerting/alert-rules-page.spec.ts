@@ -301,6 +301,24 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     expect(isOpen('rule-dialog')).toBe(true);
   });
 
+  it('says the API is unreachable when saving fails on the network, keeps the dialog open and the list as is', async () => {
+    await open([]);
+    await click('add-rule');
+    await type('rule-value', '130');
+    await submit('rule-save');
+
+    expectWrite('POST', URL).error(new ProgressEvent('error'));
+    await settle();
+
+    expect(app.text(q('rule-error'))).toBe(
+      'Could not reach the API. Check your connection and try again.',
+    );
+    expect(isOpen('rule-dialog')).toBe(true);
+    expect(q<HTMLInputElement>('rule-value')!.value).toBe('130'); // nothing typed is lost
+    expect(q('rules-notice')?.textContent?.trim() ?? '').toBe('');
+    app.http.expectNone({ method: 'GET', url: URL }); // no reload: nothing changed
+  });
+
   it('deletes a rule after confirmation', async () => {
     const existing = rule();
     await open([existing]);

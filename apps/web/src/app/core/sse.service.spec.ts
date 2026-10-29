@@ -63,4 +63,59 @@ describe('SseService', () => {
 
     expect(source.close).toHaveBeenCalled();
   });
+
+  it('reports reconnecting, then open again, on the same EventSource after a drop', () => {
+    const { received, source } = connect();
+    source.open();
+    source.drop();
+    source.open();
+
+    expect(received.map((e) => (e.kind === 'status' ? e.status : e.kind))).toEqual([
+      'connecting',
+      'open',
+      'reconnecting',
+      'open',
+    ]);
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+
+  describe('a named event with malformed JSON', () => {
+    it('is not emitted, and the stream neither errors nor closes', () => {
+      const { received, errors, source } = connect();
+      source.open();
+
+      source.emitRaw('telemetry.received', '{"id": "a"', '7-0');
+
+      expect(received.filter((e) => e.kind === 'message')).toEqual([]);
+      expect(errors).toEqual([]);
+      expect(source.close).not.toHaveBeenCalled();
+    });
+
+    it('does not stop the next valid event from arriving', () => {
+      const { received, source } = connect();
+      source.open();
+
+      source.emitRaw('telemetry.received', 'not json', '7-0');
+      source.emit('telemetry.received', { id: 'b' }, '8-0');
+
+      expect(received.filter((e) => e.kind === 'message')).toEqual([
+        { kind: 'message', id: '8-0', type: 'telemetry.received', data: { id: 'b' } },
+      ]);
+    });
+
+    it('skips it without throwing an uncaught error', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const { source } = connect();
+        source.open();
+
+        expect(source.emitRaw('telemetry.received', 'not json', '7-0')).toEqual([]);
+        expect(warn).toHaveBeenCalledOnce();
+        expect(warn.mock.calls[0].join(' ')).toMatch(/telemetry\.received.*7-0/);
+        expect(warn.mock.calls[0].join(' ')).not.toContain('not json');
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
 });

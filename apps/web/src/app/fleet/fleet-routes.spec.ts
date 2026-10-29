@@ -1,6 +1,7 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { TestBed } from '@angular/core/testing';
 import { MatPaginatorHarness } from '@angular/material/paginator/testing';
+import { Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { of, throwError } from 'rxjs';
 import { LineChart } from '../charts/line-chart';
@@ -195,6 +196,18 @@ describe('Fleet routes', () => {
       expect(el().querySelector('[data-testid=turbines]')).toBeNull();
       // The map still shows where the farm is.
       expect(el().querySelector('[data-marker-id="FARM03"]')!.classList).toContain('marker-empty');
+    });
+
+    it("stays on the farm when its location marker is clicked (it isn't a turbine)", async () => {
+      await start('/farms/FARM03');
+
+      el()
+        .querySelector('[data-marker-id="FARM03"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await stable();
+
+      expect(TestBed.inject(Router).url).toBe('/farms/FARM03');
+      expect(text('h1')).toBe('Red Canyon FARM03');
     });
 
     it('handles an unknown farm id', async () => {

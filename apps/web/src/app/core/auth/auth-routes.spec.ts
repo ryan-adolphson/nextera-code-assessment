@@ -1,3 +1,4 @@
+import { TestRequest } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import { TEST_API_BASE_URL, openFleet } from '../../fleet/testing';
@@ -132,6 +133,62 @@ describe('auth routes and role-based UI', () => {
       expect(q<HTMLInputElement>('login-email')!.value).toBe('owner@nextera.local');
       expect(q<HTMLInputElement>('login-password')!.value).toBe('');
       expect(q<HTMLButtonElement>('login-submit')!.disabled).toBe(false);
+    });
+
+    describe('explains other failures, keeping the email and clearing the password', () => {
+      const failures: [string, (req: TestRequest) => void, string][] = [
+        [
+          'a 400 (malformed input) as the one generic message',
+          (req) =>
+            req.flush(
+              { statusCode: 400, message: ['email must be an email'] },
+              { status: 400, statusText: 'Bad Request' },
+            ),
+          'Invalid email or password.',
+        ],
+        [
+          'a network failure (status 0)',
+          (req) => req.error(new ProgressEvent('error')),
+          'Could not reach the API. Check your connection and try again.',
+        ],
+        [
+          'rate limiting (429)',
+          (req) => req.flush(null, { status: 429, statusText: 'Too Many Requests' }),
+          'Too many attempts. Wait a minute and try again.',
+        ],
+        [
+          'a server error (500)',
+          (req) => req.flush(null, { status: 500, statusText: 'Server Error' }),
+          'Could not sign in. Try again.',
+        ],
+        [
+          'a response that is not a session (non-HTTP error)',
+          // 200 but already expired: AuthStore refuses it with a plain Error.
+          (req) =>
+            req.flush({
+              accessToken: 'stale',
+              expiresAt: new Date(CLOCK - 1_000).toISOString(),
+              user: { email: 'owner@nextera.local', role: 'owner' },
+            }),
+          'Could not sign in. Try again.',
+        ],
+      ];
+
+      it.each(failures)('%s', async (_, answer, message) => {
+        await open('/login', null);
+        type('login-email', 'owner@nextera.local');
+        type('login-password', 'secret');
+        await submit();
+        answer(app.http.expectOne({ method: 'POST', url: LOGIN_URL }));
+        await settle();
+
+        expect(url()).toBe('/login');
+        expect(app.text(q('login-error'))).toBe(message);
+        expect(q<HTMLInputElement>('login-email')!.value).toBe('owner@nextera.local');
+        expect(q<HTMLInputElement>('login-password')!.value).toBe('');
+        expect(q<HTMLButtonElement>('login-submit')!.disabled).toBe(false);
+        expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+      });
     });
 
     it('sends a signed-in user from /login to the fleet', async () => {
