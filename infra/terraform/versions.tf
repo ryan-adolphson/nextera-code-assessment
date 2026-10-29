@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 7.0"
     }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 7.0"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
@@ -18,6 +22,12 @@ terraform {
 }
 
 provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+# Only for google_project_service_identity (pubsub.tf), which the GA provider doesn't have.
+provider "google-beta" {
   project = var.project_id
   region  = var.region
 }

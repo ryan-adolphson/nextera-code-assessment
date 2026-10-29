@@ -1,7 +1,8 @@
 locals {
   services = [
     "artifactregistry.googleapis.com",
-    "compute.googleapis.com", # VPC for Direct VPC egress
+    "cloudresourcemanager.googleapis.com", # project-level IAM bindings (google_project_iam_member)
+    "compute.googleapis.com",              # VPC for Direct VPC egress
     "iam.googleapis.com",
     "iamcredentials.googleapis.com", # GitHub Actions: service account impersonation via WIF
     "monitoring.googleapis.com",     # uptime checks, alert policies, notification channels (monitoring.tf)

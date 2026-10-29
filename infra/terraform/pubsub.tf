@@ -4,7 +4,28 @@
 # dead-letter topic.
 
 locals {
+  # The address is deterministic. It is spelled out rather than read from
+  # google_project_service_identity.pubsub: that value is unknown until apply, and `member` forces
+  # replacement on every IAM member resource, so referencing it would recreate the bindings below.
   pubsub_service_agent = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+}
+
+# Creates the Pub/Sub service agent explicitly. In a fresh project it only appears after the first
+# Pub/Sub API use, and granting roles to it before that fails. Idempotent: an existing agent is kept.
+# google-beta only (not in the GA provider as of 7.46).
+resource "google_project_service_identity" "pubsub" {
+  provider = google-beta
+
+  service = "pubsub.googleapis.com"
+
+  lifecycle {
+    postcondition {
+      condition     = self.email == "" || "serviceAccount:${self.email}" == local.pubsub_service_agent
+      error_message = "The Pub/Sub service agent is not ${local.pubsub_service_agent}; update local.pubsub_service_agent."
+    }
+  }
+
+  depends_on = [google_project_service.this]
 }
 
 resource "google_pubsub_topic" "telemetry" {
@@ -34,7 +55,7 @@ resource "google_pubsub_subscription" "telemetry_dead_letter" {
 resource "google_pubsub_subscription" "telemetry_ingestion" {
   name                       = "telemetry-ingestion"
   topic                      = google_pubsub_topic.telemetry.id
-  ack_deadline_seconds       = 60 # must exceed the worker's processing time
+  ack_deadline_seconds       = 90 # above the worker's 60 s request timeout (run.tf)
   message_retention_duration = "604800s"
 
   push_config {
@@ -70,12 +91,16 @@ resource "google_pubsub_topic_iam_member" "dead_letter_publisher" {
   topic  = google_pubsub_topic.telemetry_dead_letter.id
   role   = "roles/pubsub.publisher"
   member = local.pubsub_service_agent
+
+  depends_on = [google_project_service_identity.pubsub]
 }
 
 resource "google_pubsub_subscription_iam_member" "dead_letter_subscriber" {
   subscription = google_pubsub_subscription.telemetry_ingestion.id
   role         = "roles/pubsub.subscriber"
   member       = local.pubsub_service_agent
+
+  depends_on = [google_project_service_identity.pubsub]
 }
 
 # Lets the Pub/Sub service agent mint OIDC tokens for the push identity
@@ -84,4 +109,6 @@ resource "google_service_account_iam_member" "pubsub_token_creator" {
   service_account_id = google_service_account.pubsub_push.name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = local.pubsub_service_agent
+
+  depends_on = [google_project_service_identity.pubsub]
 }

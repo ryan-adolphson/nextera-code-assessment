@@ -189,6 +189,17 @@ variable "github_repository" {
   }
 }
 
+variable "github_repository_id" {
+  description = "Numeric id of github_repository (`gh api repos/OWNER/REPO --jq .id`). If set, the WIF provider also requires it, so a re-created repository with the same name can't deploy. Empty: name check only."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[0-9]*$", var.github_repository_id))
+    error_message = "github_repository_id must be the numeric repository id (digits only), or empty."
+  }
+}
+
 variable "github_environment" {
   description = "GitHub deployment environment whose jobs may impersonate the deployer service account (.github/workflows/deploy.yml)."
   type        = string

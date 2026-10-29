@@ -8,6 +8,7 @@ web_domain = "app.example.com"
 
 # GitHub Actions deploys + migrations (Workload Identity Federation, no keys)
 github_repository = "my-org/nextera-code-assessment"
+# github_repository_id = "123456789"   # recommended: `gh api repos/OWNER/REPO --jq .id` (immutable, unlike the name)
 # github_environment = "production"
 
 # deletion_protection     = false   # throwaway environments only

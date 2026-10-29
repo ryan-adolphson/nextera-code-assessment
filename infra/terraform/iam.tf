@@ -3,22 +3,30 @@
 resource "google_service_account" "api" {
   account_id   = "nextera-api"
   display_name = "nextera API + SSE (Cloud Run service)"
+
+  depends_on = [google_project_service.this]
 }
 
 resource "google_service_account" "ingestion" {
   account_id   = "nextera-ingestion"
   display_name = "nextera ingestion worker (Cloud Run service)"
+
+  depends_on = [google_project_service.this]
 }
 
 resource "google_service_account" "web" {
   account_id   = "nextera-web"
   display_name = "nextera Angular app (Cloud Run service, no roles)"
+
+  depends_on = [google_project_service.this]
 }
 
 # Identity Pub/Sub uses to sign the OIDC token on each push to the ingestion worker.
 resource "google_service_account" "pubsub_push" {
   account_id   = "nextera-pubsub-push"
   display_name = "Pub/Sub push to nextera-ingestion"
+
+  depends_on = [google_project_service.this]
 }
 
 resource "google_project_iam_member" "cloudsql_client" {

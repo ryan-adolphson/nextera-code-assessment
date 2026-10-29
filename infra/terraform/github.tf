@@ -21,18 +21,26 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   }
 
   attribute_mapping = {
-    "google.subject"       = "assertion.sub" # repo:<owner>/<repo>:environment:<env>
-    "attribute.repository" = "assertion.repository"
-    "attribute.ref"        = "assertion.ref"
+    "google.subject"          = "assertion.sub" # repo:<owner>/<repo>:environment:<env>
+    "attribute.repository"    = "assertion.repository"
+    "attribute.repository_id" = "assertion.repository_id"
+    "attribute.ref"           = "assertion.ref"
   }
 
-  # Tokens from any other repository are rejected at the token exchange.
-  attribute_condition = "assertion.repository == \"${var.github_repository}\""
+  # Tokens from any other repository are rejected at the token exchange. With github_repository_id
+  # set, the immutable numeric id must match too: a deleted or renamed repository's name can be
+  # re-registered by someone else, its id can't.
+  attribute_condition = join(" && ", concat(
+    ["assertion.repository == \"${var.github_repository}\""],
+    var.github_repository_id == "" ? [] : ["assertion.repository_id == \"${var.github_repository_id}\""],
+  ))
 }
 
 resource "google_service_account" "deployer" {
   account_id   = "nextera-deployer"
   display_name = "nextera deploys + Prisma migrations (GitHub Actions)"
+
+  depends_on = [google_project_service.this]
 }
 
 # Only jobs that run in the GitHub deployment environment may impersonate the deployer. Protect that

@@ -8,6 +8,8 @@ mock_provider "google" {
   alias = "billing_budget"
 }
 
+mock_provider "google-beta" {}
+
 mock_provider "random" {}
 
 override_data {
