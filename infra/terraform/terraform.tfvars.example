@@ -22,3 +22,8 @@ github_repository = "my-org/nextera-code-assessment"
 # jwt_audience            = "nextera-web"
 # demo_feed_enabled       = true    # live demo telemetry every 5 min (run `npm run db:seed:demo` first)
 # demo_feed_paused        = true    # keep the demo feed, stop its schedule
+
+# Monitoring (monitoring.tf): every alert policy exists regardless; these add email notifications
+# alert_emails            = ["wind-ops@example.com"]
+# billing_account         = "012345-6789AB-CDEF01"   # optional monthly budget (needs roles/billing.costsManager)
+# monthly_budget          = 200                      # whole units of the billing account's currency

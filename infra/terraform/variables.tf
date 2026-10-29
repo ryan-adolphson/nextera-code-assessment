@@ -137,6 +137,46 @@ variable "demo_feed_paused" {
   default     = false
 }
 
+# --- Monitoring (monitoring.tf) ----------------------------------------------------
+
+variable "alert_emails" {
+  description = "Email addresses that get every alert (one Cloud Monitoring email channel each; no verification needed). Empty = the alert policies still exist and open incidents in the console, but notify nobody."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for email in var.alert_emails : can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", email))])
+    error_message = "Every alert_emails entry must be an email address such as \"ops@example.com\"."
+  }
+}
+
+variable "billing_account" {
+  description = "Billing account ID (\"XXXXXX-XXXXXX-XXXXXX\") for an optional monthly budget on this project. Empty = no budget. Applying it needs roles/billing.costsManager on the billing account."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.billing_account == "" || can(regex("^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$", var.billing_account))
+    error_message = "billing_account must be empty or a billing account ID like \"012345-6789AB-CDEF01\"."
+  }
+}
+
+variable "monthly_budget" {
+  description = "Monthly budget in whole units of the billing account's currency; alerts at 50% and 90% of actual and 100% of forecast spend. Required (> 0) when billing_account is set."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.monthly_budget >= 0 && floor(var.monthly_budget) == var.monthly_budget
+    error_message = "monthly_budget must be a whole, non-negative number."
+  }
+
+  validation {
+    condition     = var.billing_account == "" || var.monthly_budget > 0
+    error_message = "Set monthly_budget (> 0) when billing_account is set."
+  }
+}
+
 # --- GitHub Actions (CI/CD) ---------------------------------------------------
 
 variable "github_repository" {

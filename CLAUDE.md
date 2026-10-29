@@ -54,7 +54,9 @@ e2e/                    # Playwright browser E2E (separate npm project, NOT a wo
                         #   the agents' seed), tests/data/** ([DATA] tests, serial), specs/*.md (test plans)
 infra/terraform/        # Cloud Run (api, ingestion, web), Pub/Sub + DLQ, Cloud SQL, Memorystore, Secret Manager,
                         # Artifact Registry, domain mappings, GitHub Actions WIF + deployer SA,
-                        # optional demo feed (demo-feed.tf: Cloud Run Job + Cloud Scheduler, demo_feed_enabled)
+                        # optional demo feed (demo-feed.tf: Cloud Run Job + Cloud Scheduler, demo_feed_enabled),
+                        # Cloud Monitoring (monitoring.tf: uptime checks, alert policies, optional budget),
+                        # tests/*.tftest.hcl (terraform test, mock providers only: offline, nothing created)
 .github/workflows/      # ci.yml (checks + browser E2E on PRs + main), deploy.yml (main: images -> migrate -> Cloud Run [-> demo feed job])
 docker-compose.yml      # postgres, redis, pubsub emulator (+ init), migrate, api, ingestion, web, demo-feed
 .env.example            # copy to .env: the ONE env file for compose, both services, Prisma and scripts
@@ -203,6 +205,10 @@ docker run --rm -v "$PWD":/w -w /w -v ~/.config/gcloud:/root/.config/gcloud hash
 gh variable set -f /tmp/gh-vars.env   # GCP_PROJECT_ID, GCP_REGION, GCP_WIF_PROVIDER, GCP_DEPLOYER_SA,
                                       # GCP_REGISTRY, CLOUDSQL_INSTANCE (+ DEMO_FEED_JOB if demo_feed_enabled)
 ```
+
+#### Monitoring
+
+`monitoring.tf` always creates HTTPS uptime checks (api `/api/health/ready`, web `/`) and alert policies (dead letters, ingestion backlog, Cloud Run 5xx ratio per service, uptime failures, Cloud SQL CPU and connections, Redis memory; each says what to do). Thresholds are locals at the top of the file. `alert_emails` adds one email notification channel per address to every policy (no verification needed; send a test notification from the console). Without it the policies only open incidents in the console. An optional monthly budget on this project needs `billing_account` + `monthly_budget`, and whoever applies needs `roles/billing.costsManager` on the billing account (its API calls are billed to the project through the `google.billing_budget` provider alias). Tests: `tf test` (mock providers, offline).
 
 #### Auth secrets
 
