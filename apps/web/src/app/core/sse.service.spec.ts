@@ -80,6 +80,10 @@ describe('SseService', () => {
   });
 
   describe('a named event with malformed JSON', () => {
+    // SseService warns about each one: silenced here (the last test asserts the warning).
+    beforeEach(() => vi.spyOn(console, 'warn').mockImplementation(() => {}));
+    afterEach(() => vi.mocked(console.warn).mockRestore());
+
     it('is not emitted, and the stream neither errors nor closes', () => {
       const { received, errors, source } = connect();
       source.open();
@@ -104,18 +108,14 @@ describe('SseService', () => {
     });
 
     it('skips it without throwing an uncaught error', () => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      try {
-        const { source } = connect();
-        source.open();
+      const warn = vi.mocked(console.warn);
+      const { source } = connect();
+      source.open();
 
-        expect(source.emitRaw('telemetry.received', 'not json', '7-0')).toEqual([]);
-        expect(warn).toHaveBeenCalledOnce();
-        expect(warn.mock.calls[0].join(' ')).toMatch(/telemetry\.received.*7-0/);
-        expect(warn.mock.calls[0].join(' ')).not.toContain('not json');
-      } finally {
-        warn.mockRestore();
-      }
+      expect(source.emitRaw('telemetry.received', 'not json', '7-0')).toEqual([]);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0].join(' ')).toMatch(/telemetry\.received.*7-0/);
+      expect(warn.mock.calls[0].join(' ')).not.toContain('not json');
     });
   });
 });

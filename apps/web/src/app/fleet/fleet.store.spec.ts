@@ -9,7 +9,7 @@ import { AuthStore } from '../core/auth/auth.store';
 import { NOW as NOW_TOKEN } from '../core/clock';
 import { SseService } from '../core/sse.service';
 import { FleetApi } from './fleet-api.service';
-import { FarmOverview, TelemetryStats } from './fleet.model';
+import { FarmOverview, LIVE_FUTURE_TOLERANCE_MS, Telemetry, TelemetryStats } from './fleet.model';
 import { FleetStore, reconnectDelayMs } from './fleet.store';
 import { fakes, farmsFixture, reading, statsFixture } from './testing';
 
@@ -149,26 +149,52 @@ describe('FleetStore', () => {
   });
 
   describe('a reading for a turbine the fleet does not list (e.g. added since the load)', () => {
-    const unknown = () =>
+    // The store warns about the ignored readings: silenced here, asserted where it matters.
+    let warn: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => (warn = vi.spyOn(console, 'warn').mockImplementation(() => {})));
+    afterEach(() => warn.mockRestore());
+
+    const unknown = (overrides: Partial<Telemetry> = {}) =>
       reading({
         id: 'new-1',
         turbineId: 'TURB999',
         farmId: 'FARM01',
         timestamp: '2026-01-03T00:00:00.000Z',
         powerOutputKw: 500,
+        ...overrides,
       });
 
-    it('does not add it to the turbines or the totals', () => {
+    it('changes nothing, and warns once per turbine', () => {
       const { store, sse } = setup();
-      const fleetBefore = store.fleet();
+      const before = {
+        fleetTime: store.fleetTime(),
+        fleet: store.fleet(),
+        farms: store.farms(),
+        turbines: store.turbines(),
+      };
+
+      sse.push(unknown());
+      sse.push(unknown({ id: 'new-2', timestamp: '2026-01-03T00:05:00.000Z' }));
+
+      expect(store.fleetTime()).toBe(before.fleetTime);
+      expect(store.recentlyUpdated()).toBeNull();
+      expect(store.fleet()).toEqual(before.fleet);
+      expect(store.farms()).toEqual(before.farms);
+      expect(store.turbines()).toEqual(before.turbines);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0].join(' ')).toContain('TURB999');
+    });
+
+    it('does not move "data as of" past the listed turbines', () => {
+      const { store, sse } = setup();
+      const before = store.fleetTime();
 
       sse.push(unknown());
 
-      expect(store.turbines().map((t) => t.id)).toEqual(['TURB001', 'TURB002']);
-      expect(store.fleet()).toEqual(fleetBefore);
+      expect(store.fleetTime()).toBe(before);
     });
 
-    it('keeps it, so the turbine shows that reading once a reload lists it', () => {
+    it('is ignored, so once a reload lists the turbine its latest comes from the API', () => {
       const { store, api, sse } = setup();
       sse.push(unknown());
 
@@ -179,7 +205,13 @@ describe('FleetStore', () => {
         latitude: 41.26,
         longitude: -96.52,
         commissioned: false,
-        latest: null, // the API's answer predates the live reading
+        latest: reading({
+          id: 'api-1',
+          turbineId: 'TURB999',
+          farmId: 'FARM01',
+          timestamp: '2026-01-02T23:55:00.000Z',
+          powerOutputKw: 450,
+        }),
       });
       api.farms.mockReturnValue(of(fixture));
       sse.fail(); // our own reconnect resyncs the fleet
@@ -187,21 +219,111 @@ describe('FleetStore', () => {
       sse.status('open');
 
       expect(store.turbines().find((t) => t.id === 'TURB999')).toMatchObject({
-        latest: { id: 'new-1', powerOutputKw: 500 },
+        latest: { id: 'api-1', powerOutputKw: 450 },
         staleness: 'ok',
       });
+
+      // Now listed: its live readings apply.
+      sse.push(unknown({ id: 'new-3', timestamp: '2026-01-03T00:05:00.000Z' }));
+      expect(store.turbines().find((t) => t.id === 'TURB999')?.latest?.id).toBe('new-3');
+      expect(store.recentlyUpdated()).toBe('TURB999');
     });
 
-    // FINDING (low, product decision): `fleetTime` ("Data as of" on /farms) is the newest reading
-    // the store holds, including turbines no farm lists, so it can name a time no listed turbine
-    // has. Expected: only the listed turbines count (iterate `turbines()`, not `latestByTurbine`).
-    it.fails('does not move "data as of" past the listed turbines', () => {
+    describe('before the first fleet load finishes (the listed turbines are not known yet)', () => {
+      function setupPending() {
+        const { api, sse } = fakes();
+        const farms = new Subject<FarmOverview[]>();
+        api.farms.mockReturnValue(farms);
+        TestBed.configureTestingModule({
+          providers: [
+            FleetStore,
+            { provide: FleetApi, useValue: api },
+            { provide: SseService, useValue: sse },
+            { provide: AuthStore, useValue: fakeAuth() },
+          ],
+        });
+        const store = TestBed.inject(FleetStore);
+        store.init();
+        return { store, sse, farms };
+      }
+
+      it('keeps a reading for a turbine the loaded fleet lists', () => {
+        const { store, sse, farms } = setupPending();
+        expect(store.loading()).toBe(true);
+
+        sse.push(
+          reading({ id: 'early', timestamp: '2026-01-03T00:00:00.000Z', powerOutputKw: 3000 }),
+        );
+        farms.next(farmsFixture()); // the API's latest for TURB001 (23:55) is older
+
+        expect(store.loading()).toBe(false);
+        expect(store.turbines()[0].latest).toMatchObject({ id: 'early', powerOutputKw: 3000 });
+        expect(store.fleetTime()).toBe(Date.parse('2026-01-03T00:00:00.000Z'));
+        expect(warn).not.toHaveBeenCalled();
+      });
+
+      it('drops a reading for a turbine the loaded fleet does not list', () => {
+        const { store, sse, farms } = setupPending();
+
+        sse.push(unknown({ timestamp: '2026-01-03T00:05:00.000Z' }));
+        farms.next(farmsFixture());
+
+        expect(store.fleetTime()).toBe(Date.parse('2026-01-02T23:55:00.000Z'));
+        expect(store.turbines().map((t) => t.id)).toEqual(['TURB001', 'TURB002']);
+      });
+    });
+  });
+
+  describe('a live reading dated ahead of the client clock', () => {
+    let warn: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => (warn = vi.spyOn(console, 'warn').mockImplementation(() => {})));
+    afterEach(() => warn.mockRestore());
+
+    const ahead = (ms: number, overrides: Partial<Telemetry> = {}) =>
+      reading({
+        id: `ahead-${ms}`,
+        timestamp: new Date(NOW + ms).toISOString(),
+        powerOutputKw: 3000,
+        ...overrides,
+      });
+
+    it.each([
+      ['9 min 59 s', 10 * MINUTE - 1_000],
+      ['exactly 10 min', LIVE_FUTURE_TOLERANCE_MS],
+    ])('is applied %s ahead', (_, ms) => {
       const { store, sse } = setup();
-      const before = store.fleetTime();
 
-      sse.push(unknown());
+      sse.push(ahead(ms));
 
-      expect(store.fleetTime()).toBe(before);
+      expect(store.turbines()[0].latest?.id).toBe(`ahead-${ms}`);
+      expect(store.fleetTime()).toBe(NOW + ms);
+      expect(store.recentlyUpdated()).toBe('TURB001');
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('is ignored more than 10 min ahead (10 min 1 s), with a warning', () => {
+      const { store, sse } = setup();
+      const before = { fleetTime: store.fleetTime(), latest: store.turbines()[0].latest };
+
+      sse.push(ahead(10 * MINUTE + 1_000));
+
+      expect(store.fleetTime()).toBe(before.fleetTime);
+      expect(store.turbines()[0].latest).toEqual(before.latest);
+      expect(store.recentlyUpdated()).toBeNull();
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0].join(' ')).toMatch(/TURB001.*2026-01-03T00:10:01\.000Z/);
+    });
+
+    it("does not reach the selected turbine's chart or table", () => {
+      const { store, api, sse } = setup();
+      store.select('TURB001');
+      const statsCalls = api.telemetryStats.mock.calls.length;
+
+      sse.push(ahead(10 * MINUTE + 1_000));
+      vi.advanceTimersByTime(11 * MINUTE); // the clock passes the reading's time
+
+      expect(store.history()).toEqual([]);
+      expect(api.telemetryStats).toHaveBeenCalledTimes(statsCalls);
     });
   });
 
@@ -943,6 +1065,8 @@ describe('FleetStore', () => {
     });
 
     it('stays live after a malformed event and applies the next reading', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); // SseService warns
+      onTestFinished(() => warn.mockRestore());
       const { store, sources, last } = setupLive();
       last().open();
 
