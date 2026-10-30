@@ -1,0 +1,83 @@
+<h2 mat-dialog-title>Assign {{ entry.turbineId }} to a farm</h2>
+<form [formRoot]="assignForm">
+  <mat-dialog-content class="grid gap-4">
+    <p class="m-0 text-sm text-muted">
+      Adds {{ entry.turbineId }} to the fleet (not commissioned) and imports its
+      {{ entry.heldCount }} held {{ entry.heldCount === 1 ? 'reading' : 'readings' }}. It reported
+      {{ entry.reportedFarmId }}.
+    </p>
+
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Farm</mat-label>
+      <input
+        matInput
+        type="text"
+        placeholder="e.g. Prairie Ridge or FARM01"
+        data-testid="assign-farm"
+        [formField]="assignForm.farm"
+        [matAutocomplete]="farms"
+      />
+      <mat-autocomplete #farms="matAutocomplete" [displayWith]="displayFarm">
+        @for (option of filtered(); track option.id) {
+          <mat-option [value]="option">{{ option.label }}</mat-option>
+        }
+      </mat-autocomplete>
+      <mat-error data-testid="assign-farm-error">{{ farmError() }}</mat-error>
+    </mat-form-field>
+
+    <fieldset class="m-0 grid gap-2 border-0 p-0">
+      <legend class="mb-2 p-0 text-sm text-muted">
+        Location (optional; the farm’s location if left empty)
+      </legend>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Latitude</mat-label>
+          <input
+            matInput
+            type="number"
+            step="any"
+            inputmode="decimal"
+            data-testid="assign-latitude"
+            [formField]="assignForm.latitude"
+          />
+          <span matTextSuffix class="pl-1 text-muted">°</span>
+          <mat-error data-testid="assign-latitude-error">{{
+            coordinateError('latitude')
+          }}</mat-error>
+        </mat-form-field>
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Longitude</mat-label>
+          <input
+            matInput
+            type="number"
+            step="any"
+            inputmode="decimal"
+            data-testid="assign-longitude"
+            [formField]="assignForm.longitude"
+          />
+          <span matTextSuffix class="pl-1 text-muted">°</span>
+          <mat-error data-testid="assign-longitude-error">{{
+            coordinateError('longitude')
+          }}</mat-error>
+        </mat-form-field>
+      </div>
+    </fieldset>
+
+    @if (error(); as error) {
+      <p
+        class="m-0 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger"
+        role="alert"
+        data-testid="assign-error"
+      >
+        {{ error }}
+      </p>
+    }
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    <button matButton="outlined" type="button" mat-dialog-close>Cancel</button>
+    <button matButton="filled" type="submit" data-testid="assign-save" [disabled]="saving()">
+      {{ saving() ? 'Assigning…' : 'Assign' }}
+    </button>
+  </mat-dialog-actions>
+</form>

@@ -25,7 +25,8 @@ import {
   AlertLevel,
   metricOf,
 } from './alert-config.model';
-import { duplicateMessage, errorMessage, statusOf } from './rule-errors';
+import { errorMessage, statusOf } from '../core/http-errors';
+import { duplicateMessage } from './rule-errors';
 
 /** What the Rules page passes in: the rule to edit, or null to add one. */
 export interface RuleEditorData {

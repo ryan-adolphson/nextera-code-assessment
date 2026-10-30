@@ -31,12 +31,17 @@ import {
   TelemetryStats,
 } from './fleet.model';
 import { ALERT_CONFIG_CHANGED } from '../alerting/alert-config.model';
+import {
+  FLEET_CHANGED,
+  FleetChangedEvent,
+  UNALLOCATED_CHANGED,
+} from '../unallocated/unallocated.model';
+import { Staleness, freshestStaleness, stalenessOf } from './staleness';
 
 const FLEET_LOAD_ERROR = 'Could not load the fleet.';
 
 /** Every SSE event type the shell's one connection listens for. */
-const LIVE_EVENTS = [...TELEMETRY_EVENTS, ALERT_CONFIG_CHANGED];
-import { Staleness, freshestStaleness, stalenessOf } from './staleness';
+const LIVE_EVENTS = [...TELEMETRY_EVENTS, ALERT_CONFIG_CHANGED, UNALLOCATED_CHANGED, FLEET_CHANGED];
 
 /**
  * The live connection: `connecting` (first attempt), `open`, `reconnecting` (the browser's own
@@ -103,6 +108,13 @@ export class FleetStore {
   private fleetLoaded = false;
   /** Unlisted turbine ids already warned about (one warning per id). */
   private readonly warnedUnlisted = new Set<string>();
+  /**
+   * Turbines announced by `fleet.changed` (assigned or moved) that the loaded fleet may not list
+   * yet: their live readings are accepted until a fleet load started after the announcement
+   * succeeds. The API sends `fleet.changed` before the imported reading's `telemetry.received`,
+   * while the reload it triggers is still in flight, so without this that reading would be dropped.
+   */
+  private readonly announcedTurbineIds = new Set<string>();
   private historySub?: Subscription;
   private farmsSub?: Subscription;
   /** The selected turbine's loaded and live readings, newest first (may extend past the window). */
@@ -124,6 +136,11 @@ export class FleetStore {
    * here or in another browser): pages showing rules reload when it changes.
    */
   readonly alertConfigVersion = signal(0);
+  /**
+   * Bumped on every `unallocated-turbine.changed` event (an entry was held, resolved, blocked or
+   * unblocked) and after a resync: the Unallocated pages reload when it changes.
+   */
+  readonly unallocatedVersion = signal(0);
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
   readonly recentlyUpdated = signal<string | null>(null);
@@ -288,6 +305,9 @@ export class FleetStore {
           if (event.kind === 'status') this.liveStatus.set(event.status);
           else if (event.type === ALERT_CONFIG_CHANGED)
             this.alertConfigVersion.update((v) => v + 1);
+          else if (event.type === UNALLOCATED_CHANGED) this.unallocatedVersion.update((v) => v + 1);
+          else if (event.type === FLEET_CHANGED)
+            this.reloadFleet((event.data as FleetChangedEvent).turbineId);
           else this.receive(event.data as Telemetry);
         },
         error: () => this.liveStatus.set('offline'),
@@ -298,14 +318,30 @@ export class FleetStore {
    * After our own reconnect: the API replays nothing to a new EventSource, so reload what the
    * outage may have missed. The live stream is already open, so nothing arriving from now on is
    * lost (as in `init`): latest readings (`applyLatest` keeps whichever is newer), the selected
-   * turbine's history and stats (same range, kept on screen while they reload), and the rule pages
-   * (missed `alert-config.changed`).
+   * turbine's history and stats (same range, kept on screen while they reload), the rule pages
+   * (missed `alert-config.changed`) and the Unallocated pages (missed
+   * `unallocated-turbine.changed`).
    */
   private resync(): void {
     this.loadFarms({ resync: true });
     const selected = this.selectedTurbineId();
     if (selected) this.select(selected);
     this.alertConfigVersion.update((v) => v + 1);
+    this.unallocatedVersion.update((v) => v + 1);
+  }
+
+  /**
+   * The fleet changed on the server (`fleet.changed`: a turbine was assigned to a farm or moved, or
+   * this browser just did that): reloads the farms quietly, like a resync. `turbineId`'s live
+   * readings are accepted from now on, also before that reload lists it, so the imported reading
+   * the API announces right after `fleet.changed` is not dropped as unlisted.
+   */
+  reloadFleet(turbineId?: string): void {
+    if (turbineId) {
+      this.announcedTurbineIds.add(turbineId);
+      this.warnedUnlisted.delete(turbineId);
+    }
+    this.loadFarms({ resync: true });
   }
 
   /**
@@ -315,6 +351,8 @@ export class FleetStore {
    */
   private loadFarms({ resync }: { resync: boolean }): void {
     const quiet = resync && !this.loading();
+    // A load sent now lists every turbine announced so far (they were committed before the event).
+    const announced = [...this.announcedTurbineIds];
     this.farmsSub?.unsubscribe();
     this.farmsSub = this.api
       .farms()
@@ -323,6 +361,7 @@ export class FleetStore {
         next: (farms) => {
           this.farmList.set(farms);
           this.fleetLoaded = true;
+          for (const id of announced) this.announcedTurbineIds.delete(id);
           // Live readings that arrived before this load may be for turbines it doesn't list:
           // keep only the listed turbines (also drops turbines removed since the last load).
           const listed = this.listedTurbineIds();
@@ -416,7 +455,8 @@ export class FleetStore {
   /**
    * A live reading: becomes its turbine's latest if newer, and joins the selected turbine's history.
    * Ignored (with a console warning) when dated more than `LIVE_FUTURE_TOLERANCE_MS` ahead of the
-   * client clock, or once the fleet has loaded, for a turbine it doesn't list (warned once per id).
+   * client clock, or once the fleet has loaded, for a turbine it doesn't list (warned once per id)
+   * and that `fleet.changed` did not announce (see `reloadFleet`).
    * Ingestion rejects both already; this keeps a bad event from moving "data as of", the highlight,
    * staleness or the charts. Before the first successful load the listed turbines aren't known, so
    * such readings are kept, and `loadFarms` then drops any for turbines it doesn't list.
@@ -428,7 +468,11 @@ export class FleetStore {
       );
       return;
     }
-    if (this.fleetLoaded && !this.listedTurbineIds().has(reading.turbineId)) {
+    if (
+      this.fleetLoaded &&
+      !this.listedTurbineIds().has(reading.turbineId) &&
+      !this.announcedTurbineIds.has(reading.turbineId)
+    ) {
       if (!this.warnedUnlisted.has(reading.turbineId)) {
         this.warnedUnlisted.add(reading.turbineId);
         console.warn(`Ignoring live readings for ${reading.turbineId}: not in the loaded fleet`);

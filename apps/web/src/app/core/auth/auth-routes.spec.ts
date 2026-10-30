@@ -215,6 +215,24 @@ describe('auth routes and role-based UI', () => {
       expect(navIds()).toContain('nav-reporting');
     });
 
+    it.each(['/unallocated', '/unallocated/pending', '/unallocated/blocked'])(
+      'hides Unallocated from viewers and keeps them out of %s',
+      async (path) => {
+        await open(path, 'viewer');
+        expect(url()).toBe('/farms');
+        expect(navIds()).not.toContain('nav-unallocated');
+        app.http.expectNone((r) => r.url.includes('/unallocated-turbines'));
+      },
+    );
+
+    it.each(['owner', 'admin'] as const)('shows Unallocated to the %s', async (role) => {
+      await open('/unallocated', role);
+      expect(url()).toBe('/unallocated/pending');
+      expect(navIds()).toContain('nav-unallocated');
+      TestBed.tick();
+      app.http.expectOne('http://api.test/api/unallocated-turbines?status=pending').flush([]);
+    });
+
     it("shows the user's email and role in the nav", async () => {
       await open('/farms', 'viewer');
       expect(app.text(q('current-user-email'))).toBe('viewer@nextera.local');

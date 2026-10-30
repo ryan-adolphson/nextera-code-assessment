@@ -17,6 +17,11 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: process.env.E2E_WEB_URL ?? 'http://localhost:8082',
+    // The app formats every time in UTC with date-fns' UTCDate (a Date subclass). Playwright's
+    // page.clock replaces Date, and `new UTCDate()` then returns a plain Date, so those times would
+    // render in the browser's local zone. A UTC browser keeps them right under a fixed clock (and
+    // matches CI's runners); without page.clock the app is zone-independent.
+    timezoneId: 'UTC',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

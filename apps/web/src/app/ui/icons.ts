@@ -5,6 +5,7 @@ import barChart from '@material-symbols/svg-400/outlined/bar_chart.svg';
 import check from '@material-symbols/svg-400/outlined/check.svg';
 import chevronRight from '@material-symbols/svg-400/outlined/chevron_right.svg';
 import close from '@material-symbols/svg-400/outlined/close.svg';
+import help from '@material-symbols/svg-400/outlined/help.svg';
 import map from '@material-symbols/svg-400/outlined/map.svg';
 import menu from '@material-symbols/svg-400/outlined/menu.svg';
 import notifications from '@material-symbols/svg-400/outlined/notifications.svg';
@@ -19,6 +20,7 @@ export const ICONS = {
   check,
   'chevron-right': chevronRight,
   close,
+  help,
   map,
   menu,
   notifications,

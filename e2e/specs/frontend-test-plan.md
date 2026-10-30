@@ -844,3 +844,94 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 **Steps:**
   1. Visit each page.
     - expect: Titles: 'Fleet overview · Nextera', 'Turbines · Nextera', 'Alert history · Nextera', 'Alert rules · Nextera', 'Farm · Nextera', 'Turbine · Nextera' (verified for several)
+
+### 11. 11. Unallocated turbines
+
+**Seed:** `tests/seed.spec.ts` (sign-in and clock via `tests/support/session.ts` `signIn(page, role)`)
+
+Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turbines reporting another farm than their own (`farm_mismatch`) are held by ingestion (CSV and Pub/Sub) instead of rejected, listed under /unallocated/pending (owner and admin), and imported on assign/keep/move; blocking a (turbine id, reported farm) pair drops its readings until unblocked. The CSV upload answers `held` and `blocked` counts. Ingestion checks timestamps against the real server clock (not in the future, from 2000-01-01) while the browser clock is fixed at SEED_NOW, so pick past timestamps and reason about what the fixed clock shows (Jan 2 23:55 reads as 'Reporting'). The browser runs in the UTC zone (`timezoneId` in playwright.config.ts): under `page.clock` the app's date-fns `UTCDate` formatting falls back to the local zone. Cleanup: unknown ids are unique per run (`E2E-<run>-…`), entries are removed through the API (block, then unblock) in afterAll; there is no turbine/telemetry delete API, so each run leaves two turbines (`E2E-<run>-NEW` on FARM01 and `E2E-<run>-MOV` on FARM03, 2 readings each on Jan 2 23:50–23:55) and one TURB001 reading at a unique 2020 timestamp (outside every window the app shows).
+
+#### 11.1. Access by role
+
+**File:** `tests/unallocated/access.spec.ts`
+
+**Steps:**
+  1. Sign in as viewer.
+    - expect: main nav has Farms but no 'Unallocated' link
+    - expect: /unallocated and /unallocated/blocked redirect to /farms
+  2. GET /api/unallocated-turbines with a viewer token.
+    - expect: 404 (the RolesGuard convention)
+  3. Sign in as owner, click 'Unallocated' in the nav.
+    - expect: /unallocated/pending, title 'Unallocated turbines · Nextera', heading 'Unallocated turbines', Pending tab aria-current=page
+    - expect: Blocked tab → /unallocated/blocked, title 'Blocked turbines · Nextera'
+
+#### 11.2. [DATA] Held unknown turbine appears live and expands to its readings
+
+**File:** `tests/data/unallocated.spec.ts`
+
+**Steps:**
+  1. Owner on /unallocated/pending, list loaded and live-status 'Live'. POST a 3-row CSV for `E2E-<run>-LIVE` / FARM01 (Jan 2 23:45, 23:50, 23:55) to ingestion :8081.
+    - expect: upload `{ rows: 3, inserted: 0, held: 3, blocked: 0 }`
+    - expect: without reload (SSE `unallocated-turbine.changed`), the row appears: 'Unknown turbine', 'Prairie Ridge (FARM01)', current farm '–', held 3, latest '1,520 kW · 8.2 m/s · 71.5 °C', staleness 'Reporting', 'Assign … to farm…' button
+  2. Click 'Show held readings for <id>'.
+    - expect: aria-expanded true; '3 held readings, newest first.'; 3 rows newest first (Jan 2, 23:55 … Jan 2, 23:45)
+
+#### 11.3. [DATA] Assign an unknown turbine to FARM01
+
+**File:** `tests/data/unallocated.spec.ts`
+
+**Steps:**
+  1. Upload 2 readings for `E2E-<run>-NEW` / FARM01, open Pending, click 'Assign <id> to farm…'.
+    - expect: dialog 'Assign <id> to a farm' with Farm preselected 'Prairie Ridge (FARM01)' (the reported farm exists)
+  2. Click 'Assign'.
+    - expect: dialog closes; notice '<id> assigned to Prairie Ridge (FARM01): 2 readings imported.'; row gone
+  3. Without reload, nav → Turbines, filter by the id.
+    - expect: row on Prairie Ridge, 'Reporting', last reading Jan 2, 23:55, not commissioned
+  4. Open the turbine, then its farm from the breadcrumb.
+    - expect: /farms/FARM01/turbines/<id>, 'Not commissioned', readings table rows Jan 2 23:55 (1,640.0) and 23:50 (1,610.0)
+    - expect: /farms/FARM01 lists the turbine
+
+#### 11.4. [DATA] Farm mismatch: Keep in the turbine's own farm
+
+**File:** `tests/data/unallocated.spec.ts`
+
+**Steps:**
+  1. Upload one TURB001 reading reporting FARM02 at a unique 2020 timestamp; open Pending.
+    - expect: upload held 1; row 'Farm mismatch', reported 'High Plains (FARM02)', current 'Prairie Ridge (FARM01)', 'Move TURB001 to FARM02…' enabled
+  2. Click 'Keep TURB001 in FARM01'.
+    - expect: notice 'TURB001 kept in Prairie Ridge (FARM01): 1 reading imported.'; row gone
+    - expect: GET /api/turbines/TURB001/telemetry for that second returns the reading with farmId FARM01
+
+#### 11.5. [DATA] Block drops readings; Unblock removes the entry
+
+**File:** `tests/data/unallocated.spec.ts`
+
+**Steps:**
+  1. Upload one reading for `E2E-<run>-BLK` / FARM05; open Pending; click 'Block <id> from FARM05…'.
+    - expect: dialog 'Block <id> from FARM05?' explaining readings will be dropped until unblocked
+  2. Click 'Block'.
+    - expect: notice 'Readings for <id> from FARM05 are now blocked.'; row gone
+  3. Upload another reading for the same pair.
+    - expect: `{ rows: 1, inserted: 0, held: 0, blocked: 1 }`
+  4. Blocked tab.
+    - expect: row 'Blue Sky (FARM05)', 'Unknown turbine', blocked by 'owner@nextera.local', a blocked time
+  5. Click 'Unblock <id> from FARM05'.
+    - expect: notice '<id> from FARM05 unblocked: its next reading will show under Pending.'; row gone; the API lists the id under neither status
+
+#### 11.6. [DATA] Farm mismatch: Move to the reported farm with its history
+
+**File:** `tests/data/unallocated.spec.ts`
+
+**Steps:**
+  1. Setup through the API: upload `E2E-<run>-MOV` / FARM01 (Jan 2 23:50) and assign it to FARM01; then upload it reporting FARM03 (Jan 2 23:55). Open Pending.
+    - expect: row 'Farm mismatch', current 'Prairie Ridge (FARM01)'
+  2. Click 'Move <id> to FARM03…'.
+    - expect: dialog 'Move <id> to FARM03?': '<id> and all its readings will move to Red Canyon (FARM03)…'
+  3. Click 'Move turbine'.
+    - expect: notice '<id> moved to Red Canyon (FARM03): 1 reading imported.'; row gone
+    - expect: GET telemetry: both readings (23:55 and the earlier 23:50) now have farmId FARM03
+    - expect: without reload, Turbines (filtered) shows it on Red Canyon, last reading Jan 2, 23:55
+
+#### 11.7. Not yet automated (covered by the Angular unit specs, `unallocated-pages.spec.ts`)
+
+  - Move disabled with a reason when the reported farm doesn't exist; Assign with coordinates, and picking a farm from the autocomplete when the reported farm doesn't exist; a 409/404 when the entry was resolved in another browser; load errors and Retry.

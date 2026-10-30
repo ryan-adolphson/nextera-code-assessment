@@ -4,8 +4,10 @@ export type {
   AlertConfig,
   Farm,
   Telemetry,
+  HeldTelemetry,
   TelemetryAlert,
   Turbine,
+  UnallocatedTurbine,
   User,
 } from './generated/prisma/client.js';
 export {
@@ -13,6 +15,8 @@ export {
   AlertLevel,
   MeasurementMetric,
   Role,
+  UnallocatedKind,
+  UnallocatedStatus,
 } from './generated/prisma/enums.js';
 export { PrismaModule } from './prisma/prisma.module.js';
 export { PrismaService } from './prisma/prisma.service.js';
@@ -74,7 +78,10 @@ export {
   QueryNotFoundError,
   alertsInRange,
   getTurbine,
+  getUnallocated,
+  heldReadings,
   listAlertRules,
+  listUnallocated,
   listFarms,
   parseRange,
   reportSummary,
@@ -105,6 +112,39 @@ export type {
   AlertConfigChangedEvent,
   AlertConfigResponse,
 } from './wind/alert-config.js';
+
+// Unallocated turbines: ingestion holds readings of unknown turbines and farm mismatches until an
+// owner assigns, keeps, moves or blocks them (classify/hold in ingestion, lock/import in the API)
+export {
+  FLEET_CHANGED,
+  HELD_RETENTION_MS,
+  MAX_PENDING_UNALLOCATED,
+  UNALLOCATED_CHANGED,
+  UNALLOCATED_EVENT_INTERVAL_MS,
+  UnallocatedCapError,
+  classifyReadings,
+  holdReadings,
+  importHeld,
+  lockTurbineIds,
+  lockUnallocated,
+  toHeldReadingResponse,
+  toUnallocatedResponse,
+} from './wind/unallocated.js';
+export type {
+  FarmRef,
+  FleetChangedEvent,
+  HeldEntry,
+  HeldReadingResponse,
+  HoldableReading,
+  ImportResult,
+  ReadingClass,
+  TelemetryRowInput,
+  UnallocatedAction,
+  UnallocatedChangedEvent,
+  UnallocatedListRow,
+  UnallocatedResolutionResponse,
+  UnallocatedTurbineResponse,
+} from './wind/unallocated.js';
 
 // Auth: roles (viewer < owner < admin), password hash parameters, email normalisation
 export { ROLE_RANK, ROLES, hasRole, isRole } from './auth/roles.js';

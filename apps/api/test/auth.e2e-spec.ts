@@ -140,6 +140,18 @@ describe('Auth (e2e)', () => {
         { valueMetric: 1 },
       ],
       ['DELETE', `/api/alert-configs/${UNKNOWN_ID}`, 'owner'],
+      ['GET', '/api/unallocated-turbines', 'owner'],
+      ['GET', `/api/unallocated-turbines/${UNKNOWN_ID}/readings`, 'owner'],
+      [
+        'POST',
+        `/api/unallocated-turbines/${UNKNOWN_ID}/assign`,
+        'owner',
+        { farmId: 'FARM01' },
+      ],
+      ['POST', `/api/unallocated-turbines/${UNKNOWN_ID}/keep`, 'owner'],
+      ['POST', `/api/unallocated-turbines/${UNKNOWN_ID}/move`, 'owner'],
+      ['POST', `/api/unallocated-turbines/${UNKNOWN_ID}/block`, 'owner'],
+      ['POST', `/api/unallocated-turbines/${UNKNOWN_ID}/unblock`, 'owner'],
     ];
 
     beforeEach(async () => {

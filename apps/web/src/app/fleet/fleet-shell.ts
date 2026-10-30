@@ -30,6 +30,13 @@ export const NAV_ITEMS = [
     icon: 'notifications',
     minRole: 'viewer',
   },
+  {
+    id: 'unallocated',
+    path: '/unallocated',
+    label: 'Unallocated',
+    icon: 'help',
+    minRole: 'owner',
+  },
   { id: 'reporting', path: '/reporting', label: 'Reporting', icon: 'bar-chart', minRole: 'owner' },
 ] as const satisfies readonly {
   id: string;
@@ -61,7 +68,7 @@ export class FleetShell implements OnInit {
   protected readonly store = inject(FleetStore);
   protected readonly liveLabel = computed(() => LIVE_LABELS[this.store.liveStatus()]);
   protected readonly auth = inject(AuthStore);
-  /** The sections the user's role may open (Reporting: owner and up). */
+  /** The sections the user's role may open (Unallocated and Reporting: owner and up). */
   protected readonly navItems = computed(() =>
     NAV_ITEMS.filter((item) => this.auth.can(item.minRole)),
   );

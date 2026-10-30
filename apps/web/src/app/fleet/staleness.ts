@@ -35,10 +35,13 @@ export const STALENESS_LABELS: Record<Staleness, string> = {
 };
 
 /**
- * The staleness of a turbine whose latest reading (by measurement time) is `latest`, at client
- * time `now` (epoch ms). A reading dated ahead of the clock (clock skew) counts as reporting.
+ * The staleness of a turbine whose latest reading (by measurement time) is `latest` (a stored or a
+ * held reading), at client time `now` (epoch ms). A reading dated ahead of the clock (clock skew) counts as reporting.
  */
-export function stalenessOf(latest: Telemetry | null | undefined, now: number): Staleness {
+export function stalenessOf(
+  latest: Pick<Telemetry, 'timestamp'> | null | undefined,
+  now: number,
+): Staleness {
   if (!latest) return 'empty';
   const age = now - Date.parse(latest.timestamp);
   let staleness: Staleness = 'ok';

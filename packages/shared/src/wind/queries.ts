@@ -1,6 +1,9 @@
 import { Prisma } from '../generated/prisma/client.js';
-import type { Telemetry } from '../generated/prisma/client.js';
-import type { AlertLevel } from '../generated/prisma/enums.js';
+import type { HeldTelemetry, Telemetry } from '../generated/prisma/client.js';
+import type {
+  AlertLevel,
+  UnallocatedStatus,
+} from '../generated/prisma/enums.js';
 import {
   toAlertConfigResponse,
   type AlertConfigResponse,
@@ -21,6 +24,13 @@ import {
   type TelemetryWithAlerts,
   type TurbineResponse,
 } from './responses.js';
+import {
+  toHeldReadingResponse,
+  toUnallocatedResponse,
+  type FarmRef,
+  type HeldReadingResponse,
+  type UnallocatedTurbineResponse,
+} from './unallocated.js';
 
 /**
  * The fleet's read queries, shared by the API (behind its HTTP wrappers) and the MCP server. Plain
@@ -546,4 +556,147 @@ async function reportScope(
     name: turbine.farm.name,
     farmId: turbine.farmId,
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Unallocated turbines (readings ingestion holds for unknown turbines and farm mismatches)
+
+/** Raw row shape of held_telemetry (snake_case columns). */
+interface HeldRow {
+  id: string;
+  unallocated_id: string;
+  turbine_id: string;
+  farm_id: string;
+  timestamp: Date;
+  received_at: Date;
+  created_at: Date;
+  power_output_kw: number;
+  wind_speed_ms: number;
+  rotor_rpm: number;
+  blade_pitch_deg: number;
+  gearbox_temp_c: number;
+}
+
+const fromHeldRow = (r: HeldRow): HeldTelemetry => ({
+  id: r.id,
+  unallocatedId: r.unallocated_id,
+  turbineId: r.turbine_id,
+  farmId: r.farm_id,
+  timestamp: r.timestamp,
+  receivedAt: r.received_at,
+  createdAt: r.created_at,
+  powerOutputKw: r.power_output_kw,
+  windSpeedMs: r.wind_speed_ms,
+  rotorRpm: r.rotor_rpm,
+  bladePitchDeg: r.blade_pitch_deg,
+  gearboxTempC: r.gearbox_temp_c,
+});
+
+/**
+ * The pending (default) or blocked unallocated entries, latest activity first, each with its held
+ * count, newest held reading, the reported farm (if it exists) and, for a turbine that exists, its
+ * current farm. Pending entries are capped (MAX_PENDING_UNALLOCATED); blocked ones only come from
+ * owners' actions.
+ */
+export async function listUnallocated(
+  db: ReadClient,
+  { status = 'pending' }: { status?: UnallocatedStatus } = {},
+): Promise<UnallocatedTurbineResponse[]> {
+  return describeUnallocated(db, { status });
+}
+
+/** One unallocated entry (pending or blocked) as `listUnallocated` shows it. */
+export async function getUnallocated(
+  db: ReadClient,
+  id: string,
+): Promise<UnallocatedTurbineResponse> {
+  const [entry] = await describeUnallocated(db, { id });
+  if (!entry) throw unallocatedNotFound(id);
+  return entry;
+}
+
+const unallocatedNotFound = (id: string) =>
+  new QueryNotFoundError(`Unallocated turbine ${id} not found`);
+
+async function describeUnallocated(
+  db: ReadClient,
+  where: Prisma.UnallocatedTurbineWhereInput,
+): Promise<UnallocatedTurbineResponse[]> {
+  const entries = await db.unallocatedTurbine.findMany({
+    where,
+    orderBy: [{ lastSeenAt: 'desc' }, { turbineId: 'asc' }, { id: 'asc' }],
+    include: {
+      blockedBy: { select: { email: true } },
+      _count: { select: { held: true } },
+    },
+  });
+  if (!entries.length) return [];
+
+  const ids = entries.map((e) => e.id);
+  const [latestRows, turbines] = await Promise.all([
+    // One index lookup per entry on (unallocated_id, timestamp), as for the fleet's latest readings.
+    db.$queryRaw<HeldRow[]>`
+      SELECT latest.*
+      FROM unnest(${ids}::uuid[]) AS e(id)
+      CROSS JOIN LATERAL (
+        SELECT * FROM held_telemetry h
+        WHERE h.unallocated_id = e.id
+        ORDER BY h.timestamp DESC
+        LIMIT 1
+      ) latest`,
+    db.turbine.findMany({
+      where: {
+        turbineId: { in: [...new Set(entries.map((e) => e.turbineId))] },
+      },
+      select: { turbineId: true, farmId: true },
+    }),
+  ]);
+  const farmOfTurbine = new Map(turbines.map((t) => [t.turbineId, t.farmId]));
+  const farms = await db.farm.findMany({
+    where: {
+      id: {
+        in: [
+          ...new Set([
+            ...entries.map((e) => e.reportedFarmId),
+            ...farmOfTurbine.values(),
+          ]),
+        ],
+      },
+    },
+    select: { id: true, name: true },
+  });
+  const farmById = new Map<string, FarmRef>(farms.map((f) => [f.id, f]));
+  const latestByEntry = new Map(
+    latestRows.map((r) => [String(r.unallocated_id), fromHeldRow(r)]),
+  );
+
+  return entries.map(({ _count, ...entry }) => {
+    const currentFarmId = farmOfTurbine.get(entry.turbineId);
+    return toUnallocatedResponse({
+      entry,
+      heldCount: _count.held,
+      latest: latestByEntry.get(entry.id) ?? null,
+      reportedFarm: farmById.get(entry.reportedFarmId) ?? null,
+      currentFarm: currentFarmId ? (farmById.get(currentFarmId) ?? null) : null,
+    });
+  });
+}
+
+/** An unallocated entry's held readings, newest first (at most `limit`). */
+export async function heldReadings(
+  db: ReadClient,
+  id: string,
+  limit: number = DEFAULT_TELEMETRY_LIMIT,
+): Promise<HeldReadingResponse[]> {
+  const entry = await db.unallocatedTurbine.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+  if (!entry) throw unallocatedNotFound(id);
+  const rows = await db.heldTelemetry.findMany({
+    where: { unallocatedId: id },
+    orderBy: { timestamp: 'desc' },
+    take: limit,
+  });
+  return rows.map(toHeldReadingResponse);
 }

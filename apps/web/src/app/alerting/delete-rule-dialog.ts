@@ -11,7 +11,7 @@ import {
 } from '@angular/material/dialog';
 import { AlertConfigApi } from './alert-config-api.service';
 import { AlertConfig, describeRule, levelLabel } from './alert-config.model';
-import { errorMessage, statusOf } from './rule-errors';
+import { errorMessage, statusOf } from '../core/http-errors';
 
 /**
  * Confirms and deletes an alert rule (opened by the Rules page with MatDialog). Closes with `true`

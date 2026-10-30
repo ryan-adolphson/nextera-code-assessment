@@ -23,7 +23,9 @@ const MAX_REPORTED_ERRORS = 100;
 /**
  * Bulk load of telemetry in telemetry.csv format (backfills, corrections, data from other systems):
  *   curl -F file=@readings.csv http://localhost:3001/ingest/telemetry
- * 201 with counts on success. 400 with errors by line if anything is invalid; nothing is stored.
+ * 201 with counts on success: rows of unknown turbines and farm mismatches are held (for the
+ * Unallocated tab) and rows of blocked pairs dropped, not rejected. 400 with errors by line if any
+ * row is invalid (or a new unallocated pair is over the cap); nothing is stored.
  * In GCP the worker is private (IAM), so callers need an identity token with run.invoker.
  */
 @Controller('ingest')
@@ -50,7 +52,7 @@ export class CsvUploadController {
       const parsed = parseTelemetryCsv(file.buffer.toString('utf8'));
       const result = await this.ingestion.ingestBatch(parsed);
       this.logger.log(
-        `CSV ${file.originalname}: ${result.inserted} inserted, ${result.duplicates} duplicates`,
+        `CSV ${file.originalname}: ${result.inserted} inserted, ${result.duplicates} duplicates, ${result.held} held, ${result.blocked} blocked`,
       );
       return result;
     } catch (error) {

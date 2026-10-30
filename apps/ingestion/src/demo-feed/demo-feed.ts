@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { PubSub } from '@google-cloud/pubsub';
 import {
+  DEMO_ANOMALIES,
   DEMO_SEED,
   DEMO_TURBINES,
   TELEMETRY_STEP_MINUTES,
@@ -43,12 +44,16 @@ export interface DemoFeedDeps {
   log?: Pick<Console, 'log' | 'error'>;
 }
 
-/** The readings of one tick: one per demo turbine at `at` (floored), minus a stopped turbine. */
+/**
+ * The readings of one tick: one per demo turbine at `at` (floored), minus a stopped turbine, plus
+ * one for the unallocated turbine (DEMO_ANOMALIES.unallocated: TURB099 claiming FARM01, not in the
+ * fleet), which ingestion holds for the Unallocated tab.
+ */
 export function demoFeedReadings(
   at: Date | number,
 ): Omit<GeneratedTelemetryRow, 'received_at'>[] {
   return generateTelemetry({
-    turbines: DEMO_TURBINES,
+    turbines: [...DEMO_TURBINES, DEMO_ANOMALIES.unallocated],
     end: floorToTelemetryStep(at),
     hours: TELEMETRY_STEP_MINUTES / 60, // one step
     seed: DEMO_SEED,

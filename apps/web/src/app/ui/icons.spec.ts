@@ -12,6 +12,7 @@ describe('provideIcons', () => {
       'check',
       'chevron-right',
       'close',
+      'help',
       'map',
       'menu',
       'notifications',

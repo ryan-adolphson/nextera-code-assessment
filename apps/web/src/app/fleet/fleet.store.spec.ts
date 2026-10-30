@@ -47,6 +47,8 @@ describe('FleetStore', () => {
     expect(sse.connect).toHaveBeenCalledWith('http://api/events', [
       'telemetry.received',
       'alert-config.changed',
+      'unallocated-turbine.changed',
+      'fleet.changed',
     ]);
     expect(sse.connect.mock.invocationCallOrder[0]).toBeLessThan(
       api.farms.mock.invocationCallOrder[0],
@@ -63,6 +65,122 @@ describe('FleetStore', () => {
     expect(store.alertConfigVersion()).toBe(2);
     expect(store.turbines().map((t) => t.latest)).toEqual(latestBefore);
     expect(sse.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts unallocated-turbine.changed events on the same connection, reloading nothing else', () => {
+    const { store, api, sse } = setup();
+
+    sse.pushEvent('unallocated-turbine.changed', {
+      action: 'held',
+      id: 'e1',
+      turbineId: 'TURB990',
+    });
+    sse.pushEvent('unallocated-turbine.changed', {
+      action: 'blocked',
+      id: 'e1',
+      turbineId: 'TURB990',
+    });
+
+    expect(store.unallocatedVersion()).toBe(2);
+    expect(store.alertConfigVersion()).toBe(0);
+    expect(api.farms).toHaveBeenCalledTimes(1);
+  });
+
+  describe('fleet.changed (a turbine was assigned, kept or moved)', () => {
+    let warn: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => (warn = vi.spyOn(console, 'warn').mockImplementation(() => {})));
+    afterEach(() => warn.mockRestore());
+
+    /** The fleet after TURB990 was assigned to FARM03, with its imported reading as latest. */
+    const withAssigned = (latest: Telemetry | null) => {
+      const fixture = farmsFixture();
+      fixture[2].turbines.push({
+        id: 'TURB990',
+        farmId: 'FARM03',
+        latitude: 35.12,
+        longitude: -106.55,
+        commissioned: false,
+        latest,
+      });
+      return fixture;
+    };
+    const imported = (overrides: Partial<Telemetry> = {}) =>
+      reading({
+        id: 'imp-1',
+        turbineId: 'TURB990',
+        farmId: 'FARM03',
+        timestamp: '2026-01-02T23:55:00.000Z',
+        powerOutputKw: 640,
+        ...overrides,
+      });
+
+    it('reloads the fleet quietly: the new turbine appears with its farm', () => {
+      const { store, api, sse } = setup();
+      api.farms.mockReturnValue(of(withAssigned(imported())));
+
+      sse.pushEvent('fleet.changed', { turbineId: 'TURB990' });
+
+      expect(api.farms).toHaveBeenCalledTimes(2);
+      expect(store.loading()).toBe(false);
+      expect(store.turbines().find((t) => t.id === 'TURB990')).toMatchObject({
+        farmId: 'FARM03',
+        farmName: 'Red Canyon',
+        latest: { id: 'imp-1' },
+      });
+      expect(store.farms()[2].turbineCount).toBe(1);
+    });
+
+    it('keeps the imported reading that arrives (telemetry.received) before the reload answers', () => {
+      const { store, api, sse } = setup();
+      const farms = new Subject<FarmOverview[]>();
+      api.farms.mockReturnValue(farms);
+
+      // The API's order: fleet.changed, then the newest imported reading, while /farms loads.
+      sse.pushEvent('fleet.changed', { turbineId: 'TURB990' });
+      sse.push(imported({ id: 'imp-2', timestamp: '2026-01-03T00:00:00.000Z' }));
+      expect(warn).not.toHaveBeenCalled();
+      expect(store.recentlyUpdated()).toBe('TURB990');
+
+      // The reload predates nothing newer: its latest (23:55) is older than the live one.
+      farms.next(withAssigned(imported()));
+      expect(store.turbines().find((t) => t.id === 'TURB990')?.latest?.id).toBe('imp-2');
+      expect(store.fleetTime()).toBe(Date.parse('2026-01-03T00:00:00.000Z'));
+    });
+
+    it('accepts the turbine only until a reload sent after the announcement answers', () => {
+      const { store, api, sse } = setup();
+      // A reload that (oddly) doesn't list it: the announcement ends with it.
+      api.farms.mockReturnValue(of(farmsFixture()));
+      sse.pushEvent('fleet.changed', { turbineId: 'TURB990' });
+
+      sse.push(imported({ timestamp: '2026-01-03T00:00:00.000Z' }));
+
+      expect(store.turbines().map((t) => t.id)).toEqual(['TURB001', 'TURB002']);
+      expect(store.recentlyUpdated()).toBeNull();
+      expect(warn).toHaveBeenCalledOnce();
+    });
+
+    it('warns again about a turbine it had warned about before the announcement', () => {
+      const { api, sse } = setup();
+      sse.push(imported({ id: 'before' }));
+      expect(warn).toHaveBeenCalledOnce();
+
+      api.farms.mockReturnValue(of(farmsFixture()));
+      sse.pushEvent('fleet.changed', { turbineId: 'TURB990' });
+      sse.push(imported({ id: 'after', timestamp: '2026-01-03T00:00:00.000Z' }));
+
+      expect(warn).toHaveBeenCalledTimes(2);
+    });
+
+    it('reloads without an announcement from a local reloadFleet()', () => {
+      const { store, api } = setup();
+      api.farms.mockReturnValue(of(withAssigned(null)));
+
+      store.reloadFleet();
+
+      expect(api.farms).toHaveBeenCalledTimes(2);
+      expect(store.turbines().find((t) => t.id === 'TURB990')?.staleness).toBe('empty');
+    });
   });
 
   it('summarises the fleet and each farm from the latest readings', () => {
@@ -917,6 +1035,7 @@ describe('FleetStore', () => {
       expect(api.telemetry).toHaveBeenCalledTimes(2);
       expect(api.telemetry).toHaveBeenLastCalledWith('TURB001', expect.anything());
       expect(store.alertConfigVersion()).toBe(1);
+      expect(store.unallocatedVersion()).toBe(1); // missed unallocated-turbine.changed
       expect(store.loading()).toBe(false); // no loading screen for a resync
 
       // A live reading newer than the resync's response is not replaced by it.

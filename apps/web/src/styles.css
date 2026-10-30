@@ -261,12 +261,14 @@
   --mat-chip-outline-color: var(--danger);
 }
 
-/* Expandable table rows (alert history): the detail row sizes to its content and is gone while
-   collapsed (Material gives every row a fixed height). */
-tr.mat-mdc-row.history-detail-row {
+/* Expandable table rows (alert history, unallocated turbines): the detail row sizes to its
+   content and is gone while collapsed (Material gives every row a fixed height). */
+tr.mat-mdc-row.history-detail-row,
+tr.mat-mdc-row.detail-row {
   height: auto;
 }
-tr.mat-mdc-row.history-detail-row[hidden] {
+tr.mat-mdc-row.history-detail-row[hidden],
+tr.mat-mdc-row.detail-row[hidden] {
   display: none;
 }
 

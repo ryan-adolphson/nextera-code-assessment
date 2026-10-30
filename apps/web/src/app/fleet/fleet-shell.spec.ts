@@ -25,12 +25,13 @@ describe('FleetShell navigation', () => {
   const nav = () => app.root().querySelector<HTMLElement>('#main-nav')!;
   const url = () => TestBed.inject(Router).url;
 
-  it('shows the four sections in order, each a link', async () => {
+  it('shows the five sections in order, each a link', async () => {
     await open('/farms');
     expect(navLinks().map((a) => [app.text(a), a.getAttribute('href')])).toEqual([
       ['Farms', '/farms'],
       ['Turbines', '/turbines'],
       ['Alerting', '/alerting'],
+      ['Unallocated', '/unallocated'],
       ['Reporting', '/reporting'],
     ]);
     const icons = [...app.root().querySelectorAll('nav[aria-label=Main] mat-icon')];
@@ -38,6 +39,7 @@ describe('FleetShell navigation', () => {
       'map',
       'wind-power',
       'notifications',
+      'help',
       'bar-chart',
     ]);
     for (const icon of icons) {
@@ -54,6 +56,8 @@ describe('FleetShell navigation', () => {
     ['/alerting', 'nav-alerting'], // redirects to /alerting/history
     ['/alerting/history', 'nav-alerting'],
     ['/alerting/rules', 'nav-alerting'],
+    ['/unallocated', 'nav-unallocated'], // redirects to /unallocated/pending
+    ['/unallocated/blocked', 'nav-unallocated'],
     ['/reporting', 'nav-reporting'],
   ])('marks only the current section on %s', async (path, active) => {
     await open(path);
@@ -91,6 +95,8 @@ describe('FleetShell navigation', () => {
     ['/turbines', 'Turbines · Nextera'],
     ['/alerting', 'Alert history · Nextera'], // opens on the History tab
     ['/alerting/rules', 'Alert rules · Nextera'],
+    ['/unallocated', 'Unallocated turbines · Nextera'], // opens on the Pending tab
+    ['/unallocated/blocked', 'Blocked turbines · Nextera'],
     ['/reporting', 'Reporting · Nextera'],
   ])('titles %s "%s"', async (path, title) => {
     await open(path);

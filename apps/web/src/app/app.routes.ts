@@ -56,6 +56,30 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./alerting/alert-history-page').then((m) => m.AlertHistoryPage),
       },
+      // Unallocated turbines (owners and admins; the API answers viewers 404): Pending first.
+      {
+        path: 'unallocated',
+        canMatch: [roleGuard('owner')],
+        children: [
+          { path: '', pathMatch: 'full', redirectTo: 'pending' },
+          {
+            path: 'pending',
+            title: 'Unallocated turbines · Nextera',
+            loadComponent: () =>
+              import('./unallocated/unallocated-pending-page').then(
+                (m) => m.UnallocatedPendingPage,
+              ),
+          },
+          {
+            path: 'blocked',
+            title: 'Blocked turbines · Nextera',
+            loadComponent: () =>
+              import('./unallocated/unallocated-blocked-page').then(
+                (m) => m.UnallocatedBlockedPage,
+              ),
+          },
+        ],
+      },
       {
         path: 'reporting',
         title: 'Reporting · Nextera',

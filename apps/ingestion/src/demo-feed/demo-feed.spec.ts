@@ -65,7 +65,7 @@ describe('demo feed', () => {
 
     expect(createPubSub).toHaveBeenCalledWith(undefined);
     expect(topic).toHaveBeenCalledWith('telemetry');
-    expect(published()).toHaveLength(DEMO_TURBINES.length - 1);
+    expect(published()).toHaveLength(DEMO_TURBINES.length); // −TURB013, +TURB099
     expect(sleep).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledOnce();
   });
@@ -89,6 +89,21 @@ describe('demo feed', () => {
     expect(readings.map((r) => r.turbine_id)).not.toContain(
       DEMO_ANOMALIES.stopped.turbineId,
     );
+    // The unallocated turbine: not in the fleet, one reading claiming FARM01.
+    expect(DEMO_TURBINES.map((t) => t.turbineId)).not.toContain(
+      DEMO_ANOMALIES.unallocated.turbineId,
+    );
+    expect(
+      readings.filter(
+        (r) => r.turbine_id === DEMO_ANOMALIES.unallocated.turbineId,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        turbine_id: 'TURB099',
+        farm_id: 'FARM01',
+        timestamp: '2026-10-08T12:05:00.000Z',
+      }),
+    ]);
     // Same values as the seed for that time; received_at is left to Pub/Sub's publishTime.
     const seeded = generateTelemetry({
       turbines: DEMO_TURBINES,
@@ -125,7 +140,7 @@ describe('demo feed', () => {
 
     expect(sleep).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(60_000, controller.signal);
-    expect(published()).toHaveLength(2 * (DEMO_TURBINES.length - 1));
+    expect(published()).toHaveLength(2 * DEMO_TURBINES.length);
     expect(close).toHaveBeenCalledOnce();
   });
 

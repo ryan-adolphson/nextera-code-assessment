@@ -80,6 +80,11 @@ export const DEMO_ANOMALIES = {
   stopped: { turbineId: 'TURB013', offsetMinutes: 40 },
   /** TURB008: 4 readings missing (a 20-minute hole). */
   gap: { turbineId: 'TURB008', offsetMinutes: 20 * 60, readings: 4 },
+  /**
+   * TURB099 claims FARM01 but isn't in the fleet (not in DEMO_TURBINES, never seeded): only the
+   * live feed publishes it, so ingestion holds its readings as an unallocated (unknown) turbine.
+   */
+  unallocated: { turbineId: 'TURB099', farmId: 'FARM01' },
   /** Readings that arrived late: received_at = timestamp + delayMinutes. */
   late: [
     { turbineId: 'TURB005', offsetMinutes: 12 * 60, delayMinutes: 10 },
