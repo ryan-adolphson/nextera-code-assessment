@@ -17,7 +17,10 @@ const INSTRUCTIONS =
   'Read-only access to the Nextera wind-farm fleet: farms → turbines → telemetry every 5 ' +
   'minutes (power kW, wind m/s, rotor rpm, blade pitch °, gearbox °C), the alert rules and the ' +
   'readings they flagged. Ids are business keys ("FARM01", "TURB001"). Times are UTC ISO 8601 ' +
-  'with a zone; ranges are [from, to) on measurement time. Start with list_farms.';
+  'with a zone; ranges are [from, to) on measurement time. Start with list_farms. ' +
+  'get_weather gives a farm’s hourly or daily Open-Meteo weather (pair it with get_telemetry ' +
+  'for power vs weather). Readings from turbines not in the fleet, or reporting the wrong ' +
+  'farm, are held, not stored: list_unallocated and get_unallocated_readings show them.';
 
 /** The MCP server with every fleet tool registered on `db` (a read-only client in production). */
 export function createServer(

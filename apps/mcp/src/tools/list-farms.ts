@@ -10,7 +10,8 @@ export const listFarmsTool = defineTool({
     '(power kW, wind m/s, rotor rpm, blade pitch °, gearbox °C, triggered alert rules). ' +
     'Each turbine has a status from the time since its latest measurement: ok, stale-15, ' +
     'stale-30, stale-60 (no data for more than 15/30/60 minutes) or no-data (never reported), ' +
-    'and minutesSinceLatest. Use it for fleet health and "which turbines stopped reporting?".',
+    'and minutesSinceLatest. Use it for fleet health and "which turbines stopped reporting?". ' +
+    'Turbine ids that report but are not in the fleet are not here: see list_unallocated.',
   inputSchema: {},
   async run({ db, now }) {
     const farms = await listFarms(db);

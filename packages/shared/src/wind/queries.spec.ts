@@ -8,6 +8,7 @@ import {
   alertsInRange,
   getTurbine,
   listAlertRules,
+  listUnallocated,
   parseRange,
   reportSummary,
   reportTelemetry,
@@ -392,6 +393,30 @@ describe('read queries', () => {
         metrics: { powerOutputKw: null, gearboxTempC: null },
         flaggedReadings: 0,
       });
+    });
+  });
+
+  describe('listUnallocated', () => {
+    beforeEach(() => {
+      prisma.unallocatedTurbine.findMany.mockResolvedValue([]);
+    });
+
+    it.each([
+      ['no filter: pending', undefined, { status: 'pending' }],
+      ['a status', { status: 'blocked' as const }, { status: 'blocked' }],
+      [
+        'a turbine id',
+        { turbineId: 'TURB003' },
+        { status: 'pending', turbineId: 'TURB003' },
+      ],
+    ])('filters by %s', async (_, filter, where) => {
+      expect(await listUnallocated(prisma, filter)).toEqual([]);
+
+      expect(prisma.unallocatedTurbine.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where }),
+      );
+      // No entries: nothing else is read.
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
 });

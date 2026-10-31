@@ -4,6 +4,7 @@ import { connectClient } from './testing.js';
 
 const NOW = Date.parse('2026-01-02T00:20:00Z');
 const RANGE = { from: '2026-01-01T00:00:00Z', to: '2026-01-03T00:00:00Z' };
+const ENTRY_ID = '3f0c6a2e-8d4b-4c1e-9a57-2b6f0e1d9c44';
 
 const turbineRow = (turbineId: string, farmId = 'FARM01') => ({
   id: `uuid-${turbineId}`,
@@ -43,7 +44,7 @@ describe('MCP server (mocked Prisma)', () => {
     await mcp.close();
   });
 
-  it('lists the 7 read-only tools with their input schemas', async () => {
+  it('lists the 10 read-only tools with their input schemas', async () => {
     const { tools } = await mcp.client.listTools();
 
     expect(tools.map((t) => t.name)).toEqual([
@@ -54,6 +55,9 @@ describe('MCP server (mocked Prisma)', () => {
       'list_alerts',
       'list_alert_rules',
       'get_report_summary',
+      'get_weather',
+      'list_unallocated',
+      'get_unallocated_readings',
     ]);
     for (const tool of tools) {
       expect(tool.annotations).toMatchObject({
@@ -82,6 +86,23 @@ describe('MCP server (mocked Prisma)', () => {
       'to',
       'limit',
     ]);
+    const weather = tools.find((t) => t.name === 'get_weather')!;
+    expect(weather.inputSchema.required).toEqual(['farmId', 'from', 'to']);
+    expect(weather.inputSchema.properties!.interval).toMatchObject({
+      enum: ['hourly', 'daily'],
+      default: 'daily',
+    });
+    const unallocated = tools.find((t) => t.name === 'list_unallocated')!;
+    expect(unallocated.inputSchema.properties!.status).toMatchObject({
+      enum: ['pending', 'blocked'],
+      default: 'pending',
+    });
+    const held = tools.find((t) => t.name === 'get_unallocated_readings')!;
+    expect(held.inputSchema.required).toEqual(['id']);
+    expect(held.inputSchema.properties!.limit).toMatchObject({
+      maximum: 2016,
+      default: 288,
+    });
     const farms = tools.find((t) => t.name === 'list_farms')!;
     expect(farms.inputSchema).toMatchObject({
       type: 'object',
@@ -129,6 +150,42 @@ describe('MCP server (mocked Prisma)', () => {
         { turbineId: '  ' },
         'turbineId',
       ],
+      [
+        'an unknown weather interval',
+        'get_weather',
+        { farmId: 'FARM01', ...RANGE, interval: 'weekly' },
+        'interval',
+      ],
+      [
+        'a weather range without to',
+        'get_weather',
+        { farmId: 'FARM01', from: RANGE.from },
+        'to',
+      ],
+      [
+        'a zone-less weather bound',
+        'get_weather',
+        { farmId: 'FARM01', from: '2026-01-01T00:00:00', to: RANGE.to },
+        'from must be an ISO 8601 date-time with a time zone',
+      ],
+      [
+        'an unknown unallocated status',
+        'list_unallocated',
+        { status: 'resolved' },
+        'status',
+      ],
+      [
+        'a turbine id instead of an entry id',
+        'get_unallocated_readings',
+        { id: 'TURB099' },
+        'id must be the UUID of an entry from list_unallocated',
+      ],
+      [
+        'a held-readings limit over 2016',
+        'get_unallocated_readings',
+        { id: ENTRY_ID, limit: 2017 },
+        'limit',
+      ],
     ])('rejects %s', async (_, tool, args, message) => {
       const result = await mcp.call(tool, args);
 
@@ -137,6 +194,9 @@ describe('MCP server (mocked Prisma)', () => {
       expect(prisma.turbine.findUnique).not.toHaveBeenCalled();
       expect(prisma.telemetry.findMany).not.toHaveBeenCalled();
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      expect(prisma.farm.findUnique).not.toHaveBeenCalled();
+      expect(prisma.unallocatedTurbine.findMany).not.toHaveBeenCalled();
+      expect(prisma.unallocatedTurbine.findUnique).not.toHaveBeenCalled();
     });
 
     it('rejects a misspelled argument instead of dropping it (get_telemetry form → from)', async () => {
@@ -161,6 +221,13 @@ describe('MCP server (mocked Prisma)', () => {
       ['list_alerts', { ...RANGE, turbineId: 'TURB001' }, 'turbineId'],
       ['list_alert_rules', { enabled: true }, 'enabled'],
       ['get_report_summary', { farmId: 'FARM01', ...RANGE, limit: 5 }, 'limit'],
+      [
+        'get_weather',
+        { farmId: 'FARM01', ...RANGE, turbineId: 'x' },
+        'turbineId',
+      ],
+      ['list_unallocated', { status: 'pending', farmId: 'FARM01' }, 'farmId'],
+      ['get_unallocated_readings', { id: ENTRY_ID, from: RANGE.from }, 'from'],
     ])('%s rejects an unknown argument, naming it', async (tool, args, key) => {
       const result = await mcp.call(tool, args);
 
@@ -171,12 +238,15 @@ describe('MCP server (mocked Prisma)', () => {
       expect(prisma.turbine.findUnique).not.toHaveBeenCalled();
       expect(prisma.telemetry.findMany).not.toHaveBeenCalled();
       expect(prisma.alertConfig.findMany).not.toHaveBeenCalled();
+      expect(prisma.unallocatedTurbine.findMany).not.toHaveBeenCalled();
+      expect(prisma.heldTelemetry.findMany).not.toHaveBeenCalled();
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
 
     it.each([
       ['list_alerts', RANGE],
       ['get_report_summary', { farmId: 'FARM01', ...RANGE }],
+      ['get_weather', { farmId: 'FARM01', ...RANGE }],
     ])(
       '%s rejects a range over 31 days or a reversed one',
       async (tool, base) => {
@@ -205,6 +275,7 @@ describe('MCP server (mocked Prisma)', () => {
           text: 'to must be after from',
         });
         expect(prisma.telemetry.findMany).not.toHaveBeenCalled();
+        expect(prisma.farmWeatherHourly.findMany).not.toHaveBeenCalled();
         expect(prisma.$queryRaw).not.toHaveBeenCalled();
       },
     );
@@ -235,6 +306,7 @@ describe('MCP server (mocked Prisma)', () => {
     ['get_report_summary', { turbineId: 'TURB999', ...RANGE }],
   ])('%s reports an unknown turbine as an error result', async (tool, args) => {
     prisma.turbine.findUnique.mockResolvedValue(null);
+    prisma.unallocatedTurbine.findMany.mockResolvedValue([]); // nothing held for it
 
     expect(await mcp.call(tool, args)).toMatchObject({
       isError: true,
@@ -395,5 +467,448 @@ describe('MCP server (mocked Prisma)', () => {
     expect(prisma.alertConfig.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { enabled: true } }),
     );
+  });
+
+  describe('get_weather', () => {
+    const hour = (time: string, source: 'archive' | 'forecast') => ({
+      farmId: 'FARM01',
+      time: new Date(time),
+      source,
+      windSpeed10mMs: 6.1,
+      windSpeed100mMs: 9.4,
+      windDirection10mDeg: 200,
+      windDirection100mDeg: 210,
+      windGusts10mMs: 12.3,
+      temperature2mC: -3.5,
+      relativeHumidity2mPct: 80,
+      surfacePressureHpa: 1012.5,
+      precipitationMm: 0,
+      cloudCoverPct: null,
+      fetchedAt: new Date(time),
+    });
+
+    beforeEach(() => {
+      prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
+    });
+
+    it('hourly: the stored hours by column, with the source counts', async () => {
+      prisma.farmWeatherHourly.findMany.mockResolvedValue([
+        hour('2026-01-01T00:00:00Z', 'archive'),
+        hour('2026-01-01T01:00:00Z', 'forecast'),
+      ]);
+
+      const result = (
+        await mcp.call('get_weather', {
+          farmId: 'FARM01',
+          from: '2026-01-01T00:00:00Z',
+          to: '2026-01-01T02:00:00+00:00',
+          interval: 'hourly',
+        })
+      ).json();
+
+      expect(prisma.farmWeatherHourly.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            farmId: 'FARM01',
+            time: {
+              gte: new Date('2026-01-01T00:00:00Z'),
+              lt: new Date('2026-01-01T02:00:00Z'),
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({
+        farmId: 'FARM01',
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-01-01T02:00:00.000Z',
+        interval: 'hourly',
+        count: 2,
+        sources: { archive: 1, forecast: 1 },
+        columns: [
+          'time',
+          'source',
+          'windSpeed10mMs',
+          'windSpeed100mMs',
+          'windDirection10mDeg',
+          'windDirection100mDeg',
+          'windGusts10mMs',
+          'temperature2mC',
+          'relativeHumidity2mPct',
+          'surfacePressureHpa',
+          'precipitationMm',
+          'cloudCoverPct',
+        ],
+        rows: [
+          [
+            '2026-01-01T00:00:00.000Z',
+            'archive',
+            6.1,
+            9.4,
+            200,
+            210,
+            12.3,
+            -3.5,
+            80,
+            1012.5,
+            0,
+            null,
+          ],
+          [
+            '2026-01-01T01:00:00.000Z',
+            'forecast',
+            6.1,
+            9.4,
+            200,
+            210,
+            12.3,
+            -3.5,
+            80,
+            1012.5,
+            0,
+            null,
+          ],
+        ],
+      });
+    });
+
+    it('daily by default: one row per UTC day from Postgres', async () => {
+      prisma.$queryRaw.mockResolvedValue([
+        {
+          day: new Date('2026-01-01T00:00:00Z'),
+          hours: 24,
+          has_forecast: false,
+          wind_speed_10m_mean: 6.123,
+          wind_speed_10m_max: 9,
+          wind_speed_100m_mean: '9.456',
+          wind_speed_100m_max: 14,
+          wind_gusts_10m_max: 18.2,
+          wind_direction_100m: 359.999,
+          temperature_2m_min: -8,
+          temperature_2m_max: 1,
+          temperature_2m_mean: -3.25,
+          relative_humidity_2m_mean: 81,
+          surface_pressure_mean: 1010,
+          precipitation_sum: 0.4,
+          cloud_cover_mean: null,
+        },
+      ]);
+
+      const result = (
+        await mcp.call('get_weather', { farmId: 'FARM01', ...RANGE })
+      ).json();
+
+      expect(prisma.farmWeatherHourly.findMany).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        interval: 'daily',
+        count: 1,
+        sources: { archive: 1, forecast: 0 },
+      });
+      expect(result.columns.slice(0, 4)).toEqual([
+        'date',
+        'hours',
+        'source',
+        'windSpeed10mMeanMs',
+      ]);
+      expect(result.rows).toEqual([
+        [
+          '2026-01-01',
+          24,
+          'archive',
+          6.12,
+          9,
+          9.46,
+          14,
+          18.2,
+          0,
+          -8,
+          1,
+          -3.25,
+          81,
+          1010,
+          0.4,
+          null,
+        ],
+      ]);
+    });
+
+    it('an empty range is a result, not an error', async () => {
+      prisma.$queryRaw.mockResolvedValue([]);
+
+      const result = await mcp.call('get_weather', {
+        farmId: 'FARM01',
+        ...RANGE,
+      });
+
+      expect(result.isError).toBe(false);
+      expect(result.json()).toMatchObject({ count: 0, rows: [] });
+    });
+
+    it('reports an unknown farm as an error result before reading weather', async () => {
+      prisma.farm.findUnique.mockResolvedValue(null);
+
+      expect(
+        await mcp.call('get_weather', { farmId: 'FARM99', ...RANGE }),
+      ).toMatchObject({ isError: true, text: 'Farm FARM99 not found' });
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('reports a database failure as an error result', async () => {
+      prisma.$queryRaw.mockRejectedValue(new Error('canceling statement'));
+
+      expect(
+        await mcp.call('get_weather', { farmId: 'FARM01', ...RANGE }),
+      ).toMatchObject({
+        isError: true,
+        text: 'The query failed: canceling statement',
+      });
+    });
+  });
+
+  describe('unallocated turbines', () => {
+    const entryRow = (overrides: Record<string, unknown> = {}) => ({
+      id: ENTRY_ID,
+      turbineId: 'TURB099',
+      reportedFarmId: 'FARM01',
+      kind: 'unknown_turbine',
+      status: 'pending',
+      firstSeenAt: new Date('2026-01-01T18:00:00Z'),
+      lastSeenAt: new Date('2026-01-01T23:55:30Z'),
+      blockedAt: null,
+      blockedById: null,
+      blockedBy: null,
+      createdAt: new Date('2026-01-01T18:00:00Z'),
+      updatedAt: new Date('2026-01-01T23:55:30Z'),
+      _count: { held: 72 },
+      ...overrides,
+    });
+    const heldRow = {
+      id: 'h1',
+      unallocated_id: ENTRY_ID,
+      turbine_id: 'TURB099',
+      farm_id: 'FARM01',
+      timestamp: new Date('2026-01-01T23:55:00Z'),
+      received_at: new Date('2026-01-01T23:55:30Z'),
+      created_at: new Date('2026-01-01T23:55:30Z'),
+      power_output_kw: 1500,
+      wind_speed_ms: 9,
+      rotor_rpm: 12,
+      blade_pitch_deg: 2,
+      gearbox_temp_c: 60,
+    };
+    const farmRef = { id: 'FARM01', name: 'Prairie Ridge' };
+
+    it('list_unallocated: pending entries without the blocking user', async () => {
+      prisma.unallocatedTurbine.findMany.mockResolvedValue([
+        entryRow(),
+      ] as never);
+      prisma.$queryRaw.mockResolvedValue([heldRow]);
+      prisma.turbine.findMany.mockResolvedValue([]);
+      prisma.farm.findMany.mockResolvedValue([farmRef] as never);
+
+      const result = (await mcp.call('list_unallocated')).json();
+
+      expect(prisma.unallocatedTurbine.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { status: 'pending' } }),
+      );
+      expect(result).toEqual({
+        asOf: '2026-01-02T00:20:00.000Z',
+        status: 'pending',
+        count: 1,
+        entries: [
+          {
+            id: ENTRY_ID,
+            turbineId: 'TURB099',
+            kind: 'unknown_turbine',
+            status: 'pending',
+            reportedFarmId: 'FARM01',
+            reportedFarm: farmRef,
+            currentFarm: null,
+            firstSeenAt: '2026-01-01T18:00:00.000Z',
+            lastSeenAt: '2026-01-01T23:55:30.000Z',
+            minutesSinceLastSeen: 24,
+            heldCount: 72,
+            latest: {
+              timestamp: '2026-01-01T23:55:00.000Z',
+              receivedAt: '2026-01-01T23:55:30.000Z',
+              powerOutputKw: 1500,
+              windSpeedMs: 9,
+              rotorRpm: 12,
+              bladePitchDeg: 2,
+              gearboxTempC: 60,
+            },
+            blockedAt: null,
+          },
+        ],
+      });
+    });
+
+    it('list_unallocated: blocked entries of one turbine, never the blocking user’s email', async () => {
+      prisma.unallocatedTurbine.findMany.mockResolvedValue([
+        entryRow({
+          turbineId: 'TURB005',
+          reportedFarmId: 'FARM03',
+          status: 'blocked',
+          blockedAt: new Date('2026-01-01T12:00:00Z'),
+          blockedById: 'user-1',
+          blockedBy: { email: 'owner@nextera.local' },
+          _count: { held: 0 },
+        }),
+      ] as never);
+      prisma.$queryRaw.mockResolvedValue([]);
+      prisma.turbine.findMany.mockResolvedValue([
+        { turbineId: 'TURB005', farmId: 'FARM01' },
+      ] as never);
+      prisma.farm.findMany.mockResolvedValue([farmRef] as never);
+
+      const result = await mcp.call('list_unallocated', {
+        status: 'blocked',
+        turbineId: 'TURB005',
+      });
+
+      expect(prisma.unallocatedTurbine.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: 'blocked', turbineId: 'TURB005' },
+        }),
+      );
+      expect(result.text).not.toContain('owner@nextera.local');
+      expect(result.json().entries[0]).toMatchObject({
+        kind: 'farm_mismatch',
+        status: 'blocked',
+        reportedFarm: null,
+        currentFarm: farmRef,
+        heldCount: 0,
+        latest: null,
+        blockedAt: '2026-01-01T12:00:00.000Z',
+      });
+      expect(result.json().entries[0]).not.toHaveProperty('blockedBy');
+    });
+
+    it('get_unallocated_readings: the entry and its held readings by column', async () => {
+      prisma.unallocatedTurbine.findMany.mockResolvedValue([
+        entryRow(),
+      ] as never);
+      prisma.$queryRaw.mockResolvedValue([heldRow]);
+      prisma.turbine.findMany.mockResolvedValue([]);
+      prisma.farm.findMany.mockResolvedValue([farmRef] as never);
+      prisma.unallocatedTurbine.findUnique.mockResolvedValue({
+        id: ENTRY_ID,
+      } as never);
+      prisma.heldTelemetry.findMany.mockResolvedValue([
+        {
+          id: 'h1',
+          unallocatedId: ENTRY_ID,
+          turbineId: 'TURB099',
+          farmId: 'FARM01',
+          timestamp: new Date('2026-01-01T23:55:00Z'),
+          receivedAt: new Date('2026-01-01T23:55:30Z'),
+          createdAt: new Date('2026-01-01T23:55:30Z'),
+          powerOutputKw: 1500,
+          windSpeedMs: 9,
+          rotorRpm: 12,
+          bladePitchDeg: 2,
+          gearboxTempC: 60,
+        },
+      ]);
+
+      const result = (
+        await mcp.call('get_unallocated_readings', { id: ENTRY_ID, limit: 5 })
+      ).json();
+
+      expect(prisma.heldTelemetry.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { unallocatedId: ENTRY_ID },
+          take: 5,
+        }),
+      );
+      expect(result).toMatchObject({
+        entry: { id: ENTRY_ID, turbineId: 'TURB099', heldCount: 72 },
+        count: 1,
+        columns: [
+          'timestamp',
+          'powerOutputKw',
+          'windSpeedMs',
+          'rotorRpm',
+          'bladePitchDeg',
+          'gearboxTempC',
+        ],
+        rows: [['2026-01-01T23:55:00.000Z', 1500, 9, 12, 2, 60]],
+      });
+    });
+
+    it('get_unallocated_readings reports an unknown entry as an error result', async () => {
+      prisma.unallocatedTurbine.findMany.mockResolvedValue([]);
+
+      expect(
+        await mcp.call('get_unallocated_readings', { id: ENTRY_ID }),
+      ).toMatchObject({
+        isError: true,
+        text: `Unallocated turbine ${ENTRY_ID} not found`,
+      });
+      expect(prisma.heldTelemetry.findMany).not.toHaveBeenCalled();
+    });
+
+    it('get_turbine points an unknown but reporting turbine to list_unallocated', async () => {
+      prisma.turbine.findUnique.mockResolvedValue(null);
+      prisma.unallocatedTurbine.findMany.mockResolvedValue([
+        entryRow(),
+      ] as never);
+      prisma.$queryRaw.mockResolvedValue([]);
+      prisma.turbine.findMany.mockResolvedValue([]);
+      prisma.farm.findMany.mockResolvedValue([farmRef] as never);
+
+      expect(
+        await mcp.call('get_turbine', { turbineId: 'TURB099' }),
+      ).toMatchObject({
+        isError: true,
+        text:
+          'Turbine TURB099 not found. It is reporting but is not in the fleet: its readings ' +
+          'are held (72 readings reporting farm FARM01); see list_unallocated with turbineId ' +
+          '"TURB099"',
+      });
+      expect(prisma.unallocatedTurbine.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: 'pending', turbineId: 'TURB099' },
+        }),
+      );
+    });
+
+    it('get_turbine lists the pending entries of a turbine reporting another farm', async () => {
+      prisma.turbine.findUnique.mockResolvedValue({
+        ...turbineRow('TURB003'),
+        farm: {
+          id: 'FARM01',
+          name: 'Prairie Ridge',
+          latitude: new Prisma.Decimal('41.25'),
+          longitude: new Prisma.Decimal('-96.53'),
+        },
+      } as never);
+      prisma.telemetry.findFirst.mockResolvedValue(null);
+      prisma.unallocatedTurbine.findMany.mockResolvedValue([
+        entryRow({ turbineId: 'TURB003', reportedFarmId: 'FARM02' }),
+      ] as never);
+      prisma.$queryRaw.mockResolvedValue([]);
+      prisma.turbine.findMany.mockResolvedValue([
+        { turbineId: 'TURB003', farmId: 'FARM01' },
+      ] as never);
+      prisma.farm.findMany.mockResolvedValue([farmRef] as never);
+
+      const result = (
+        await mcp.call('get_turbine', { turbineId: 'TURB003' })
+      ).json();
+
+      expect(result).toMatchObject({
+        id: 'TURB003',
+        farm: { id: 'FARM01' },
+        status: 'no-data',
+        pendingUnallocated: [
+          {
+            id: ENTRY_ID,
+            reportedFarmId: 'FARM02',
+            heldCount: 72,
+            lastSeenAt: '2026-01-01T23:55:30.000Z',
+          },
+        ],
+      });
+    });
   });
 });

@@ -115,7 +115,7 @@ The repo-local `zod` skill (Zod 4) is preloaded too: it covers the MCP server's 
 
 ## MCP server (apps/mcp)
 
-- **`@nextera/mcp`:** a local stdio MCP server (plain Node + `@modelcontextprotocol/sdk` `McpServer.registerTool`, zod 4, no NestJS) with 7 read-only tools over the shared read queries; its Prisma pool (`max: 2`) sets `-c default_transaction_read_only=on` (writes fail with 25006), stdout carries only JSON-RPC (logs on stderr), timestamps use `timestampProblem`, and errors are `isError` results; unit tests via `InMemoryTransport` + `mockDeep`, e2e on Testcontainers.
+- **`@nextera/mcp`:** a local stdio MCP server (plain Node + `@modelcontextprotocol/sdk` `McpServer.registerTool`, zod 4, no NestJS) with 10 read-only tools over the shared read queries (incl. `get_weather` → `farmWeather`, daily by default; `list_unallocated` / `get_unallocated_readings` → `listUnallocated` (optional `turbineId` filter) / `getUnallocated` / `heldReadings`, without `blockedBy` emails since MCP has no users; `get_turbine` adds `pendingUnallocated` and points an unknown but reporting id to `list_unallocated`); a new tool gets a row in `server.spec.ts`'s unknown-argument table and an e2e case; its Prisma pool (`max: 2`) sets `-c default_transaction_read_only=on` (writes fail with 25006), stdout carries only JSON-RPC (logs on stderr), timestamps use `timestampProblem`, and errors are `isError` results; unit tests via `InMemoryTransport` + `mockDeep`, e2e on Testcontainers.
 
 ## Docker: the api and ingestion images
 

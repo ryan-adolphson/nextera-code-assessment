@@ -601,13 +601,19 @@ const fromHeldRow = (r: HeldRow): HeldTelemetry => ({
  * The pending (default) or blocked unallocated entries, latest activity first, each with its held
  * count, newest held reading, the reported farm (if it exists) and, for a turbine that exists, its
  * current farm. Pending entries are capped (MAX_PENDING_UNALLOCATED); blocked ones only come from
- * owners' actions.
+ * owners' actions. `turbineId` narrows the list to that turbine id's entries (one per reported farm).
  */
 export async function listUnallocated(
   db: ReadClient,
-  { status = 'pending' }: { status?: UnallocatedStatus } = {},
+  {
+    status = 'pending',
+    turbineId,
+  }: { status?: UnallocatedStatus; turbineId?: string } = {},
 ): Promise<UnallocatedTurbineResponse[]> {
-  return describeUnallocated(db, { status });
+  return describeUnallocated(
+    db,
+    turbineId === undefined ? { status } : { status, turbineId },
+  );
 }
 
 /** One unallocated entry (pending or blocked) as `listUnallocated` shows it. */
