@@ -6,6 +6,8 @@
 #      The web image has no API URL baked in: Terraform sets API_BASE_URL on the service.
 #   5. `gcloud run jobs update` the demo feed job (ingestion image), only if the repository variable
 #      DEMO_FEED_JOB is set (Terraform demo_feed_enabled).
+#   6. `gcloud run jobs update` the weather sync job (ingestion image), only if the repository variable
+#      WEATHER_SYNC_JOB is set (Terraform weather_sync_enabled).
 # Authenticates with Workload Identity Federation (no keys). One-time setup: CLAUDE.md, "Deploying".
 # Repository variables come from `terraform output github_actions_variables`.
 name: Deploy
@@ -52,6 +54,7 @@ jobs:
       WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
       DEPLOYER_SA: ${{ vars.GCP_DEPLOYER_SA }}
       DEMO_FEED_JOB: ${{ vars.DEMO_FEED_JOB }} # optional: set only while Terraform's demo_feed_enabled is on
+      WEATHER_SYNC_JOB: ${{ vars.WEATHER_SYNC_JOB }} # optional: set only while Terraform's weather_sync_enabled is on
       CLOUD_SQL_PROXY_VERSION: v2.26.0
     steps:
       - name: Check repository variables
@@ -188,4 +191,13 @@ jobs:
         if: env.DEMO_FEED_JOB != ''
         run: |
           gcloud run jobs update "$DEMO_FEED_JOB" --image "${REGISTRY}/ingestion:${SHA}" \
+            --project "$PROJECT_ID" --region "$REGION" --quiet
+
+      # --- 6. Weather sync job (optional; weather-sync.tf) ----------------------------------------
+      # Same ingestion image (node dist/weather-sync/main.js); the next Cloud Scheduler run uses it.
+      # Skipped without WEATHER_SYNC_JOB.
+      - name: Update weather sync job
+        if: env.WEATHER_SYNC_JOB != ''
+        run: |
+          gcloud run jobs update "$WEATHER_SYNC_JOB" --image "${REGISTRY}/ingestion:${SHA}" \
             --project "$PROJECT_ID" --region "$REGION" --quiet

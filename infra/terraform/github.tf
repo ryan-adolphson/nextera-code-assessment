@@ -2,7 +2,7 @@
 # .github/workflows/deploy.yml exchanges the job's GitHub OIDC token for a short-lived token of the
 # deployer service account. It builds and pushes the images, runs `prisma migrate deploy` through the
 # Cloud SQL Auth Proxy, then deploys nextera-api, nextera-ingestion and nextera-web, and updates the
-# image of the demo feed job if demo_feed_enabled.
+# image of the demo feed job (demo_feed_enabled) and the weather sync job (weather_sync_enabled).
 
 resource "google_iam_workload_identity_pool" "github" {
   workload_identity_pool_id = "github"
@@ -74,23 +74,36 @@ resource "google_cloud_run_v2_service_iam_member" "deployer_developer" {
   member   = "serviceAccount:${google_service_account.deployer.email}"
 }
 
-# `gcloud run jobs update --image` on the demo feed job, if it exists (demo-feed.tf).
+# `gcloud run jobs update --image` on the optional jobs that exist (demo-feed.tf, weather-sync.tf).
 resource "google_cloud_run_v2_job_iam_member" "deployer_developer" {
-  count = var.demo_feed_enabled ? 1 : 0
+  for_each = merge(
+    var.demo_feed_enabled ? { demo_feed = google_cloud_run_v2_job.demo_feed[0].name } : {},
+    var.weather_sync_enabled ? { weather_sync = google_cloud_run_v2_job.weather_sync[0].name } : {},
+  )
 
-  name     = google_cloud_run_v2_job.demo_feed[0].name
+  name     = each.value
   location = var.region
   role     = "roles/run.developer"
   member   = "serviceAccount:${google_service_account.deployer.email}"
 }
 
+# Was count (demo feed only); keeps the existing binding instead of destroying and re-creating it.
+moved {
+  from = google_cloud_run_v2_job_iam_member.deployer_developer[0]
+  to   = google_cloud_run_v2_job_iam_member.deployer_developer["demo_feed"]
+}
+
 # Deploying a revision (or updating a job) that runs as a service account requires actAs on that account.
 resource "google_service_account_iam_member" "deployer_act_as" {
-  for_each = merge({
-    api       = google_service_account.api.name
-    ingestion = google_service_account.ingestion.name
-    web       = google_service_account.web.name
-  }, var.demo_feed_enabled ? { demo_feed = google_service_account.demo_feed[0].name } : {})
+  for_each = merge(
+    {
+      api       = google_service_account.api.name
+      ingestion = google_service_account.ingestion.name
+      web       = google_service_account.web.name
+    },
+    var.demo_feed_enabled ? { demo_feed = google_service_account.demo_feed[0].name } : {},
+    var.weather_sync_enabled ? { weather_sync = google_service_account.weather_sync[0].name } : {},
+  )
 
   service_account_id = each.value
   role               = "roles/iam.serviceAccountUser"

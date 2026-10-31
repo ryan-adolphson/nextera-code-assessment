@@ -420,4 +420,19 @@ describe('AlertRulesPage (/alerting/rules)', () => {
       ['rule-metric', 'rule-comparison', 'rule-value', 'rule-level-select'].map(label),
     ).toEqual(['Metric', 'Condition', 'Threshold', 'Level']);
   });
+
+  it('lays the editor fields out in a grid inside the dialog content, not on it', async () => {
+    await open([]);
+    await click('add-rule');
+    // Material's unlayered `.mat-mdc-dialog-content { display: block }` beats a Tailwind `grid`
+    // class on mat-dialog-content (the fields stacked without gaps). jsdom applies no CSS, so this
+    // pins the structure; the layout itself is checked in a browser.
+    const fields = q('rule-fields')!;
+    expect(fields.tagName).toBe('DIV');
+    expect(fields.parentElement!.tagName).toBe('MAT-DIALOG-CONTENT');
+    const cell = (id: string) => q(id)!.closest('mat-form-field')!.parentElement;
+    for (const id of ['rule-metric', 'rule-comparison', 'rule-value', 'rule-level-select']) {
+      expect(cell(id)).toBe(fields);
+    }
+  });
 });

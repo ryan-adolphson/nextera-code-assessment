@@ -20,7 +20,8 @@
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
     "typecheck": "tsc --noEmit",
     "publish:sample": "tsx scripts/publish-sample.ts",
-    "demo:feed": "tsx scripts/demo-feed.ts"
+    "demo:feed": "tsx scripts/demo-feed.ts",
+    "weather:sync": "tsx scripts/weather-sync.ts"
   },
   "dependencies": {
     "@google-cloud/pubsub": "^6.1.0",

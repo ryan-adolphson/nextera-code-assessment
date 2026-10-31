@@ -1,4 +1,4 @@
-import { seedFromCsv } from '@nextera/shared';
+import { seedFromCsv, upsertWeatherHours } from '@nextera/shared';
 import { SEED_DATA_DIR } from '@nextera/testing/seed-data';
 import { createTestApp, type TestApp } from './helpers.js';
 
@@ -9,7 +9,7 @@ describe('Fleet API (e2e, CSV seed data)', () => {
   beforeAll(async () => {
     t = await createTestApp();
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farms`;
+      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farm_weather_hourly, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
   });
 
@@ -127,6 +127,119 @@ describe('Fleet API (e2e, CSV seed data)', () => {
       const turbine = farms.find((f: { id: string }) => f.id === 'FARM02')
         .turbines[0];
       expect(turbine.latest.timestamp).toBe('2026-01-02T23:55:00.000Z');
+    });
+  });
+
+  describe('GET /api/farms/:farmId/weather', () => {
+    const DAYS = 'from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z';
+    const hour = (iso: string, source: 'archive' | 'forecast') => ({
+      time: new Date(iso),
+      source,
+      windSpeed10mMs: 5,
+      windSpeed100mMs: 10,
+      windDirection10mDeg: 180,
+      windDirection100mDeg: 180,
+      windGusts10mMs: 12,
+      temperature2mC: 2,
+      relativeHumidity2mPct: 80,
+      surfacePressureHpa: 990,
+      precipitationMm: 0.5,
+      cloudCoverPct: null,
+    });
+
+    beforeAll(async () => {
+      await t.prisma.$executeRaw`TRUNCATE TABLE farm_weather_hourly`;
+      await upsertWeatherHours(t.prisma, 'FARM01', [
+        hour('2026-01-01T00:00:00Z', 'archive'),
+        hour('2026-01-01T01:00:00Z', 'archive'),
+        hour('2026-01-02T00:00:00Z', 'forecast'),
+        hour('2026-01-03T00:00:00Z', 'archive'), // outside [from, to)
+      ]);
+    });
+
+    it('returns hourly points by default (viewer)', async () => {
+      const res = await get(`/farms/FARM01/weather?${DAYS}`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toMatchObject({
+        farmId: 'FARM01',
+        interval: 'hourly',
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-01-03T00:00:00.000Z',
+      });
+      expect(body.points.map((p: { time: string }) => p.time)).toEqual([
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T01:00:00.000Z',
+        '2026-01-02T00:00:00.000Z',
+      ]);
+      expect(body.points[0]).toEqual({
+        time: '2026-01-01T00:00:00.000Z',
+        source: 'archive',
+        windSpeed10mMs: 5,
+        windSpeed100mMs: 10,
+        windDirection10mDeg: 180,
+        windDirection100mDeg: 180,
+        windGusts10mMs: 12,
+        temperature2mC: 2,
+        relativeHumidity2mPct: 80,
+        surfacePressureHpa: 990,
+        precipitationMm: 0.5,
+        cloudCoverPct: null,
+      });
+    });
+
+    it('returns UTC days with interval=daily', async () => {
+      const res = await get(`/farms/FARM01/weather?${DAYS}&interval=daily`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.interval).toBe('daily');
+      expect(body.points).toEqual([
+        expect.objectContaining({
+          date: '2026-01-01',
+          hours: 2,
+          source: 'archive',
+          windSpeed100mMeanMs: 10,
+          windDirection100mDeg: 180,
+          precipitationSumMm: 1,
+          cloudCoverMeanPct: null,
+        }),
+        expect.objectContaining({
+          date: '2026-01-02',
+          hours: 1,
+          source: 'forecast',
+        }),
+      ]);
+    });
+
+    it.each([
+      ['an unknown interval', `${DAYS}&interval=weekly`],
+      ['a missing from', 'to=2026-01-03T00:00:00Z'],
+      [
+        'a zone-less timestamp',
+        'from=2026-01-01T00:00:00&to=2026-01-03T00:00:00Z',
+      ],
+      ['a reversed range', 'from=2026-01-03T00:00:00Z&to=2026-01-01T00:00:00Z'],
+      [
+        'a range over 31 days',
+        'from=2026-01-01T00:00:00Z&to=2026-03-01T00:00:00Z',
+      ],
+      ['an unknown parameter', `${DAYS}&limit=5`],
+    ])('rejects %s with 400', async (_case, query) => {
+      const res = await get(`/farms/FARM01/weather?${query}`);
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 404 for an unknown farm', async () => {
+      const res = await get(`/farms/FARM99/weather?${DAYS}`);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({
+        message: 'Farm FARM99 not found',
+      });
+    });
+
+    it('returns 401 without a token', async () => {
+      const res = await fetch(`${t.url}/api/farms/FARM01/weather?${DAYS}`);
+      expect(res.status).toBe(401);
     });
   });
 

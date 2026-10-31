@@ -26,7 +26,7 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     writer = new PrismaClient({
       adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
     });
-    await writer.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, turbines, farms`;
+    await writer.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, turbines, farm_weather_hourly, farms`;
     await seedFromCsv(writer, SEED_DATA_DIR);
     await writer.alertConfig.createMany({
       data: [

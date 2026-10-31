@@ -3,6 +3,7 @@ import {
   toTelemetryResponse,
   toTelemetryStatsResponse,
   toTurbineResponse,
+  toWeatherDayResponse,
 } from './responses.js';
 
 describe('toTurbineResponse', () => {
@@ -152,5 +153,53 @@ describe('toTelemetryResponse', () => {
       ['a', 'info'],
     ]);
     expect(alerts[0]).toEqual({ ...rule('b', 'error') });
+  });
+});
+
+describe('toWeatherDayResponse', () => {
+  const row = {
+    day: new Date('2026-01-01T00:00:00Z'),
+    hours: 24n,
+    has_forecast: false,
+    wind_speed_10m_mean: 5.123456,
+    wind_speed_10m_max: '9.5',
+    wind_speed_100m_mean: 8,
+    wind_speed_100m_max: 12,
+    wind_gusts_10m_max: 14.2,
+    wind_direction_100m: 359.9999999,
+    temperature_2m_min: -1,
+    temperature_2m_max: 4,
+    temperature_2m_mean: 1.5,
+    relative_humidity_2m_mean: 80,
+    surface_pressure_mean: 990.25,
+    precipitation_sum: null,
+    cloud_cover_mean: 50,
+  };
+
+  it('maps the UTC day, rounds to 2 decimals and keeps nulls', () => {
+    expect(toWeatherDayResponse(row)).toEqual({
+      date: '2026-01-01',
+      hours: 24,
+      source: 'archive',
+      windSpeed10mMeanMs: 5.12,
+      windSpeed10mMaxMs: 9.5,
+      windSpeed100mMeanMs: 8,
+      windSpeed100mMaxMs: 12,
+      windGusts10mMaxMs: 14.2,
+      windDirection100mDeg: 0, // 360 is north
+      temperature2mMinC: -1,
+      temperature2mMaxC: 4,
+      temperature2mMeanC: 1.5,
+      relativeHumidity2mMeanPct: 80,
+      surfacePressureMeanHpa: 990.25,
+      precipitationSumMm: null,
+      cloudCoverMeanPct: 50,
+    });
+  });
+
+  it('marks a day with any forecast hour as forecast', () => {
+    expect(toWeatherDayResponse({ ...row, has_forecast: true }).source).toBe(
+      'forecast',
+    );
   });
 });

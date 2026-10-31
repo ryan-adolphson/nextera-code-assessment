@@ -11,11 +11,13 @@ datasource db {
 
 /// A wind farm: a unique location. Seeded from prisma/data/farms.csv.
 model Farm {
-  id        String    @id // e.g. "FARM01"
+  id        String              @id // e.g. "FARM01"
   name      String
-  latitude  Decimal   @db.Decimal(9, 6)
-  longitude Decimal   @db.Decimal(9, 6)
+  latitude  Decimal             @db.Decimal(9, 6)
+  longitude Decimal             @db.Decimal(9, 6)
   turbines  Turbine[]
+  /// Hourly Open-Meteo weather at the farm's coordinates (one series per farm).
+  weather   FarmWeatherHourly[]
 
   @@map("farms")
 }
@@ -241,4 +243,45 @@ model HeldTelemetry {
   /// One reading per entry per instant: holding is idempotent like telemetry.
   @@unique([unallocatedId, timestamp])
   @@map("held_telemetry")
+}
+
+/// Where an hour of farm weather came from (Open-Meteo).
+enum WeatherSource {
+  /// Historical Weather API (ERA5 reanalysis, about 5 days behind). Final: never overwritten by a
+  /// forecast row.
+  archive
+  /// Forecast API, for the most recent days. Replaced once the archive covers that hour.
+  forecast
+
+  @@map("weather_source")
+}
+
+/// One hour of Open-Meteo weather at a farm's coordinates (the grid is 9–25 km, coarser than the
+/// turbine spacing, so there is one series per farm). Written by the weather sync
+/// (src/weather/sync-weather.ts); daily figures are computed from these rows on read. Every metric
+/// is nullable: Open-Meteo returns null for hours it has no value for.
+model FarmWeatherHourly {
+  farmId                String        @map("farm_id")
+  farm                  Farm          @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  /// Start of the UTC hour.
+  time                  DateTime      @db.Timestamptz(3)
+  source                WeatherSource
+  windSpeed10mMs        Float?        @map("wind_speed_10m_ms")
+  windSpeed100mMs       Float?        @map("wind_speed_100m_ms")
+  windDirection10mDeg   Float?        @map("wind_direction_10m_deg")
+  windDirection100mDeg  Float?        @map("wind_direction_100m_deg")
+  /// Maximum gust in the preceding hour.
+  windGusts10mMs        Float?        @map("wind_gusts_10m_ms")
+  temperature2mC        Float?        @map("temperature_2m_c")
+  relativeHumidity2mPct Float?        @map("relative_humidity_2m_pct")
+  surfacePressureHpa    Float?        @map("surface_pressure_hpa")
+  /// Sum over the preceding hour.
+  precipitationMm       Float?        @map("precipitation_mm")
+  cloudCoverPct         Float?        @map("cloud_cover_pct")
+  /// When the sync last wrote the row.
+  fetchedAt             DateTime      @default(now()) @map("fetched_at") @db.Timestamptz(3)
+
+  /// One row per farm and hour; also serves the farm's time-range reads.
+  @@id([farmId, time])
+  @@map("farm_weather_hourly")
 }

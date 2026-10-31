@@ -331,6 +331,9 @@ describe('Unallocated turbines (/unallocated)', () => {
         expect(isOpen('assign-dialog')).toBe(true);
         expect(app.text(q('assign-dialog')!.querySelector('h2'))).toBe('Assign TURB990 to a farm');
         expect(q<HTMLInputElement>('assign-farm')!.value).toBe('Prairie Ridge (FARM01)');
+        // The grid is a div inside mat-dialog-content (Material's `display: block` on it beats `grid`).
+        expect(q('assign-fields')!.parentElement!.tagName).toBe('MAT-DIALOG-CONTENT');
+        expect(q('assign-farm')!.closest('mat-form-field')!.parentElement).toBe(q('assign-fields'));
         expect(row('TURB990').hasAttribute('data-expanded')).toBe(false); // the button doesn't toggle
 
         await type('assign-latitude', '41.27');

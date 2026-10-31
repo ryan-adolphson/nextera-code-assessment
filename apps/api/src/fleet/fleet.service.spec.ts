@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Prisma, PrismaService } from '@nextera/shared';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
@@ -333,6 +333,109 @@ describe('FleetService', () => {
         to: null,
         metrics: { powerOutputKw: null, gearboxTempC: null },
       });
+    });
+  });
+
+  describe('weather', () => {
+    const DAY = { from: '2026-01-01T00:00:00Z', to: '2026-01-02T00:00:00Z' };
+
+    it('throws NotFoundException for an unknown farm', async () => {
+      prisma.farm.findUnique.mockResolvedValue(null);
+      await expect(
+        service.weather('FARM99', { ...DAY, interval: 'hourly' }),
+      ).rejects.toThrow(new NotFoundException('Farm FARM99 not found'));
+      expect(prisma.farmWeatherHourly.findMany).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException for a range over 31 days', async () => {
+      prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
+      await expect(
+        service.weather('FARM01', {
+          from: '2026-01-01T00:00:00Z',
+          to: '2026-03-01T00:00:00Z',
+          interval: 'daily',
+        }),
+      ).rejects.toThrow(
+        new BadRequestException('The range may span at most 31 days'),
+      );
+    });
+
+    it('returns the hours in [from, to), oldest first, without internal fields', async () => {
+      prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
+      prisma.farmWeatherHourly.findMany.mockResolvedValue([
+        {
+          farmId: 'FARM01',
+          time: new Date('2026-01-01T00:00:00Z'),
+          source: 'archive',
+          windSpeed10mMs: 5.03,
+          windSpeed100mMs: 10.78,
+          windDirection10mDeg: 323,
+          windDirection100mDeg: 330,
+          windGusts10mMs: 7.4,
+          temperature2mC: 5.9,
+          relativeHumidity2mPct: 51,
+          surfacePressureHpa: 969.3,
+          precipitationMm: null,
+          cloudCoverPct: 0,
+          fetchedAt: new Date(),
+        },
+      ]);
+
+      const result = await service.weather('FARM01', {
+        ...DAY,
+        interval: 'hourly',
+      });
+
+      expect(prisma.farmWeatherHourly.findMany).toHaveBeenCalledWith({
+        where: {
+          farmId: 'FARM01',
+          time: { gte: new Date(DAY.from), lt: new Date(DAY.to) },
+        },
+        orderBy: { time: 'asc' },
+      });
+      expect(result).toEqual({
+        farmId: 'FARM01',
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-01-02T00:00:00.000Z',
+        interval: 'hourly',
+        points: [
+          {
+            time: '2026-01-01T00:00:00.000Z',
+            source: 'archive',
+            windSpeed10mMs: 5.03,
+            windSpeed100mMs: 10.78,
+            windDirection10mDeg: 323,
+            windDirection100mDeg: 330,
+            windGusts10mMs: 7.4,
+            temperature2mC: 5.9,
+            relativeHumidity2mPct: 51,
+            surfacePressureHpa: 969.3,
+            precipitationMm: null,
+            cloudCoverPct: 0,
+          },
+        ],
+      });
+    });
+
+    it('aggregates daily in one Postgres query over the UTC day', async () => {
+      prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
+      prisma.$queryRaw.mockResolvedValue([]);
+
+      await service.weather('FARM01', { ...DAY, interval: 'daily' });
+
+      const [strings, ...values] = prisma.$queryRaw.mock
+        .calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
+      const sql = Prisma.sql(strings, ...values);
+      const text = sql.sql.replace(/\s+/g, ' ');
+      expect(text).toContain("date_trunc('day', w.time, 'UTC') AS day");
+      expect(text).toContain('avg(sin(radians(w.wind_direction_100m_deg)))');
+      expect(text).toContain('sum(w.precipitation_mm) AS precipitation_sum');
+      expect(text).toContain("bool_or(w.source = 'forecast') AS has_forecast");
+      expect(sql.values).toEqual([
+        'FARM01',
+        new Date(DAY.from),
+        new Date(DAY.to),
+      ]);
     });
   });
 });

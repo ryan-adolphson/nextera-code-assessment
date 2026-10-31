@@ -3,6 +3,7 @@ export { Prisma, PrismaClient } from './generated/prisma/client.js';
 export type {
   AlertConfig,
   Farm,
+  FarmWeatherHourly,
   Telemetry,
   HeldTelemetry,
   TelemetryAlert,
@@ -17,9 +18,11 @@ export {
   Role,
   UnallocatedKind,
   UnallocatedStatus,
+  WeatherSource,
 } from './generated/prisma/enums.js';
 export { PrismaModule } from './prisma/prisma.module.js';
 export { PrismaService } from './prisma/prisma.service.js';
+export { createPrismaClient } from './prisma/create-prisma.js';
 
 // Events (Redis stream + pub/sub) for SSE
 export {
@@ -43,6 +46,8 @@ export {
   toTelemetryResponse,
   toTelemetryStatsResponse,
   toTurbineResponse,
+  toWeatherDayResponse,
+  toWeatherHourResponse,
 } from './wind/responses.js';
 export type {
   FarmResponse,
@@ -53,6 +58,11 @@ export type {
   TelemetryStatsRow,
   TelemetryWithAlerts,
   TurbineResponse,
+  FarmWeatherResponse,
+  WeatherDayResponse,
+  WeatherDayRow,
+  WeatherHourResponse,
+  WeatherInterval,
 } from './wind/responses.js';
 
 // Alert evaluation (ingestion stores each reading's triggered rules in telemetry_alerts)
@@ -77,6 +87,7 @@ export {
   QueryInputError,
   QueryNotFoundError,
   alertsInRange,
+  farmWeather,
   getTurbine,
   getUnallocated,
   heldReadings,
@@ -91,6 +102,7 @@ export {
 } from './wind/queries.js';
 export type {
   FarmOverview,
+  FarmWeatherQuery,
   MetricSummary,
   ReadClient,
   ReportQuery,
@@ -102,6 +114,43 @@ export type {
   TurbineDetail,
   TurbineOverview,
 } from './wind/queries.js';
+
+// Farm weather (Open-Meteo → farm_weather_hourly): client, request planning and the sync
+// (`node dist/weather-sync/main.js` in the ingestion image, `npm run weather:sync`)
+export {
+  ARCHIVE_LAG_DAYS,
+  MAX_REQUEST_DAYS,
+  OPEN_METEO_ATTEMPTS,
+  OPEN_METEO_BACKOFF_MS,
+  OPEN_METEO_TIMEOUT_MS,
+  OpenMeteoError,
+  WEATHER_VARIABLES,
+  addDays,
+  buildOpenMeteoUrl,
+  fetchFarmWeather,
+  isUtcDay,
+  parseHourly,
+  planRequests,
+  utcDay,
+} from './weather/open-meteo.js';
+export type {
+  FetchFarmWeatherOptions,
+  WeatherHourRow,
+  WeatherMetric,
+  WeatherRequest,
+} from './weather/open-meteo.js';
+export {
+  WEATHER_REQUEST_DELAY_MS,
+  WEATHER_UPSERT_BATCH,
+  syncFarmWeather,
+  upsertWeatherHours,
+} from './weather/sync-weather.js';
+export type {
+  FarmWeatherSyncResult,
+  SyncWeatherOptions,
+  SyncWeatherResult,
+  WeatherWriteClient,
+} from './weather/sync-weather.js';
 
 // Alert thresholds (alerts_config): response shape, mapper and change event
 export {

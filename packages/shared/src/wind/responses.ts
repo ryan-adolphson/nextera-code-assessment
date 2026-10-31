@@ -1,10 +1,12 @@
 import type {
   AlertConfig,
   Farm,
+  FarmWeatherHourly,
   Prisma,
   Telemetry,
   Turbine,
 } from '../generated/prisma/client.js';
+import type { WeatherSource } from '../generated/prisma/enums.js';
 import {
   toAlertConfigResponse,
   type AlertConfigResponse,
@@ -186,5 +188,133 @@ export function toTelemetryResponse(
       .map(({ alert }) => alert)
       .sort(compareAlertsWorstFirst)
       .map(toAlertConfigResponse),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Farm weather (Open-Meteo, farm_weather_hourly)
+
+/** One hour of a farm's weather (GET /api/farms/:farmId/weather?interval=hourly). */
+export interface WeatherHourResponse {
+  /** Start of the UTC hour (ISO). */
+  time: string;
+  /** `archive` (final, ERA5) or `forecast` (recent days; replaced once the archive has them). */
+  source: WeatherSource;
+  windSpeed10mMs: number | null;
+  windSpeed100mMs: number | null;
+  windDirection10mDeg: number | null;
+  windDirection100mDeg: number | null;
+  /** Maximum gust in the preceding hour. */
+  windGusts10mMs: number | null;
+  temperature2mC: number | null;
+  relativeHumidity2mPct: number | null;
+  surfacePressureHpa: number | null;
+  /** Sum over the preceding hour. */
+  precipitationMm: number | null;
+  cloudCoverPct: number | null;
+}
+
+/** One UTC day of a farm's weather, aggregated from its hours (interval=daily). */
+export interface WeatherDayResponse {
+  /** The UTC day (YYYY-MM-DD). */
+  date: string;
+  /** Hours stored for the day within the range (24 for a complete day). */
+  hours: number;
+  /** `forecast` if any hour of the day is a forecast hour, else `archive`. */
+  source: WeatherSource;
+  windSpeed10mMeanMs: number | null;
+  windSpeed10mMaxMs: number | null;
+  windSpeed100mMeanMs: number | null;
+  windSpeed100mMaxMs: number | null;
+  windGusts10mMaxMs: number | null;
+  /** Dominant 100 m wind direction: the vector mean of the hourly directions, 0–360. */
+  windDirection100mDeg: number | null;
+  temperature2mMinC: number | null;
+  temperature2mMaxC: number | null;
+  temperature2mMeanC: number | null;
+  relativeHumidity2mMeanPct: number | null;
+  surfacePressureMeanHpa: number | null;
+  precipitationSumMm: number | null;
+  cloudCoverMeanPct: number | null;
+}
+
+export type WeatherInterval = 'hourly' | 'daily';
+
+/** GET /api/farms/:farmId/weather. */
+export type FarmWeatherResponse = {
+  farmId: string;
+  /** The requested [from, to) range (ISO). */
+  from: string;
+  to: string;
+} & (
+  | { interval: 'hourly'; points: WeatherHourResponse[] }
+  | { interval: 'daily'; points: WeatherDayResponse[] }
+);
+
+export function toWeatherHourResponse(
+  row: FarmWeatherHourly,
+): WeatherHourResponse {
+  return {
+    time: row.time.toISOString(),
+    source: row.source,
+    windSpeed10mMs: row.windSpeed10mMs,
+    windSpeed100mMs: row.windSpeed100mMs,
+    windDirection10mDeg: row.windDirection10mDeg,
+    windDirection100mDeg: row.windDirection100mDeg,
+    windGusts10mMs: row.windGusts10mMs,
+    temperature2mC: row.temperature2mC,
+    relativeHumidity2mPct: row.relativeHumidity2mPct,
+    surfacePressureHpa: row.surfacePressureHpa,
+    precipitationMm: row.precipitationMm,
+    cloudCoverPct: row.cloudCoverPct,
+  };
+}
+
+/** A row of the daily weather query (snake_case aliases; numbers may arrive as strings). */
+export interface WeatherDayRow {
+  day: Date;
+  hours: number | bigint;
+  has_forecast: boolean;
+  wind_speed_10m_mean: unknown;
+  wind_speed_10m_max: unknown;
+  wind_speed_100m_mean: unknown;
+  wind_speed_100m_max: unknown;
+  wind_gusts_10m_max: unknown;
+  wind_direction_100m: unknown;
+  temperature_2m_min: unknown;
+  temperature_2m_max: unknown;
+  temperature_2m_mean: unknown;
+  relative_humidity_2m_mean: unknown;
+  surface_pressure_mean: unknown;
+  precipitation_sum: unknown;
+  cloud_cover_mean: unknown;
+}
+
+/** Rounded to 2 decimals (means of doubles carry float noise); null stays null. */
+const round2 = (value: unknown): number | null =>
+  value === null || value === undefined
+    ? null
+    : Math.round(Number(value) * 100) / 100;
+
+export function toWeatherDayResponse(row: WeatherDayRow): WeatherDayResponse {
+  const direction = round2(row.wind_direction_100m);
+  return {
+    date: row.day.toISOString().slice(0, 10),
+    hours: Number(row.hours),
+    source: row.has_forecast ? 'forecast' : 'archive',
+    windSpeed10mMeanMs: round2(row.wind_speed_10m_mean),
+    windSpeed10mMaxMs: round2(row.wind_speed_10m_max),
+    windSpeed100mMeanMs: round2(row.wind_speed_100m_mean),
+    windSpeed100mMaxMs: round2(row.wind_speed_100m_max),
+    windGusts10mMaxMs: round2(row.wind_gusts_10m_max),
+    // 359.999 rounds to 360, which is north: report it as 0.
+    windDirection100mDeg: direction === null ? null : direction % 360,
+    temperature2mMinC: round2(row.temperature_2m_min),
+    temperature2mMaxC: round2(row.temperature_2m_max),
+    temperature2mMeanC: round2(row.temperature_2m_mean),
+    relativeHumidity2mMeanPct: round2(row.relative_humidity_2m_mean),
+    surfacePressureMeanHpa: round2(row.surface_pressure_mean),
+    precipitationSumMm: round2(row.precipitation_sum),
+    cloudCoverMeanPct: round2(row.cloud_cover_mean),
   };
 }

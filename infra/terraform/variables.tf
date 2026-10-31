@@ -137,6 +137,37 @@ variable "demo_feed_paused" {
   default     = false
 }
 
+# --- Weather sync (weather-sync.tf) ---------------------------------------------
+
+variable "weather_sync_enabled" {
+  description = "Create the daily weather sync: Cloud Run Job nextera-weather-sync (Open-Meteo hourly weather of the last 7 UTC days per farm -> Cloud SQL) + a Cloud Scheduler trigger (weather_sync_schedule)."
+  type        = bool
+  default     = false
+}
+
+variable "weather_sync_paused" {
+  description = "Pause the weather sync's Cloud Scheduler trigger (keeps the job). Only used when weather_sync_enabled."
+  type        = bool
+  default     = false
+}
+
+variable "weather_sync_schedule" {
+  description = "Cron schedule (UTC) of the weather sync. Default 01:30 every day."
+  type        = string
+  default     = "30 1 * * *"
+
+  validation {
+    condition     = length(split(" ", trimspace(var.weather_sync_schedule))) == 5
+    error_message = "weather_sync_schedule must be a five-field cron expression such as \"30 1 * * *\"."
+  }
+}
+
+variable "open_meteo_api_key_enabled" {
+  description = "Create the Secret Manager secret open-meteo-api-key (value added by hand, never by Terraform) and pass it to the weather sync job as OPEN_METEO_API_KEY (paid customer-* hosts). Required for commercial use: the free API is non-commercial only."
+  type        = bool
+  default     = false
+}
+
 # --- Monitoring (monitoring.tf) ----------------------------------------------------
 
 variable "alert_emails" {

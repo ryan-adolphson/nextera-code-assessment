@@ -16,13 +16,18 @@ import {
   toTelemetryResponse,
   toTelemetryStatsResponse,
   toTurbineResponse,
+  toWeatherDayResponse,
+  toWeatherHourResponse,
   type FarmResponse,
+  type FarmWeatherResponse,
   type TelemetryMetric,
   type TelemetryResponse,
   type TelemetryStatsResponse,
   type TelemetryStatsRow,
   type TelemetryWithAlerts,
   type TurbineResponse,
+  type WeatherDayRow,
+  type WeatherInterval,
 } from './responses.js';
 import {
   toHeldReadingResponse,
@@ -699,4 +704,70 @@ export async function heldReadings(
     take: limit,
   });
   return rows.map(toHeldReadingResponse);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Farm weather (hourly Open-Meteo rows; daily figures computed here, never stored)
+
+/** A farm's weather over a required [from, to) range (ISO instants, at most 31 days). */
+export interface FarmWeatherQuery extends TimeRange {
+  interval: WeatherInterval;
+}
+
+/**
+ * A farm's weather in [from, to) on the hour's start time, oldest first: the stored hours, or one
+ * row per UTC day aggregated in Postgres (means/maxima, vector-mean 100 m direction, precipitation
+ * sum, the number of hours covered, `forecast` if any hour of the day is a forecast).
+ */
+export async function farmWeather(
+  db: ReadClient,
+  farmId: string,
+  { from, to, interval }: FarmWeatherQuery,
+): Promise<FarmWeatherResponse> {
+  const farm = await db.farm.findUnique({
+    where: { id: farmId },
+    select: { id: true },
+  });
+  if (!farm) throw new QueryNotFoundError(`Farm ${farmId} not found`);
+  const { start, end } = parseRange(from, to);
+  const range = { farmId, from: start.toISOString(), to: end.toISOString() };
+
+  if (interval === 'hourly') {
+    const rows = await db.farmWeatherHourly.findMany({
+      where: { farmId, time: { gte: start, lt: end } },
+      orderBy: { time: 'asc' },
+    });
+    return { ...range, interval, points: rows.map(toWeatherHourResponse) };
+  }
+
+  // date_trunc(…, 'UTC') keeps the day boundaries in UTC whatever the session time zone.
+  const rows = await db.$queryRaw<WeatherDayRow[]>`
+    SELECT
+      date_trunc('day', w.time, 'UTC') AS day,
+      count(*)::int AS hours,
+      bool_or(w.source = 'forecast') AS has_forecast,
+      avg(w.wind_speed_10m_ms) AS wind_speed_10m_mean,
+      max(w.wind_speed_10m_ms) AS wind_speed_10m_max,
+      avg(w.wind_speed_100m_ms) AS wind_speed_100m_mean,
+      max(w.wind_speed_100m_ms) AS wind_speed_100m_max,
+      max(w.wind_gusts_10m_ms) AS wind_gusts_10m_max,
+      mod(
+        degrees(atan2(
+          avg(sin(radians(w.wind_direction_100m_deg))),
+          avg(cos(radians(w.wind_direction_100m_deg)))
+        ))::numeric + 360,
+        360
+      )::double precision AS wind_direction_100m,
+      min(w.temperature_2m_c) AS temperature_2m_min,
+      max(w.temperature_2m_c) AS temperature_2m_max,
+      avg(w.temperature_2m_c) AS temperature_2m_mean,
+      avg(w.relative_humidity_2m_pct) AS relative_humidity_2m_mean,
+      avg(w.surface_pressure_hpa) AS surface_pressure_mean,
+      sum(w.precipitation_mm) AS precipitation_sum,
+      avg(w.cloud_cover_pct) AS cloud_cover_mean
+    FROM farm_weather_hourly w
+    WHERE w.farm_id = ${farmId} AND w.time >= ${start} AND w.time < ${end}
+    GROUP BY 1
+    ORDER BY 1`;
+  return { ...range, interval, points: rows.map(toWeatherDayResponse) };
 }

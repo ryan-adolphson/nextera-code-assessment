@@ -1,9 +1,11 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import type {
+  FarmWeatherResponse,
   TelemetryResponse,
   TelemetryStatsResponse,
 } from '@nextera/shared';
 import { Roles } from '../auth/auth.decorators.js';
+import { FarmWeatherQueryDto } from './dto/farm-weather-query.dto.js';
 import { TelemetryQueryDto } from './dto/telemetry-query.dto.js';
 import { FarmOverview, FleetService } from './fleet.service.js';
 
@@ -16,6 +18,18 @@ export class FleetController {
   @Get('farms')
   farms(): Promise<FarmOverview[]> {
     return this.fleet.overview();
+  }
+
+  /**
+   * GET /api/farms/:farmId/weather?from=&to=&interval=hourly|daily: the farm's Open-Meteo weather
+   * in [from, to) (at most 31 days), hourly rows or UTC days aggregated from them.
+   */
+  @Get('farms/:farmId/weather')
+  weather(
+    @Param('farmId') farmId: string,
+    @Query() query: FarmWeatherQueryDto,
+  ): Promise<FarmWeatherResponse> {
+    return this.fleet.weather(farmId, query);
   }
 
   /** GET /api/turbines/:id/telemetry?from=&to=&limit= */
