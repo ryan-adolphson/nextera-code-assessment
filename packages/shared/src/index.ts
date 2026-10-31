@@ -122,6 +122,7 @@ export {
   UNALLOCATED_CHANGED,
   UNALLOCATED_EVENT_INTERVAL_MS,
   UnallocatedCapError,
+  blockUnallocated,
   classifyReadings,
   holdReadings,
   importHeld,
@@ -207,3 +208,13 @@ export {
   seedDemo,
 } from './seed/seed-demo.js';
 export type { DemoSeedOptions, DemoSeedResult } from './seed/seed-demo.js';
+export {
+  DEMO_UNALLOCATED,
+  demoUnallocatedReadings,
+  seedDemoUnallocated,
+} from './seed/demo-unallocated.js';
+export type {
+  DemoUnallocatedEntry,
+  DemoUnallocatedOutcome,
+  DemoUnallocatedResult,
+} from './seed/demo-unallocated.js';

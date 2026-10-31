@@ -11,6 +11,7 @@ import {
   PrismaService,
   TELEMETRY_RECEIVED,
   UNALLOCATED_CHANGED,
+  blockUnallocated,
   getUnallocated,
   heldReadings,
   importHeld,
@@ -156,15 +157,10 @@ export class UnallocatedTurbinesService {
   ): Promise<UnallocatedTurbineResponse> {
     const blocked = await this.prisma.$transaction(async (tx) => {
       const entry = await this.lockPending(tx, id);
-      await tx.unallocatedTurbine.update({
-        where: { id },
-        data: {
-          status: 'blocked',
-          blockedAt: new Date(),
-          blockedById: user.id,
-        },
+      await blockUnallocated(tx, id, {
+        blockedAt: new Date(),
+        blockedById: user.id,
       });
-      await tx.heldTelemetry.deleteMany({ where: { unallocatedId: id } });
       return { entry, response: await getUnallocated(tx, id) };
     });
     await this.publish(UNALLOCATED_CHANGED, changed('blocked', blocked.entry));

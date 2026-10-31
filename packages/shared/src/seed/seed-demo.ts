@@ -9,6 +9,10 @@ import {
   generateTelemetry,
   type GeneratedTelemetryRow,
 } from './generate-telemetry.js';
+import {
+  seedDemoUnallocated,
+  type DemoUnallocatedResult,
+} from './demo-unallocated.js';
 import { seedFarmsFromCsv } from './seed-from-csv.js';
 
 /** Default window of the demo seed (SEED_HOURS overrides it, up to DEMO_SEED_MAX_HOURS). */
@@ -39,6 +43,8 @@ export interface DemoSeedResult {
   alerts: number;
   from: string | null;
   to: string | null;
+  /** What happened to each DEMO_UNALLOCATED entry. */
+  unallocated: DemoUnallocatedResult[];
 }
 
 /** SEED_NOW (strict ISO 8601 with a zone, default now) and SEED_HOURS (default 72). */
@@ -76,10 +82,11 @@ export function parseDemoSeedEnv(
 }
 
 /**
- * The demo seed: fixture farms, the DEMO_TURBINES, the DEMO_ALERT_RULES that don't exist yet, and
+ * The demo seed: fixture farms, the DEMO_TURBINES, the DEMO_ALERT_RULES that don't exist yet,
  * `hours` of generated telemetry up to `end`, with each new reading's triggered rules in
- * telemetry_alerts (the same insert as ingestion, one transaction per batch). Idempotent on
- * (turbine_id, timestamp): a re-run only adds the readings since the last one. Publishes no events.
+ * telemetry_alerts (the same insert as ingestion, one transaction per batch), and the
+ * DEMO_UNALLOCATED entries (`seedDemoUnallocated`). Idempotent on (turbine_id, timestamp): a re-run
+ * only adds the readings since the last one. Publishes no events.
  */
 export async function seedDemo(
   prisma: PrismaClient,
@@ -87,16 +94,22 @@ export async function seedDemo(
 ): Promise<DemoSeedResult> {
   const farms = await seedFarmsFromCsv(prisma, dataDir);
   const farmIds = new Set(farms.map((f) => f.farm_id));
+  // Each demo turbine with the farm it is on now: the seed sets the farm (like `commissioned`) only
+  // when it creates the turbine, so a turbine an owner moved (Unallocated → Move) stays moved, and
+  // its readings are generated for that farm (the telemetry FK is (turbine_id, farm_id)).
+  const turbines: { turbineId: string; farmId: string }[] = [];
   for (const { turbineId, commissioned, ...data } of DEMO_TURBINES) {
     if (!farmIds.has(data.farmId)) {
       throw new Error(`Demo turbine ${turbineId}: unknown farm ${data.farmId}`);
     }
-    // `commissioned` only when created: a re-seed never resets it.
-    await prisma.turbine.upsert({
+    const { latitude, longitude } = data;
+    const turbine = await prisma.turbine.upsert({
       where: { turbineId },
       create: { turbineId, commissioned, ...data },
-      update: data,
+      update: { latitude, longitude },
+      select: { farmId: true },
     });
+    turbines.push({ turbineId, farmId: turbine.farmId });
   }
 
   // ON CONFLICT DO NOTHING on (metric, comparison, level): existing rules win.
@@ -107,7 +120,7 @@ export async function seedDemo(
   const rules = await enabledAlertRules(prisma);
 
   const rows = generateTelemetry({
-    turbines: DEMO_TURBINES,
+    turbines,
     end: floorToTelemetryStep(end),
     hours,
     seed: DEMO_SEED,
@@ -128,6 +141,8 @@ export async function seedDemo(
     alerts += stored.reduce((n, r) => n + r.alerts.length, 0);
   }
 
+  const unallocated = await seedDemoUnallocated(prisma, end);
+
   return {
     farms: farms.length,
     turbines: DEMO_TURBINES.length,
@@ -139,6 +154,7 @@ export async function seedDemo(
     alerts,
     from: rows[0]?.timestamp ?? null,
     to: rows.at(-1)?.timestamp ?? null,
+    unallocated,
   };
 }
 

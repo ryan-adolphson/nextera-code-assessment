@@ -335,6 +335,23 @@ export async function lockUnallocated(
   return tx.unallocatedTurbine.findUnique({ where: { id } });
 }
 
+/**
+ * What "blocked" means, in one place (the API's block action and the demo seed): status blocked,
+ * when and by whom (a user id, or null), and no held readings (ingestion drops the pair's readings
+ * from now on). Run it in the action's transaction, after `lockUnallocated` checked it is pending.
+ */
+export async function blockUnallocated(
+  tx: Prisma.TransactionClient,
+  unallocatedId: string,
+  { blockedAt, blockedById }: { blockedAt: Date; blockedById: string | null },
+): Promise<void> {
+  await tx.unallocatedTurbine.update({
+    where: { id: unallocatedId },
+    data: { status: 'blocked', blockedAt, blockedById },
+  });
+  await tx.heldTelemetry.deleteMany({ where: { unallocatedId } });
+}
+
 export interface ImportResult {
   /** Readings now in telemetry (held readings already stored there are skipped). */
   imported: number;

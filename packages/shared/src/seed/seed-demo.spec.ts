@@ -8,7 +8,13 @@ import type {
 } from '../generated/prisma/client.js';
 import { DEMO_ALERT_RULES, DEMO_TURBINES } from './demo-fleet.js';
 import { DEMO_ANOMALIES } from './generate-telemetry.js';
+import { seedDemoUnallocated } from './demo-unallocated.js';
 import { parseDemoSeedEnv, seedDemo } from './seed-demo.js';
+
+// Tested on its own (demo-unallocated.spec.ts, demo-seed.e2e-spec.ts).
+vi.mock('./demo-unallocated.js', () => ({
+  seedDemoUnallocated: vi.fn(() => Promise.resolve([])),
+}));
 
 const DATA_DIR = fileURLToPath(new URL('../../prisma/data', import.meta.url));
 const END = new Date('2026-10-08T12:02:00Z'); // floored to 12:00
@@ -26,6 +32,11 @@ describe('seedDemo', () => {
 
   beforeEach(() => {
     prisma = mockDeep<PrismaClient>();
+    vi.mocked(seedDemoUnallocated).mockClear();
+    // Every turbine is on its demo farm (create's farm), unless a test says otherwise.
+    prisma.turbine.upsert.mockImplementation(((args: {
+      create: { farmId: string };
+    }) => Promise.resolve({ farmId: args.create.farmId })) as never);
     prisma.alertConfig.createMany.mockResolvedValue({ count: 2 });
     prisma.alertConfig.findMany.mockResolvedValue(rules);
     prisma.telemetryAlert.createMany.mockResolvedValue({ count: 0 });
@@ -56,7 +67,7 @@ describe('seedDemo', () => {
       ([args]) => args?.data as Prisma.TelemetryAlertCreateManyInput[],
     );
 
-  it('upserts the fixture farms and the demo turbines (commissioned only on create)', async () => {
+  it('upserts the fixture farms and the demo turbines (farm and commissioned only on create)', async () => {
     await run();
 
     expect(prisma.farm.upsert).toHaveBeenCalledTimes(10);
@@ -71,11 +82,48 @@ describe('seedDemo', () => {
       longitude: -96.518,
       commissioned: false,
     });
-    expect(args.update).toEqual({
-      farmId: 'FARM01',
-      latitude: 41.263,
-      longitude: -96.518,
-    });
+    expect(args.update).toEqual({ latitude: 41.263, longitude: -96.518 });
+  });
+
+  it('keeps a moved turbine on its farm and generates its readings for that farm', async () => {
+    prisma.turbine.upsert.mockImplementation(((args: {
+      where: { turbineId: string };
+      create: { farmId: string };
+    }) =>
+      Promise.resolve({
+        farmId:
+          args.where.turbineId === 'TURB003' ? 'FARM02' : args.create.farmId,
+      })) as never);
+
+    await run(END, 1);
+
+    const farms = new Set(
+      prisma.telemetry.createManyAndReturn.mock.calls.flatMap(([a]) =>
+        (a!.data as Prisma.TelemetryCreateManyInput[])
+          .filter((r) => r.turbineId === 'TURB003')
+          .map((r) => r.farmId),
+      ),
+    );
+    expect(farms).toEqual(new Set(['FARM02']));
+  });
+
+  it('seeds the unallocated entries up to the same end and returns their outcome', async () => {
+    const outcome = [
+      {
+        turbineId: 'TURB099',
+        reportedFarmId: 'FARM01',
+        outcome: 'created' as const,
+        kind: 'unknown_turbine' as const,
+        status: 'pending' as const,
+        held: 72,
+      },
+    ];
+    vi.mocked(seedDemoUnallocated).mockResolvedValueOnce(outcome);
+
+    const result = await run(END, 1);
+
+    expect(seedDemoUnallocated).toHaveBeenCalledExactlyOnceWith(prisma, END);
+    expect(result.unallocated).toEqual(outcome);
   });
 
   it('creates only the missing default rules and evaluates the enabled ones', async () => {
