@@ -1,9 +1,14 @@
 import { DecimalPipe } from '@angular/common';
 import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
-import { FormField, FormRoot, form, required, validate } from '@angular/forms/signals';
+import { Field, FormField, FormRoot, form, required, validate } from '@angular/forms/signals';
 import { MatAutocomplete, MatAutocompleteTrigger } from '@angular/material/autocomplete';
 import { MatButton } from '@angular/material/button';
-import { MatOptgroup, MatOption, provideNativeDateAdapter } from '@angular/material/core';
+import {
+  ErrorStateMatcher,
+  MatOptgroup,
+  MatOption,
+  provideNativeDateAdapter,
+} from '@angular/material/core';
 import {
   MatDateRangeInput,
   MatDateRangePicker,
@@ -116,10 +121,17 @@ export class ReportingPage {
       return message ? { kind: 'range', message } : undefined;
     });
   });
+  /**
+   * The calendar is open: picking a start day clears (and touches) the end day, so the range's
+   * errors wait until it closes.
+   */
+  private readonly picking = signal(false);
+  /** The date inputs' error state: Material's default (invalid and touched), not while picking. */
+  protected readonly rangeErrorState = computed(() => new RangeErrorState(this.picking()));
   /** The range error (on the form itself, not a field), once a field was touched or changed. */
   protected readonly rangeMessage = computed(() => {
     const state = this.reportForm();
-    if (!state.touched() && !state.dirty()) return null;
+    if (this.picking() || (!state.touched() && !state.dirty())) return null;
     return state.errors().find((e) => e.kind === 'range')?.message ?? null;
   });
   private readonly now = inject(NOW);
@@ -237,8 +249,29 @@ export class ReportingPage {
     this.reportLoad.retry();
   }
 
+  /** The calendar opened or closed (`picking`). */
+  protected onPicking(open: boolean): void {
+    this.picking.set(open);
+  }
+
   protected download(): void {
     const report = this.report();
     if (report) downloadCsv(csvFileName(report, this.tz.zone()), toCsv(report));
+  }
+}
+
+/** Material's default error state (invalid and touched), except while the calendar is open. */
+class RangeErrorState extends ErrorStateMatcher {
+  constructor(private readonly picking: boolean) {
+    super();
+  }
+
+  override isErrorState(...args: Parameters<ErrorStateMatcher['isErrorState']>): boolean {
+    return !this.picking && super.isErrorState(...args);
+  }
+
+  override isSignalErrorState(field: Field<unknown> | null): boolean {
+    // Material's default for a Signal Forms field: invalid and touched.
+    return !this.picking && !!field && field().invalid() && field().touched();
   }
 }

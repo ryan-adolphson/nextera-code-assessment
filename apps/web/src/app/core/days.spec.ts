@@ -7,6 +7,7 @@ import {
   lastDay,
   pickerDate,
   rangeError,
+  sameRange,
   zoneDayOf,
 } from './days';
 
@@ -145,5 +146,17 @@ describe('days in a time zone', () => {
       'Choose at most 30 days when the range includes a daylight-saving change.',
     );
     expect(rangeError(day(9, 16), day(10, 14), CHICAGO)).toBeNull();
+  });
+});
+
+describe('sameRange', () => {
+  const a = { from: '2026-01-01T00:00:00.000Z', to: '2026-01-03T00:00:00.000Z' };
+
+  it('compares [from, to) by value; null only equals null', () => {
+    expect(sameRange(a, { ...a })).toBe(true);
+    expect(sameRange(a, { ...a, to: '2026-01-04T00:00:00.000Z' })).toBe(false);
+    expect(sameRange(a, null)).toBe(false);
+    expect(sameRange(null, a)).toBe(false);
+    expect(sameRange(null, null)).toBe(true);
   });
 });

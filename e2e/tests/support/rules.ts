@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext } from '@playwright/test';
+import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { API_URL } from './session.js';
 
 /**
@@ -116,4 +116,43 @@ export async function removeRules(
 ): Promise<void> {
   for (const rule of (await listRules(request, token)).filter((r) => sameKey(r, key)))
     await deleteRule(request, token, rule.id);
+}
+
+// --- The Rules page (/alerting/rules) -------------------------------------------------------
+
+/** A rule's row (`data-enabled` is the state it shows, optimistic while a toggle is pending). */
+export const ruleRow = (page: Page, id: string): Locator =>
+  page.locator(`[data-testid="rule"][data-rule-id="${id}"]`);
+
+/**
+ * A row's Enabled switch (owners and admins): the `button[role=switch]` inside the
+ * `rule-enabled-toggle`, named by what switching does ("Disable <rule>" / "Enable <rule>").
+ */
+export const ruleSwitch = (row: Locator): Locator =>
+  row.getByTestId('rule-enabled-toggle').getByRole('switch');
+
+/** Asserts a row shows the rule as enabled or disabled: switch, name, pill and `data-enabled`. */
+export async function expectRuleState(
+  row: Locator,
+  describe: string,
+  enabled: boolean,
+): Promise<void> {
+  await expect(row).toHaveAttribute('data-enabled', String(enabled));
+  const toggle = ruleSwitch(row);
+  await expect(toggle).toHaveAttribute('aria-checked', String(enabled));
+  await expect(toggle).toHaveAccessibleName(`${enabled ? 'Disable' : 'Enable'} ${describe}`);
+  await expect(row.getByTestId('rule-disabled')).toHaveCount(enabled ? 0 : 1);
+  if (!enabled) await expect(row.getByTestId('rule-disabled')).toHaveText('Disabled');
+}
+
+/** The theme's muted text colour (`--muted`) as the browser computes it (rgb(…)). */
+export async function mutedColor(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--muted)';
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
 }

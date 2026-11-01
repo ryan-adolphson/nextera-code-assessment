@@ -118,28 +118,92 @@ test.describe('Alerting history', () => {
     await expect(page).toHaveURL(/\/alerting\/history$/);
   });
 
-  test('days picked in the calendar load whole UTC days, the end day included', async ({
+  test('picking days in the calendar sends one request, for both new days, once the end is picked', async ({
     page,
   }) => {
     await openHistory(page);
     await expect(count(page)).not.toHaveText('Loading alerts…');
+    const requests: Request[] = [];
+    page.on('request', (r) => {
+      if (isAlerts(r.url())) requests.push(r);
+    });
 
     await page.getByRole('button', { name: 'Open calendar' }).click();
     const calendar = page.getByRole('dialog');
     // No future days: Jan 3 (today at the fixed clock) is the last one enabled.
     await expect(calendar.getByRole('button', { name: 'January 4, 2026' })).toBeDisabled();
     await calendar.getByRole('button', { name: 'Previous month' }).click();
-    // (Picking the start day alone already loads it with the previous end day.)
-    const request = page.waitForRequest(
-      (r) => isAlerts(r.url()) && query(r)[1] === '2026-01-01T00:00:00.000Z',
-    );
+
+    // Mid-pick: the start is set and the end cleared; nothing is sent and no error shows.
     await calendar.getByRole('button', { name: 'December 30, 2025' }).click();
+    await expect(page.getByTestId('history-from')).toHaveValue('12/30/2025');
+    await expect(page.getByTestId('history-to')).toHaveValue('');
+    await expect(calendar).toBeVisible();
+    await expect(page.getByTestId('history-range-error')).toHaveCount(0);
+    await expect(count(page)).toHaveText(/flagged readings? on \d+ turbines?|No alerts/);
+
+    const loaded = page.waitForResponse((r) => isAlerts(r.url()));
     await calendar.getByRole('button', { name: 'December 31, 2025' }).click();
-    expect(query(await request)).toEqual(['2025-12-30T00:00:00.000Z', '2026-01-01T00:00:00.000Z']);
+    await loaded;
     await expect(calendar).toBeHidden();
     await expect(page.getByTestId('history-from')).toHaveValue('12/30/2025');
     await expect(page.getByTestId('history-to')).toHaveValue('12/31/2025');
     await expect(count(page)).toHaveText(/flagged readings? on \d+ turbines?/);
+    // Exactly one request since the calendar opened (none with the old end day), whole UTC days.
+    expect(requests.map(query)).toEqual([['2025-12-30T00:00:00.000Z', '2026-01-01T00:00:00.000Z']]);
+  });
+
+  test('closing the calendar on the range already shown sends nothing', async ({ page }) => {
+    await openHistory(page);
+    await expect(count(page)).not.toHaveText('Loading alerts…');
+    const requests: Request[] = [];
+    page.on('request', (r) => {
+      if (isAlerts(r.url())) requests.push(r);
+    });
+
+    // Re-pick the default days (Jan 2 – Jan 3): complete again, but the same range.
+    await page.getByRole('button', { name: 'Open calendar' }).click();
+    const calendar = page.getByRole('dialog');
+    await calendar.getByRole('button', { name: 'January 2, 2026' }).click();
+    await expect(page.getByTestId('history-to')).toHaveValue('');
+    await calendar.getByRole('button', { name: 'January 3, 2026' }).click();
+    await expect(calendar).toBeHidden();
+    await expect(page.getByTestId('history-to')).toHaveValue('1/3/2026');
+    await expect(page.getByTestId('history-range-error')).toHaveCount(0);
+
+    // Then a typed day (a real change) is the first request; its answer proves the stream is idle.
+    const typed = page.waitForResponse((r) => isAlerts(r.url()));
+    await page.getByTestId('history-from').fill('1/1/2026');
+    await page.getByTestId('history-from').blur();
+    await typed;
+    expect(requests.map(query)).toEqual([
+      ['2026-01-01T00:00:00.000Z', '2026-01-04T00:00:00.000Z'],
+    ]);
+  });
+
+  test('typed days load as soon as the range is complete and valid', async ({ page }) => {
+    await openHistory(page);
+    await expect(count(page)).not.toHaveText('Loading alerts…');
+    const requests: Request[] = [];
+    page.on('request', (r) => {
+      if (isAlerts(r.url())) requests.push(r);
+    });
+
+    const from = page.getByTestId('history-from');
+    const to = page.getByTestId('history-to');
+    let loaded = page.waitForResponse((r) => isAlerts(r.url()));
+    await from.fill('12/30/2025');
+    await from.blur();
+    await loaded;
+    loaded = page.waitForResponse((r) => isAlerts(r.url()));
+    await to.fill('12/31/2025');
+    await to.blur();
+    await loaded;
+    await expect(count(page)).toHaveText(/flagged readings? on \d+ turbines?/);
+    expect(requests.map(query)).toEqual([
+      ['2025-12-30T00:00:00.000Z', '2026-01-04T00:00:00.000Z'],
+      ['2025-12-30T00:00:00.000Z', '2026-01-01T00:00:00.000Z'],
+    ]);
   });
 
   test('an end before the start, or more than 31 days, is explained and not requested', async ({

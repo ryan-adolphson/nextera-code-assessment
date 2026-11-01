@@ -27,7 +27,7 @@
       />
     </mat-date-range-input>
     <mat-datepicker-toggle matIconSuffix [for]="picker" />
-    <mat-date-range-picker #picker />
+    <mat-date-range-picker #picker (opened)="onPicking(true)" (closed)="onPicking(false)" />
   </mat-form-field>
   <p class="pt-2.5 text-sm text-muted" role="status" data-testid="history-count">
     @if (error(); as message) {
@@ -48,7 +48,7 @@
     data-testid="history-error"
   >
     The alerts could not be loaded.
-    <button matButton="outlined" type="button" data-testid="history-retry" (click)="load()">
+    <button matButton="outlined" type="button" data-testid="history-retry" (click)="retry()">
       Retry
     </button>
   </p>

@@ -41,12 +41,19 @@ export function defaultDays(now: number, zone: string = UTC_ZONE): { start: numb
   return { start: +subDays(today, 1, { in: ctx }), end: +today };
 }
 
+/** An API range [from, to) as ISO instants. */
+export interface DayRange {
+  from: string;
+  to: string;
+}
+
+/** The same [from, to) (null is only the same as null). */
+export function sameRange(a: DayRange | null, b: DayRange | null): boolean {
+  return a === b || (!!a && !!b && a.from === b.from && a.to === b.to);
+}
+
 /** Whole days [start 00:00, the day after end 00:00) in `zone`, as the API's [from, to). */
-export function dayRange(
-  start: number,
-  end: number,
-  zone: string = UTC_ZONE,
-): { from: string; to: string } {
+export function dayRange(start: number, end: number, zone: string = UTC_ZONE): DayRange {
   return {
     from: new Date(start).toISOString(),
     to: new Date(+addDays(end, 1, { in: zoneContext(zone) })).toISOString(),

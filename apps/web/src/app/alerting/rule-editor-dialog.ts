@@ -12,6 +12,7 @@ import {
 } from '@angular/material/dialog';
 import { MatError, MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
+import { MatSlideToggle } from '@angular/material/slide-toggle';
 import { TelemetryMetric } from '../fleet/fleet.model';
 import { AlertConfigApi } from './alert-config-api.service';
 import { AlertRulesStore } from './alert-rules.store';
@@ -26,7 +27,7 @@ import {
   metricOf,
 } from './alert-config.model';
 import { errorMessage, statusOf } from '../core/http-errors';
-import { duplicateMessage } from './rule-errors';
+import { RULE_GONE_MESSAGE, duplicateMessage } from './rule-errors';
 
 /** What the Rules page passes in: the rule to edit, or null to add one. */
 export interface RuleEditorData {
@@ -51,6 +52,8 @@ interface RuleModel {
   comparison: AlertComparison;
   threshold: number | null;
   level: AlertLevel;
+  /** Evaluated on ingestion (a disabled rule is kept, but flags nothing). */
+  enabled: boolean;
 }
 
 /**
@@ -74,6 +77,7 @@ interface RuleModel {
     MatFormField,
     MatInput,
     MatLabel,
+    MatSlideToggle,
     MatSuffix,
     FormField,
     FormRoot,
@@ -98,6 +102,7 @@ export class RuleEditorDialog {
     comparison: this.editing?.comparison ?? DEFAULTS.comparison,
     threshold: this.editing?.valueMetric ?? null,
     level: this.editing?.alertLevel ?? DEFAULTS.level,
+    enabled: this.editing?.enabled ?? true,
   });
   protected readonly ruleForm = form(
     this.model,
@@ -135,12 +140,13 @@ export class RuleEditorDialog {
    */
   private save(): Promise<undefined> {
     this.error.set(null);
-    const { metric, comparison, threshold, level } = this.model();
+    const { metric, comparison, threshold, level, enabled } = this.model();
     const rule: AlertConfigInput = {
       measurementMetric: metric,
       comparison,
       valueMetric: threshold!,
       alertLevel: level,
+      enabled,
     };
     const editing = this.editing;
     return new Promise((resolve) =>
@@ -154,8 +160,13 @@ export class RuleEditorDialog {
           error: (e: unknown) => {
             // One rule per metric, condition and level (unique in the database): say so in words,
             // and reload the list behind the dialog (it may be stale: changed in another browser).
-            if (statusOf(e) === 409) {
+            const status = statusOf(e);
+            if (status === 409) {
               this.error.set(duplicateMessage(rule));
+              this.rules?.reload();
+            } else if (status === 404) {
+              // Deleted elsewhere while editing (the API's text names the internal id).
+              this.error.set(RULE_GONE_MESSAGE);
               this.rules?.reload();
             } else {
               this.error.set(errorMessage(e));

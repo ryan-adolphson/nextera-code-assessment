@@ -211,6 +211,34 @@ test.describe('Weather history tab (mocked API)', () => {
     );
   });
 
+  test('picking days in the calendar sends one request, once the end day is picked', async ({ page }) => {
+    const seen = await open(page);
+    await page.goto(WEATHER_URL);
+    await expect(status(page)).toHaveText('288 of 336 half-hours synced');
+
+    await range(page).getByRole('button', { name: 'Open calendar' }).click();
+    const calendar = page.getByRole('dialog');
+    // It opens on the start's month (December). Mid-pick: the start is set and the end cleared;
+    // nothing is sent and no error shows.
+    await calendar.getByRole('button', { name: 'December 30, 2025' }).click();
+    await expect(startInput(page)).toHaveValue('12/30/2025');
+    await expect(endInput(page)).toHaveValue('');
+    await expect(calendar).toBeVisible();
+    await expect(page.getByTestId('weather-history-range-error')).toHaveCount(0);
+    await expect(status(page)).toHaveText('288 of 336 half-hours synced');
+
+    // Dec 30 … Dec 31 (96 half-hours, all in the past and synced).
+    await calendar.getByRole('button', { name: 'December 31, 2025' }).click();
+    await expect(calendar).toBeHidden();
+    await expect(endInput(page)).toHaveValue('12/31/2025');
+    await expect(status(page)).toHaveText('96 of 96 half-hours synced');
+    // The default's request, then exactly one for both new days (none with the old end day).
+    expect(historyRequests(seen).map(weatherQuery)).toEqual([
+      expect.objectContaining({ from: '2025-12-28T00:00:00.000Z', to: '2026-01-04T00:00:00.000Z' }),
+      { from: '2025-12-30T00:00:00.000Z', to: '2026-01-01T00:00:00.000Z', interval: '30min', timeZone: null },
+    ]);
+  });
+
   test('a range over 31 days shows the inline error and sends no request', async ({ page }) => {
     const seen = await open(page);
     await page.goto(WEATHER_URL);

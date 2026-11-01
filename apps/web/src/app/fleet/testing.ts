@@ -450,3 +450,23 @@ export async function openFleet(
   const http = TestBed.inject(HttpTestingController);
   return { harness, api, sse, weather, http, root, text, stable };
 }
+
+/**
+ * Drives a Material date range picker's calendar with DOM clicks, like a user (the harness waits
+ * for stability, which never comes while a load it triggers is pending). `field` is the
+ * `mat-form-field` around the `mat-date-range-input`. Call `TestBed.tick()` / settle after each.
+ */
+export const rangeCalendar = (field: Element) => {
+  const overlay = () => document.querySelector('.cdk-overlay-container mat-calendar');
+  return {
+    open: () => field.querySelector<HTMLButtonElement>('mat-datepicker-toggle button')!.click(),
+    isOpen: () => overlay() !== null,
+    previousMonth: () =>
+      overlay()!.querySelector<HTMLButtonElement>('.mat-calendar-previous-button')!.click(),
+    /** Clicks a day of the month shown. */
+    pick: (day: number) =>
+      [...overlay()!.querySelectorAll<HTMLElement>('.mat-calendar-body-cell')]
+        .find((cell) => cell.textContent?.trim() === String(day))!
+        .click(),
+  };
+};

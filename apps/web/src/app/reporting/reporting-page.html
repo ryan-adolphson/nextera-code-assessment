@@ -52,16 +52,18 @@
         placeholder="Start date"
         data-testid="report-from"
         [formField]="reportForm.start"
+        [errorStateMatcher]="rangeErrorState()"
       />
       <input
         matEndDate
         placeholder="End date"
         data-testid="report-to"
         [formField]="reportForm.end"
+        [errorStateMatcher]="rangeErrorState()"
       />
     </mat-date-range-input>
     <mat-datepicker-toggle matIconSuffix [for]="picker" />
-    <mat-date-range-picker #picker />
+    <mat-date-range-picker #picker (opened)="onPicking(true)" (closed)="onPicking(false)" />
     <mat-error>Choose the start and end dates.</mat-error>
   </mat-form-field>
 

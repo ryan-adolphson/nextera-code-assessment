@@ -15,8 +15,8 @@ const RULE: AlertConfig = {
   alertLevel: 'error',
   enabled: true,
 };
-// The editor's fields: neither the id nor `enabled` (the API default / left unchanged).
-const { id: _id, enabled: _enabled, ...INPUT } = RULE;
+// The editor's fields: everything but the id (`enabled` included).
+const { id: _id, ...INPUT } = RULE;
 
 describe('AlertConfigApi', () => {
   let api: AlertConfigApi;
@@ -61,5 +61,13 @@ describe('AlertConfigApi', () => {
     const del = http.expectOne({ method: 'DELETE', url: `${URL}/${RULE.id}` });
     del.flush(null, { status: 204, statusText: 'No Content' });
     await removed;
+  });
+
+  it('enables or disables a rule with a PATCH of `enabled` only', async () => {
+    const disabled = firstValueFrom(api.setEnabled(RULE.id, false));
+    const patch = http.expectOne({ method: 'PATCH', url: `${URL}/${RULE.id}` });
+    expect(patch.request.body).toEqual({ enabled: false });
+    patch.flush({ ...RULE, enabled: false });
+    expect((await disabled).enabled).toBe(false);
   });
 });

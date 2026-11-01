@@ -7,7 +7,13 @@ import { AlertConfig } from '../alerting/alert-config.model';
 import { LineChart } from '../charts/line-chart';
 import { TimeZoneSettings } from '../core/time-zone';
 import { Telemetry } from '../fleet/fleet.model';
-import { TEST_API_BASE_URL, mixedFleetFixture, openFleet, reading } from '../fleet/testing';
+import {
+  TEST_API_BASE_URL,
+  mixedFleetFixture,
+  openFleet,
+  rangeCalendar,
+  reading,
+} from '../fleet/testing';
 import { TelemetryReport } from './report-api.service';
 
 const REPORT_URL = `${TEST_API_BASE_URL}/reports/telemetry`;
@@ -202,6 +208,47 @@ describe('ReportingPage (/reporting)', () => {
     expect(app.text(q('report-turbines'))).toBe('2');
     const header = [...q('report-table')!.querySelectorAll('thead th')].map((th) => app.text(th));
     expect(header.slice(0, 2)).toEqual(['Measured (UTC)', 'Turbine']);
+  });
+
+  const turbineReport = (from = '2026-01-01', to = '2026-01-03'): TelemetryReport => ({
+    scope: { kind: 'turbine', id: 'TURB002', name: 'High Plains', farmId: 'FARM02' },
+    from: `${from}T00:00:00.000Z`,
+    to: `${to}T00:00:00.000Z`,
+    readings: turbineReadings(),
+  });
+
+  it('runs only on Run: picking days in the calendar sends nothing, and says nothing halfway through', async () => {
+    await choose('TURB002', 'TURB002 · High Plains');
+    await setDays('1/1/2026', '1/2/2026');
+    run();
+    await respond(turbineReport());
+
+    const calendar = rangeCalendar(q('report-range')!);
+    calendar.open();
+    await app.stable();
+    calendar.previousMonth();
+    await app.stable();
+    calendar.pick(30); // a new start day: the picker clears the end day
+    await app.stable();
+    app.http.expectNone(REPORT_URL);
+    // No "Choose the start and end dates." / range error while the end day is still to pick.
+    expect(app.root().querySelectorAll('mat-error')).toHaveLength(0);
+    expect(q('report-range-error')).toBeNull();
+    calendar.pick(31);
+    await new Promise((resolve) => setTimeout(resolve));
+    await app.stable();
+    expect(calendar.isOpen()).toBe(false);
+    app.http.expectNone(REPORT_URL); // still the last report until Run
+    expect(app.root().querySelectorAll('mat-error')).toHaveLength(0);
+
+    run();
+    const req = expectReport();
+    expect([req.request.params.get('from'), req.request.params.get('to')]).toEqual([
+      '2025-12-30T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z',
+    ]);
+    req.flush(turbineReport('2025-12-30', '2026-01-01'));
+    await app.stable();
   });
 
   it('rejects typed text that is not an option, and a range over 31 days', async () => {

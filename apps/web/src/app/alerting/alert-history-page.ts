@@ -20,7 +20,15 @@ import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
 import { AlertHistoryApi } from './alert-history-api.service';
 import { TurbineAlerts, groupAlertsByTurbine } from './alert-history';
-import { dayOf, dayRange, defaultDays, pickerDate, rangeError } from '../core/days';
+import {
+  DayRange,
+  dayOf,
+  dayRange,
+  defaultDays,
+  pickerDate,
+  rangeError,
+  sameRange,
+} from '../core/days';
 import { AlertingTabs } from './alerting-tabs';
 import { AlertChips } from './alert-chips';
 import { AlertLevelBadge } from './alert-level-badge';
@@ -31,8 +39,9 @@ import { AlertLevelBadge } from './alert-level-badge';
  * yesterday and today. A Material table with expandable rows: one summary row per turbine
  * (latest alert, a pill per level with its alert count) that
  * expands to its flagged readings, newest first, each with its rules as chips. 25 turbines per
- * page. Days and times are in the zone shown (Settings: UTC or local); choosing a valid range
- * reloads, and so does a zone change (the same calendar days, in the new zone).
+ * page. Days and times are in the zone shown (Settings: UTC or local); a complete, valid range
+ * reloads (once the calendar closes, never halfway through picking), and so does a zone change
+ * (the same calendar days, in the new zone).
  */
 @Component({
   selector: 'app-alert-history-page',
@@ -78,8 +87,23 @@ export class AlertHistoryPage {
   );
   private readonly startDay = computed(() => dayOf(this.start(), this.tz.zone()));
   private readonly endDay = computed(() => dayOf(this.end(), this.tz.zone()));
+  /**
+   * The calendar is open: the user may be halfway through picking a range (the picker sets the
+   * start, clears the end, then sets the end), so nothing is queried or reported until it closes.
+   */
+  private readonly picking = signal(false);
+  /** Why the chosen days can't be queried (none while picking in the calendar). */
   protected readonly error = computed(() =>
-    rangeError(this.startDay(), this.endDay(), this.tz.zone()),
+    this.picking() ? null : rangeError(this.startDay(), this.endDay(), this.tz.zone()),
+  );
+  /** The [from, to) to show: a complete, valid range of the picked days, in the zone shown. */
+  private readonly range = computed(
+    () => {
+      const [start, end] = [this.startDay(), this.endDay()];
+      if (this.picking() || this.error() || start === null || end === null) return null;
+      return dayRange(start, end, this.tz.zone());
+    },
+    { equal: sameRange },
   );
 
   /** The latest range's answer (an earlier range's late answer is dropped); keeps it on failure. */
@@ -112,14 +136,15 @@ export class AlertHistoryPage {
     const { start, end } = defaultDays(this.now(), zone);
     this.start.set(pickerDate(start, zone));
     this.end.set(pickerDate(end, zone));
-    this.load();
-    // A zone change (Settings) keeps the picked calendar days and queries them in the new zone.
-    let loadedZone = zone;
+    // One request per new complete range: picked or typed days, or a zone change (Settings: the
+    // same calendar days in the new zone). The range is null while picking or invalid, so the
+    // last results stay; closing the calendar on the range already shown sends nothing.
+    let loaded: DayRange | null = null;
     effect(() => {
-      const current = this.tz.zone();
-      if (current === loadedZone) return;
-      loadedZone = current;
-      untracked(() => this.load());
+      const range = this.range();
+      if (!range || sameRange(range, loaded)) return;
+      loaded = range;
+      untracked(() => this.alerts.run(range));
     });
   }
 
@@ -139,18 +164,20 @@ export class AlertHistoryPage {
   /** The picker changed a day (calendar or typed); a complete, valid range reloads. */
   protected onStart(date: Date | null): void {
     this.start.set(date);
-    this.load();
   }
 
   protected onEnd(date: Date | null): void {
     this.end.set(date);
-    this.load();
   }
 
-  /** Loads the chosen days (an incomplete or invalid range keeps the last results and says why). */
-  protected load(): void {
-    if (this.error()) return;
-    this.alerts.run(dayRange(this.startDay()!, this.endDay()!, this.tz.zone()));
+  /** The calendar opened or closed (`picking`). */
+  protected onPicking(open: boolean): void {
+    this.picking.set(open);
+  }
+
+  /** Loads the last range again (after a failure). */
+  protected retry(): void {
+    this.alerts.retry();
   }
 
   private readonly farmNames = computed(

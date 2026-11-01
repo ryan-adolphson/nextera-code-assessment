@@ -52,6 +52,20 @@
         </select>
       </mat-form-field>
 
+      <!-- A switch (role=switch) named by its label; on for new rules. -->
+      <div class="sm:col-span-2">
+        <mat-slide-toggle
+          data-testid="rule-enabled"
+          aria-describedby="rule-enabled-hint"
+          [formField]="ruleForm.enabled"
+        >
+          Enabled
+        </mat-slide-toggle>
+        <p class="m-0 mt-1 text-sm text-muted" id="rule-enabled-hint">
+          Disabled rules are kept, but new readings aren’t checked against them.
+        </p>
+      </div>
+
       @if (error(); as error) {
         <p
           class="m-0 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger sm:col-span-2"

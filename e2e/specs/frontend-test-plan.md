@@ -8,7 +8,7 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 ## Automation status
 
-108 tests in 20 files (read-only project 90, data project 18; `npx playwright test --list`). Every scenario below has a **Status** line. Wall time for both projects locally: about 38 s.
+121 tests in 20 files (read-only project 95, data project 26; `npx playwright test --list`). Every scenario below has a **Status** line. Wall time for both projects locally: about 38 s.
 
 | Area | Files |
 |---|---|
@@ -27,12 +27,11 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `clock.ts` (`fixBrowserDate`, `shortTimeIn`), `fleet.ts` (GET /api/farms from the page's own response, `mainNav`, `createTurbine`: held upload + assign), `rules.ts` (`ensureRule` / `removeRules`), `telemetry.ts`, `unallocated.ts`, `weather.ts`.
 
-**Robust to a shared DB** (db:seed fixture plus db:seed:demo, the demo feed and earlier runs): expectations come from the responses the page rendered; turbine history/stats are bounded at the browser clock (`boundTelemetryAt`); the SSE stream is aborted in read-only tests that must not change mid-test; [DATA] tests use per-run turbine ids and clean up rules and unallocated entries (turbines and readings can't be deleted through the API: each run leaves `E2E-<run>-LV` on FARM04 with 4 Jan 2 readings and the disabled rule "Rotor speed above 50 rpm → Warning", besides what section 11 leaves). `page.route` mocks only where real data can't reach the state: Turbines paging (60 turbines), History paging/chips in read-only (30 flagged turbines), an empty farm when every farm has turbines, error/Retry and login 429/unreachable, the SSE transport, and weather (section 13).
+**Robust to a shared DB** (db:seed fixture plus db:seed:demo, the demo feed and earlier runs): expectations come from the responses the page rendered; turbine history/stats are bounded at the browser clock (`boundTelemetryAt`); the SSE stream is aborted in read-only tests that must not change mid-test; [DATA] tests use per-run turbine ids and clean up rules and unallocated entries (turbines and readings can't be deleted through the API: each run leaves `E2E-<run>-LV` on FARM04 with 4 Jan 2 readings and `E2E-<run>-RF` on FARM04 with 3, and the disabled rules "Rotor speed above 50 rpm → Warning" and "Gearbox temperature below 5 °C → Info", besides what section 11 leaves). `page.route` mocks only where real data can't reach the state: Turbines paging (60 turbines), History paging/chips in read-only (30 flagged turbines), an empty farm when every farm has turbines, error/Retry, a failed rule switch (PATCH 500) and login 429/unreachable, the SSE transport, and weather (section 13).
 
 ### Not automated (and why)
 
 - 1.3 the transient 'Signing in…' label; 3.10/8.10 page-size changes on the readings tables; 4.7 the remaining sort headers; 7.6 edit-into-duplicate (same 409 path as 7.4); 7.11 rules paging; 10.1 the skip link; 10.4 phone layouts beyond /turbines.
-- 7.7 enable/disable a rule: the UI has no control for it (a rule that readings triggered can only be disabled through the API).
 - 12.6 and 13.14 below (DST days and +5:30 zones, storage errors, chart tick labels in local time, weather gaps and loading blocks).
 - A zone change while a page is open: unreachable through the UI (Settings is its own route and the setting isn't synced across tabs), so the in-place re-query is covered by the unit specs only.
 
@@ -581,11 +580,17 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **File:** `tests/alerting/history.spec.ts`
 
-**Status:** Automated (real calendar overlay: Previous month, Dec 30 → Dec 31; Jan 4 disabled. Picking the start day alone already sends a request with the previous end day).
+**Status:** Automated (real calendar overlay: Previous month, Dec 30 → Dec 31; Jan 4 disabled. Only a complete range is queried: picking the start day sends nothing (the end input is cleared, no `history-range-error`, the count keeps the last results), picking the end day sends exactly one request with both new bounds; re-picking the range already shown sends nothing; typed days still load as soon as the range is complete).
 
 **Steps:**
-  1. Open the calendar toggle, choose a start and end day.
-    - expect: Inputs show the days; loading text 'Loading alerts…' then new count; request carries whole-UTC-day from/to (end day exclusive +1)
+  1. Open the calendar toggle, choose a start day.
+    - expect: Start input shows it, end input empty, the calendar stays open; no request and no range error
+  2. Choose the end day.
+    - expect: The calendar closes; inputs show the days; exactly one request since the calendar opened, with whole-UTC-day from/to (end day exclusive +1)
+  3. Re-pick the days already shown (Jan 2 → Jan 3).
+    - expect: No request
+  4. Type a start day, then an end day.
+    - expect: One request per complete range (the typed start with the shown end, then both)
 
 #### 6.6. Range validation errors
 
@@ -637,7 +642,7 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **Steps:**
   1. Open /alerting/rules as admin.
-    - expect: Heading '<n> rules'; table columns Metric, Condition, Threshold, Level, Actions; with the fixture there are no rules ('0 rules' and the empty state); after creating one, a row like 'Power output (kW) | below | 100 kW | Warning'; edit/delete buttons labelled 'Edit rule: ...'; paginator '1 – n of n'
+    - expect: Heading '<n> rules'; table columns Metric, Condition, Threshold, Level, Enabled, Actions; with the fixture there are no rules ('0 rules' and the empty state); after creating one, a row like 'Power output (kW) | below | 100 kW | Warning'; edit/delete buttons labelled 'Edit rule: ...'; paginator '1 – n of n'
     - expect: Add rule button (add-rule) visible
 
 #### 7.2. [DATA] Create a rule
@@ -708,15 +713,25 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 #### 7.7. [DATA] Disable and re-enable a rule
 
-**File:** —
+**File:** `tests/data/rules.spec.ts`, `tests/data/live.spec.ts`
 
-**Status:** Not automated: the Rules page has no enable/disable control (the editor has Metric, Condition, Threshold, Level only). Reported as a product gap.
+**Status:** Automated. The row's `rule-enabled-toggle` (a `mat-slide-toggle`; its `button[role=switch]` is named 'Disable <rule>' / 'Enable <rule>' and carries `aria-checked`) for owners and admins; the editor's 'Enabled' switch (`rule-enabled`).
 
 **Steps:**
-  1. Locate the enable/disable control for a temp rule (inspect the row/Edit dialog; the current UI exposes enabled only if present) and disable it.
-    - expect: Row shows disabled state; rule kept; ingestion no longer evaluates it
-  2. Re-enable it, then delete it.
-    - expect: State returns to enabled; cleaned up
+  1. As owner, switch a temp rule (Wind speed above 46 m/s, Warning) off in its row.
+    - expect: rules-notice 'Rule disabled: <rule>.'; row `data-enabled="false"`, switch `aria-checked="false"` named 'Enable <rule>', `rule-disabled` pill 'Disabled'; the API has `enabled: false`; the same after a reload
+  2. Switch it on again.
+    - expect: 'Rule enabled: <rule>.'; no pill; `enabled: true`, also after a reload
+  3. Route the PATCH to a held 500, switch it off.
+    - expect: while held: `data-pending`, switch off and disabled; then `rules-toggle-error` (role=alert) 'Could not disable “<rule>”. Internal server error.', the switch back on and enabled, the API unchanged
+  4. Add rule: the Enabled switch is on by default; switched off, the rule is created disabled. Edit: the switch shows the rule's state; off → saved disabled, on → saved enabled.
+    - expect: the API's `enabled` follows; the row shows the state
+  5. As viewer: `rule-enabled-state` 'Enabled' (or the 'Disabled' pill), no switch. A viewer's open page follows an owner's switch in another browser without reload.
+  6. Ingestion: with 'Gearbox temperature below 5 °C → Info' switched off, upload a 2 °C reading for a per-run turbine.
+    - expect: the turbine page's readings table shows '–' for it; no History row for the turbine
+  7. Switch it on, upload the next 2 °C reading.
+    - expect: that reading has 'Info: 1' on the turbine page (the earlier one stays '–'); History lists the turbine with 'Info: 1' and one reading with the chip 'Info: Gearbox temperature 2 °C < 5'
+  8. Cleanup: the wind rules are deleted; the gearbox rule has flagged a reading, so it is disabled (the next run re-enables it).
 
 #### 7.8. [DATA] Delete an unused rule
 
@@ -736,13 +751,15 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **File:** `tests/data/live.spec.ts`
 
-**Status:** Automated (the dialog shows the API's message: 'Alert config <uuid> has triggered alerts … disable it instead (enabled: false).' — reported: raw id and API wording, and the UI offers no way to disable).
+**Status:** Automated (`tests/data/live.spec.ts`: after the 409 the title is 'This rule can’t be deleted', `delete-triggered` (role=alert) explains it in words (never the API's text with the internal id), `confirm-delete` is gone and the buttons are Cancel and 'Disable rule' (focused); Disable rule closes the dialog, 'Rule disabled: Rotor speed above 50 rpm.', the row is switched off, shows the 'Disabled' pill and is muted (`--muted` text). `tests/data/rules.spec.ts`: an already-disabled triggered rule says 'It’s already disabled, so it isn’t evaluated.' and offers only Close).
 
 **Steps:**
   1. Precondition: a rule that readings have triggered (e.g. Gearbox above 55 C after TURB002 anomalies ingested). Click Delete and confirm.
-    - expect: delete-error shows API conflict message advising to disable instead; dialog stays open; rule still listed
-  2. Cancel the dialog. Do NOT delete the rule.
-    - expect: Rule intact; no cleanup needed
+    - expect: Title 'This rule can’t be deleted'; delete-triggered 'This rule has flagged readings, so it can’t be deleted — they keep their history. Disable it instead to stop it from being evaluated.'; buttons Cancel and Disable rule; no confirm-delete
+  2. Click Disable rule.
+    - expect: Dialog closes; rules-notice 'Rule disabled: <rule>.'; the rule is kept, switched off, with the Disabled pill, muted
+  3. Delete a triggered rule that is already disabled.
+    - expect: delete-triggered ends 'It’s already disabled, so it isn’t evaluated.'; only Close (focused); Close keeps the rule
 
 #### 7.10. Rules API failure
 
@@ -791,6 +808,12 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
     - expect: 'Choose a farm or turbine.' and 'Choose the start and end dates.' errors; no API request
   2. Type free text 'abc' in scope and valid dates, Run.
     - expect: 'Choose a farm or turbine from the list.'
+  3. Choose TURB001, open the calendar and pick a start day (automated).
+    - expect: The end input is cleared, but neither 'Choose the start and end dates.' nor a range error shows and the end input isn't marked invalid while the calendar is open; no request
+  4. Pick the end day, Run report (automated).
+    - expect: No request before Run; then exactly one with from = the start day and to = the day after the end day
+  5. With both days typed, open the calendar, pick only a start day and press Escape (automated).
+    - expect: 'Choose the start and end dates.' shows once the calendar is closed; Run sends nothing
 
 #### 8.3. Autocomplete groups Farms and Turbines
 
@@ -942,7 +965,7 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **File:** `tests/data/rules.spec.ts`
 
-**Status:** Automated (a viewer's open page follows an owner's PATCH).
+**Status:** Automated (a viewer's open page follows an owner's PATCH through the API, and an owner's row switch in another browser context: 'Disabled' pill and back to 'Enabled').
 
 **Steps:**
   1. Open /alerting/rules in page A, create a rule via API or page B, cleanup after.
@@ -1307,6 +1330,10 @@ The farm Overview (`FarmWeather`) and its Weather history tab (`FarmWeatherHisto
     - expect: `weather-history-range-error` 'Choose at most 31 days.' in the status; no request
   4. End '12/31/2025' (exactly 31 days).
     - expect: the error gone; one request 2025-12-01T00:00Z – 2026-01-01T00:00Z (the second in total); '1488 of 1488 half-hours synced'
+  5. (Fresh page) Open the calendar (it opens on December, the start's month) and pick Dec 30.
+    - expect: Start '12/30/2025', End empty, the calendar open; no `weather-history-range-error`; the status keeps '288 of 336 half-hours synced'; no request
+  6. Pick Dec 31.
+    - expect: the calendar closes; exactly one new request 2025-12-30T00:00Z – 2026-01-01T00:00Z (two in total); '96 of 96 half-hours synced'
 
 #### 13.11. Weather history: 500 and Retry (mocked)
 

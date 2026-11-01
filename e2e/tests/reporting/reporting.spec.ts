@@ -219,6 +219,67 @@ test.describe('Reporting', () => {
     );
   });
 
+  test('days picked in the calendar show no error mid-pick, and Run sends both', async ({ page }) => {
+    await openReporting(page);
+    const requests: string[] = [];
+    page.on('request', (r) => {
+      if (isReport(r.url())) requests.push(r.url());
+    });
+    await chooseScope(page, 'TURB001', /^TURB001/);
+    const start = page.getByRole('textbox', { name: 'Start date' });
+    const end = page.getByRole('textbox', { name: 'End date' });
+
+    await page.getByRole('button', { name: 'Open calendar' }).click();
+    const calendar = page.getByRole('dialog');
+    // Mid-pick: the start is set and the end cleared (and touched), but nothing is reported yet.
+    await calendar.getByRole('button', { name: 'January 1, 2026' }).click();
+    await expect(start).toHaveValue('1/1/2026');
+    await expect(end).toHaveValue('');
+    await expect(calendar).toBeVisible();
+    await expect(page.getByText('Choose the start and end dates.')).toBeHidden();
+    await expect(page.getByTestId('report-range-error')).toHaveCount(0);
+    await expect(end).not.toHaveAttribute('aria-invalid', 'true');
+
+    await calendar.getByRole('button', { name: 'January 2, 2026' }).click();
+    await expect(calendar).toBeHidden();
+    await expect(end).toHaveValue('1/2/2026');
+    await expect(page.getByText('Choose the start and end dates.')).toBeHidden();
+    await expect(page.getByTestId('report-range-error')).toHaveCount(0);
+    expect(requests).toEqual([]);
+
+    const { query } = await runReport(page);
+    expect([query.get('turbineId'), query.get('from'), query.get('to')]).toEqual([
+      'TURB001',
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-03T00:00:00.000Z',
+    ]);
+    expect(requests).toHaveLength(1);
+  });
+
+  test('an end day cleared by a half-finished pick is reported once the calendar closes', async ({
+    page,
+  }) => {
+    await openReporting(page);
+    const requests: string[] = [];
+    page.on('request', (r) => {
+      if (isReport(r.url())) requests.push(r.url());
+    });
+    await chooseScope(page, 'TURB001', /^TURB001/);
+    await setDays(page, '1/1/2026', '1/2/2026');
+
+    await page.getByRole('button', { name: 'Open calendar' }).click();
+    const calendar = page.getByRole('dialog');
+    await calendar.getByRole('button', { name: 'January 1, 2026' }).click();
+    await expect(page.getByRole('textbox', { name: 'End date' })).toHaveValue('');
+    await expect(page.getByText('Choose the start and end dates.')).toBeHidden();
+    await page.keyboard.press('Escape');
+    await expect(calendar).toBeHidden();
+    await expect(page.getByText('Choose the start and end dates.')).toBeVisible();
+    await run(page).click();
+    await expect(page.getByText('Choose the start and end dates.')).toBeVisible();
+    expect(requests).toEqual([]);
+  });
+
   test('more than 31 days is refused; a range without readings says so', async ({ page }) => {
     await openReporting(page);
     const requests: string[] = [];

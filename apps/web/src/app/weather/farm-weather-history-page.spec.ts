@@ -6,7 +6,13 @@ import { Title } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { LineChart } from '../charts/line-chart';
 import { TimeZoneSettings } from '../core/time-zone';
-import { TEST_API_BASE_URL, openFleet, weatherResponse, weatherSlot } from '../fleet/testing';
+import {
+  TEST_API_BASE_URL,
+  openFleet,
+  rangeCalendar,
+  weatherResponse,
+  weatherSlot,
+} from '../fleet/testing';
 import { WeatherSlot } from './weather.model';
 
 /** 2026-01-03T00:00Z: Jan 3 in UTC, Jan 2, 18:00 in Chicago (the pinned browser zone). */
@@ -185,6 +191,30 @@ describe('FarmWeatherHistoryPage (/farms/:farmId/weather)', () => {
     TestBed.tick();
     app.http.expectNone(WEATHER_URL('FARM01'));
     expect(app.text(q('weather-history-range-error'))).toBe('Choose at most 31 days.');
+  });
+
+  it('queries only a complete range picked in the calendar: no request or error halfway through', async () => {
+    await open();
+    await answer(expectWeather(), slots());
+    const calendar = rangeCalendar(q('weather-history-range')!);
+    calendar.open();
+    await app.stable();
+
+    // The calendar opens on the start day's month (December). Picking a start clears the end.
+    calendar.pick(30);
+    await app.stable();
+    TestBed.tick();
+    app.http.expectNone(WEATHER_URL('FARM01'));
+    expect(q('weather-history-range-error')).toBeNull();
+    expect(q('weather-history-charts')).not.toBeNull(); // the last charts stay
+
+    calendar.pick(31);
+    await new Promise((resolve) => setTimeout(resolve)); // `closed` is emitted a task later
+    const req = expectWeather();
+    expect(range(req)).toEqual(['2025-12-30T00:00:00.000Z', '2026-01-01T00:00:00.000Z']);
+    await answer(req, slots());
+    expect(calendar.isOpen()).toBe(false);
+    app.http.expectNone(WEATHER_URL('FARM01')); // one request for the range
   });
 
   it('says when no weather was synced for the days (no buckets, or only empty ones)', async () => {

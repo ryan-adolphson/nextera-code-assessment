@@ -1,12 +1,18 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { createTurbine, mainNav } from '../support/fleet.js';
-import { ensureRule } from '../support/rules.js';
+import {
+  ensureRule,
+  expectRuleState,
+  findRule,
+  mutedColor,
+  ruleRow,
+} from '../support/rules.js';
 import { INGESTION_URL, apiToken, signIn } from '../support/session.js';
 import { telemetryCsv, turbineTelemetry, uploadTelemetry } from '../support/telemetry.js';
 import { removeUnallocated } from '../support/unallocated.js';
 
 /**
- * [DATA] Live updates end to end (plan 9.2–9.4, 9.6, 6.4, 7.9, 3.10, 8.8 with alerts): readings
+ * [DATA] Live updates end to end (plan 9.2–9.4, 9.6, 6.4, 7.7, 7.9, 3.10, 8.8 with alerts): readings
  * uploaded to the ingestion worker (:8081) are stored, evaluated against the enabled rules, and
  * reach open pages over SSE without a reload: the Turbines row, the turbine page (readings table
  * alert pill + tooltip, the alerts chart), Alerting History (expanded chips) and the report CSV.
@@ -16,8 +22,9 @@ import { removeUnallocated } from '../support/unallocated.js';
  *   its readings are only these tests' (22:50, 22:55, 23:58, 23:59 on Jan 2; the browser clock is
  *   fixed at SEED_NOW = Jan 3, 00:00) and no other test sees them change.
  * - The rule "Rotor speed above 50 rpm → Warning" fires only on this turbine's 55 rpm reading
- *   (turbines turn at ~10–20 rpm). After the tests it is deleted, or, since readings triggered it
- *   (telemetry_alerts restricts deletes: 409), disabled; the next run finds and re-enables it.
+ *   (turbines turn at ~10–20 rpm). The Rules page can't delete it once readings triggered it
+ *   (telemetry_alerts restricts deletes: 409), so the dialog's Disable rule disables it; afterAll
+ *   deletes it or keeps it disabled, and the next run finds and re-enables it.
  * Left behind (no turbine/telemetry delete API): the turbine and its four readings, and the
  * disabled rule. `docker compose down -v` + `db:seed` clears them.
  */
@@ -31,6 +38,7 @@ const RULE = {
   valueMetric: 50,
   alertLevel: 'warn',
 } as const;
+const RULE_TEXT = 'Rotor speed above 50 rpm';
 const TOOLTIP = 'Warning: Rotor speed 55 rpm > 50';
 
 let cleanupRule: ((request: APIRequestContext) => Promise<void>) | undefined;
@@ -185,23 +193,40 @@ test.describe('[DATA] Live updates through ingestion', () => {
     expect(flagged[0].endsWith(',warn:rotor_rpm above 50')).toBe(true);
   });
 
-  test('[DATA] a rule that readings triggered can’t be deleted: the dialog says why and stays open', async ({
+  test('[DATA] a rule that readings triggered can’t be deleted: the dialog offers Disable rule, which disables it', async ({
     page,
+    request,
   }) => {
     await signIn(page, 'owner');
     await page.goto('/alerting/rules');
-    const row = page.locator(`[data-testid="rule"][data-rule-id="${ruleId}"]`);
-    await expect(row).toContainText('Rotor speed');
-    await row.getByRole('button', { name: /^Delete rule: Rotor speed above 50 rpm/ }).click();
+    const row = ruleRow(page, ruleId);
+    await expectRuleState(row, RULE_TEXT, true);
+    await row.getByRole('button', { name: `Delete rule: ${RULE_TEXT}` }).click();
     const dialog = page.getByTestId('delete-dialog');
-    await expect(dialog).toContainText('Rotor speed above 50 rpm (Warning) will be removed.');
+    await expect(dialog).toContainText(`${RULE_TEXT} (Warning) will be removed.`);
     await dialog.getByTestId('confirm-delete').click();
-    await expect(dialog.getByTestId('delete-error')).toContainText(
-      'has triggered alerts on telemetry readings and cannot be deleted; disable it instead',
+
+    // 409 (telemetry_alerts keeps the flagged reading's history): explained in words, not the API's text.
+    await expect(dialog.getByRole('heading')).toHaveText('This rule can’t be deleted');
+    await expect(dialog.getByTestId('delete-triggered')).toHaveText(
+      'This rule has flagged readings, so it can’t be deleted — they keep their history. Disable it instead to stop it from being evaluated.',
     );
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog.getByTestId('delete-triggered')).toHaveRole('alert');
+    await expect(dialog.getByTestId('confirm-delete')).toHaveCount(0);
+    await expect(dialog.getByTestId('delete-error')).toHaveCount(0);
+    await expect(dialog.getByRole('button')).toHaveText(['Cancel', 'Disable rule']);
+    await expect(dialog.getByTestId('disable-rule')).toBeFocused();
+
+    await dialog.getByTestId('disable-rule').click();
     await expect(dialog).toBeHidden();
-    await expect(row).toBeVisible();
+    await expect(page.getByTestId('rules-notice')).toHaveText(`Rule disabled: ${RULE_TEXT}.`);
+    // Kept, switched off, labelled Disabled and muted.
+    await expectRuleState(row, RULE_TEXT, false);
+    await expect(row.getByRole('cell').first()).toHaveCSS('color', await mutedColor(page));
+    expect(await findRule(request, await apiToken(request, 'owner'), RULE)).toMatchObject({
+      id: ruleId,
+      enabled: false,
+    });
   });
 
   test('[DATA] an invalid CSV is rejected by line and stores nothing', async ({ request }) => {

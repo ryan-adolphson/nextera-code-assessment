@@ -7,7 +7,7 @@ import { Title } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { TimeZoneSettings } from '../core/time-zone';
 import { Telemetry } from '../fleet/fleet.model';
-import { TEST_API_BASE_URL, openFleet, reading } from '../fleet/testing';
+import { TEST_API_BASE_URL, openFleet, rangeCalendar, reading } from '../fleet/testing';
 import { AlertConfig } from './alert-config.model';
 
 const ALERTS_URL = `${TEST_API_BASE_URL}/alerts`;
@@ -111,6 +111,15 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     app
       .root()
       .querySelector<HTMLElement>(`[data-testid=history-detail][data-turbine-id=${turbineId}]`)!;
+
+  /** Esc in the focused overlay (CDK checks the legacy keyCode, which jsdom leaves at 0). */
+  async function pressEscape() {
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+    Object.defineProperty(event, 'keyCode', { get: () => 27 });
+    (document.activeElement ?? document.body).dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve)); // `closed` is emitted a task later
+    await app.stable();
+  }
 
   beforeEach(async () => {
     app = await openFleet('/alerting/history', () => CLOCK);
@@ -274,6 +283,58 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     setDays('12/1/2025', '1/3/2026');
     app.http.expectNone(ALERTS_URL);
     expect(app.text(q('history-range-error'))).toBe('Choose at most 31 days.');
+  });
+
+  it('queries only a complete range picked in the calendar: nothing (and no error) halfway through', async () => {
+    await flush(flagged());
+    const calendar = rangeCalendar(q('history-range')!);
+    calendar.open();
+    await app.stable();
+    expect(calendar.isOpen()).toBe(true);
+
+    // The picker sets the start and clears the end: no request with the old end day (1/3).
+    calendar.previousMonth();
+    await app.stable();
+    calendar.pick(30);
+    await app.stable();
+    app.http.expectNone(ALERTS_URL);
+    expect(q('history-range-error')).toBeNull();
+    expect(all('history-turbine')).toHaveLength(2); // the last results stay
+    expect(app.text(q('history-count'))).toBe('4 flagged readings on 2 turbines');
+
+    // The end day completes the range; the calendar closes and one request goes out.
+    calendar.pick(31);
+    await new Promise((resolve) => setTimeout(resolve)); // `closed` is emitted a task later
+    const req = expectAlerts();
+    expect([req.request.params.get('from'), req.request.params.get('to')]).toEqual([
+      '2025-12-30T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z',
+    ]);
+    req.flush([]);
+    await app.stable();
+    expect(calendar.isOpen()).toBe(false);
+    expect(app.text(q('history-count'))).toBe('0 flagged readings on 0 turbines');
+  });
+
+  it('sends nothing when the calendar closes on the range shown, and asks for an end day after a half pick', async () => {
+    await flush(flagged());
+    const calendar = rangeCalendar(q('history-range')!);
+    calendar.open();
+    await app.stable();
+    await pressEscape();
+    expect(calendar.isOpen()).toBe(false);
+    app.http.expectNone(ALERTS_URL);
+    expect(q('history-range-error')).toBeNull();
+
+    calendar.open();
+    await app.stable();
+    calendar.pick(1);
+    await app.stable();
+    await pressEscape();
+    expect(calendar.isOpen()).toBe(false);
+    app.http.expectNone(ALERTS_URL);
+    expect(app.text(q('history-range-error'))).toBe('Choose an end date.');
+    expect(all('history-turbine')).toHaveLength(2);
   });
 
   it('shows a load error with a retry', async () => {

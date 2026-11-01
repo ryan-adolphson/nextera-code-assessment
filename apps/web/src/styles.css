@@ -202,6 +202,21 @@
   --mat-button-toggle-selected-state-background-color: var(--accent);
   --mat-button-toggle-selected-state-text-color: var(--on-accent);
 
+  /*
+   * Slide toggle (rule Enabled switch): on = --accent track with an --on-accent handle; off =
+   * a --surface track with a --muted outline and handle (Material's surface-variant has no
+   * counterpart here, so the off-state tokens are set directly).
+   */
+  --mat-slide-toggle-unselected-track-color: var(--surface);
+  --mat-slide-toggle-unselected-hover-track-color: var(--surface);
+  --mat-slide-toggle-unselected-focus-track-color: var(--surface);
+  --mat-slide-toggle-unselected-pressed-track-color: var(--surface);
+  --mat-slide-toggle-unselected-icon-color: var(--surface);
+  --mat-slide-toggle-disabled-unselected-track-color: var(--surface);
+  --mat-slide-toggle-disabled-unselected-icon-color: var(--surface);
+  --mat-slide-toggle-handle-shape: 9999px;
+  --mat-slide-toggle-track-shape: 9999px;
+
   /* Datepicker (alert history): the days in the chosen range get a light accent wash. */
   --mat-datepicker-calendar-date-in-range-state-background-color: color-mix(
     in srgb,

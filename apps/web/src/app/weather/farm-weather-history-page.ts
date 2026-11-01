@@ -91,16 +91,22 @@ export class FarmWeatherHistoryPage {
   );
   private readonly startDay = computed(() => dayOf(this.start(), this.tz.zone()));
   private readonly endDay = computed(() => dayOf(this.end(), this.tz.zone()));
+  /**
+   * The calendar is open: the user may be halfway through picking a range (the picker sets the
+   * start, clears the end, then sets the end), so nothing is queried or reported until it closes.
+   */
+  private readonly picking = signal(false);
+  /** Why the chosen days can't be queried (none while picking in the calendar). */
   protected readonly error = computed(() =>
-    rangeError(this.startDay(), this.endDay(), this.tz.zone()),
+    this.picking() ? null : rangeError(this.startDay(), this.endDay(), this.tz.zone()),
   );
 
-  /** The range to show (null: unknown farm or an invalid range, so no request). */
+  /** The range to show (null: unknown farm, picking, or an invalid range, so no request). */
   private readonly request = computed(
     (): HistoryRequest | null => {
       const farm = this.farm();
       const [start, end] = [this.startDay(), this.endDay()];
-      if (!farm || this.error() || start === null || end === null) return null;
+      if (!farm || this.picking() || this.error() || start === null || end === null) return null;
       return { farmId: farm.id, ...dayRange(start, end, this.tz.zone()) };
     },
     { equal: sameRequest },
@@ -154,10 +160,14 @@ export class FarmWeatherHistoryPage {
     const { start, end } = weatherDays(this.now(), zone);
     this.start.set(pickerDate(start, zone));
     this.end.set(pickerDate(end, zone));
-    // A new farm, range or zone (the same calendar dates, in the new zone): one request.
+    // A new farm, range or zone (the same calendar dates, in the new zone): one request. Closing
+    // the calendar on the range already shown (or going invalid and back) sends nothing.
+    let loaded: HistoryRequest | null = null;
     effect(() => {
       const request = this.request();
-      if (request) untracked(() => this.load.run(request));
+      if (!request || sameRequest(request, loaded)) return;
+      loaded = request;
+      untracked(() => this.load.run(request));
     });
     // "<Farm> · Weather history · Nextera" once the farm's name is known (the route's title
     // names the farm by id until then).
@@ -174,6 +184,11 @@ export class FarmWeatherHistoryPage {
 
   protected onEnd(date: Date | null): void {
     this.end.set(date);
+  }
+
+  /** The calendar opened or closed (`picking`). */
+  protected onPicking(open: boolean): void {
+    this.picking.set(open);
   }
 
   protected retry(): void {
