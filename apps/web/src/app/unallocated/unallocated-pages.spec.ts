@@ -1,6 +1,7 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { TestRequest } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { TimeZoneSettings } from '../core/time-zone';
 import { MatAutocompleteHarness } from '@angular/material/autocomplete/testing';
 import { Title } from '@angular/platform-browser';
 import { Router } from '@angular/router';
@@ -705,6 +706,27 @@ describe('Unallocated turbines (/unallocated)', () => {
       expect(app.text(turbine)).toContain('Red Canyon');
       expect(app.text(turbine)).toContain('777'); // the live imported reading, not the older 640
     });
+  });
+
+  it('shows Pending and Blocked times in local time when chosen in Settings', async () => {
+    await open('/unallocated', [unknownTurbine()]);
+    TestBed.inject(TimeZoneSettings).setMode('local'); // browser zone America/Chicago
+    await settle();
+    expect(cell(row('TURB990'), 'last-seen')).toBe('Last Jan 2, 17:56');
+    expect(cell(row('TURB990'), 'first-seen')).toBe('First Jan 2, 15:00');
+    const headers = [...app.root().querySelectorAll('thead th')].map((th) => app.text(th));
+    expect(headers).toContain('Seen (local)');
+    expect(app.text(app.root().querySelector('h1 ~ p'))).toContain(
+      'Times are local time (America/Chicago).',
+    );
+
+    await app.harness.navigateByUrl('/unallocated/blocked');
+    await flushList('blocked', [blocked()]);
+    const cells = [...app.root().querySelectorAll('[data-testid=blocked-row] td')];
+    expect(cells.map((td) => app.text(td))).toContain('Jan 2, 04:15');
+    expect([...app.root().querySelectorAll('thead th')].map((th) => app.text(th))).toContain(
+      'Blocked (local)',
+    );
   });
 
   describe('Blocked', () => {

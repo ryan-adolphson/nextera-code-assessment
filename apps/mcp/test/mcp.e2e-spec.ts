@@ -12,22 +12,22 @@ import { connectClient } from '../src/testing.js';
 /** 25 minutes after TURB002's last fixture reading (2026-01-02T23:55Z). */
 const NOW = Date.parse('2026-01-03T00:20:00Z');
 
-const HOUR_MS = 60 * 60 * 1000;
+const HALF_HOUR_MS = 30 * 60 * 1000;
 
-/** 48 hours of FARM02 weather from 2026-01-01T00Z; the last 6 are forecast hours. */
-const weatherHours = Array.from({ length: 48 }, (_, i) => ({
+/** 48 hours of FARM02 weather (TURB002's farm) from 2026-01-01T00Z, 96 buckets of 30 minutes. */
+const weatherBuckets = Array.from({ length: 96 }, (_, i) => ({
   farmId: 'FARM02',
-  time: new Date(Date.parse('2026-01-01T00:00:00Z') + i * HOUR_MS),
-  source: i >= 42 ? ('forecast' as const) : ('archive' as const),
+  time: new Date(Date.parse('2026-01-01T00:00:00Z') + i * HALF_HOUR_MS),
+  samples: i === 0 ? 1 : 2,
   windSpeed10mMs: 5 + (i % 4),
-  windSpeed100mMs: 8 + (i % 4),
+  windSpeed80mMs: 8 + (i % 4),
   windDirection10mDeg: 180,
-  windDirection100mDeg: 190,
+  windDirection80mDeg: 190,
   windGusts10mMs: 12,
   temperature2mC: -2,
   relativeHumidity2mPct: 80,
   surfacePressureHpa: 1012,
-  precipitationMm: 0.1,
+  precipitationMm: 0.05,
   cloudCoverPct: i === 0 ? null : 50,
 }));
 
@@ -62,7 +62,7 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     writer = new PrismaClient({
       adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
     });
-    await writer.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, turbines, farm_weather_hourly, farms, unallocated_turbines, held_telemetry`;
+    await writer.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, turbines, farm_weather, farms, unallocated_turbines, held_telemetry`;
     await seedFromCsv(writer, SEED_DATA_DIR);
     await writer.alertConfig.createMany({
       data: [
@@ -86,7 +86,7 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
       await enabledAlertRules(writer),
     );
 
-    await writer.farmWeatherHourly.createMany({ data: weatherHours });
+    await writer.farmWeather.createMany({ data: weatherBuckets });
     // Pending: TURB099 isn't in the fleet; TURB001 (on FARM01) reports FARM05. Blocked: TURB097,
     // blocked by a user (whose email the tools must not show).
     const blocker = await writer.user.create({
@@ -138,7 +138,7 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     await mcp?.close();
     await readOnly?.$disconnect();
     if (writer) {
-      await writer.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, unallocated_turbines, held_telemetry, farm_weather_hourly`;
+      await writer.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, unallocated_turbines, held_telemetry, farm_weather`;
       await writer.user.deleteMany({
         where: { email: 'blocker@nextera.local' },
       });
@@ -258,51 +258,70 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
       from: '2026-01-01T00:00:00.000Z',
       to: '2026-01-03T00:00:00.000Z',
       interval: 'daily',
+      timeZone: 'UTC',
       count: 2,
-      sources: { archive: 1, forecast: 1 },
     });
     const [day1, day2] = result.rows;
     expect(at(day1, 'date')).toBe('2026-01-01');
-    expect(at(day1, 'hours')).toBe(24);
-    expect(at(day1, 'source')).toBe('archive');
-    expect(at(day1, 'windSpeed100mMeanMs')).toBe(9.5); // 8..11, evenly
-    expect(at(day1, 'windSpeed100mMaxMs')).toBe(11);
-    expect(at(day1, 'windDirection100mDeg')).toBe(190);
+    expect(at(day1, 'samples')).toBe(48);
+    expect(at(day1, 'windSpeed80mMeanMs')).toBe(9.5); // 8..11, evenly
+    expect(at(day1, 'windSpeed80mMaxMs')).toBe(11);
+    expect(at(day1, 'windDirection80mDeg')).toBe(190);
     expect(at(day1, 'precipitationSumMm')).toBe(2.4);
-    expect(at(day2, 'source')).toBe('forecast'); // its last 6 hours
+    expect(at(day2, 'date')).toBe('2026-01-02');
   });
 
-  it('get_weather: hourly rows in [from, to), oldest first', async () => {
+  it('get_weather: a turbine gets its farm’s weather; local days in timeZone', async () => {
     const result = (
       await mcp.call('get_weather', {
-        farmId: 'FARM02',
+        turbineId: 'TURB002',
         from: '2026-01-01T00:00:00Z',
-        to: '2026-01-01T03:00:00Z',
-        interval: 'hourly',
+        to: '2026-01-03T00:00:00Z',
+        timeZone: 'America/Chicago',
       })
     ).json();
 
     expect(result).toMatchObject({
-      interval: 'hourly',
-      count: 3,
-      sources: { archive: 3, forecast: 0 },
+      farmId: 'FARM02',
+      turbineId: 'TURB002',
+      timeZone: 'America/Chicago',
+      interval: 'daily',
     });
-    expect(result.rows.map((row: unknown[]) => row[0])).toEqual([
-      '2026-01-01T00:00:00.000Z',
-      '2026-01-01T01:00:00.000Z',
-      '2026-01-01T02:00:00.000Z',
+    // CST (−6): 2025-12-31 gets the first 6 h, 2026-01-02 runs to 18:00 local.
+    expect(result.rows.map((row: unknown[]) => [row[0], row[1]])).toEqual([
+      ['2025-12-31', 12],
+      ['2026-01-01', 48],
+      ['2026-01-02', 36],
+    ]);
+  });
+
+  it('get_weather: 30-minute rows in [from, to), oldest first', async () => {
+    const result = (
+      await mcp.call('get_weather', {
+        farmId: 'FARM02',
+        from: '2026-01-01T00:00:00Z',
+        to: '2026-01-01T01:30:00Z',
+        interval: '30min',
+      })
+    ).json();
+
+    expect(result).toMatchObject({ interval: '30min', count: 3 });
+    expect(result.rows.map((row: unknown[]) => [row[0], row[1]])).toEqual([
+      ['2026-01-01T00:00:00.000Z', 1],
+      ['2026-01-01T00:30:00.000Z', 2],
+      ['2026-01-01T01:00:00.000Z', 2],
     ]);
     expect(result.rows[0].at(-1)).toBeNull(); // cloud cover not reported
   });
 
-  it('get_weather: an unknown farm, a long range and a farm without weather', async () => {
+  it('get_weather: an unknown farm or turbine, a long range, a bad zone, both ids, and a farm without weather', async () => {
+    const day = { from: '2026-01-01T00:00:00Z', to: '2026-01-02T00:00:00Z' };
     expect(
-      await mcp.call('get_weather', {
-        farmId: 'FARM99',
-        from: '2026-01-01T00:00:00Z',
-        to: '2026-01-02T00:00:00Z',
-      }),
+      await mcp.call('get_weather', { farmId: 'FARM99', ...day }),
     ).toMatchObject({ isError: true, text: 'Farm FARM99 not found' });
+    expect(
+      await mcp.call('get_weather', { turbineId: 'TURB999', ...day }),
+    ).toMatchObject({ isError: true, text: 'Turbine TURB999 not found' });
     expect(
       await mcp.call('get_weather', {
         farmId: 'FARM02',
@@ -313,11 +332,24 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
       isError: true,
       text: 'The range may span at most 31 days',
     });
-    const none = await mcp.call('get_weather', {
-      farmId: 'FARM01',
-      from: '2026-01-01T00:00:00Z',
-      to: '2026-01-02T00:00:00Z',
+    expect(
+      await mcp.call('get_weather', {
+        farmId: 'FARM02',
+        ...day,
+        timeZone: 'Mars/Olympus',
+      }),
+    ).toMatchObject({
+      isError: true,
+      text: 'timeZone must be an IANA time zone name, e.g. "America/Chicago" (default "UTC")',
     });
+    const both = await mcp.call('get_weather', {
+      farmId: 'FARM02',
+      turbineId: 'TURB002',
+      ...day,
+    });
+    expect(both.isError).toBe(true);
+    expect(both.text).toContain('Provide exactly one of farmId or turbineId');
+    const none = await mcp.call('get_weather', { farmId: 'FARM01', ...day });
     expect(none.isError).toBe(false);
     expect(none.json()).toMatchObject({ count: 0, rows: [] });
   });
@@ -514,13 +546,13 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     await expect(
       readOnly.$executeRaw`DELETE FROM telemetry_alerts`,
     ).rejects.toThrow(/read-only transaction/);
-    await expect(readOnly.farmWeatherHourly.deleteMany({})).rejects.toThrow(
+    await expect(readOnly.farmWeather.deleteMany({})).rejects.toThrow(
       /read-only transaction/,
     );
     await expect(
       readOnly.unallocatedTurbine.updateMany({ data: { status: 'blocked' } }),
     ).rejects.toThrow(/read-only transaction/);
-    expect(await writer.farmWeatherHourly.count()).toBe(48);
+    expect(await writer.farmWeather.count()).toBe(96);
     expect(
       await writer.unallocatedTurbine.count({ where: { status: 'pending' } }),
     ).toBe(2);

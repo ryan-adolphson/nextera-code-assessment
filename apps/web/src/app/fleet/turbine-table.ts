@@ -1,4 +1,4 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
+import { DecimalPipe } from '@angular/common';
 import { Component, computed, inject, input, signal } from '@angular/core';
 import { MatIcon } from '@angular/material/icon';
 import { MatIconButton } from '@angular/material/button';
@@ -6,6 +6,8 @@ import { MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field'
 import { MatInput } from '@angular/material/input';
 import { MatSort, MatSortHeader, Sort } from '@angular/material/sort';
 import { RouterLink } from '@angular/router';
+import { AppTimePipe } from '../core/app-time.pipe';
+import { TimeZoneSettings } from '../core/time-zone';
 import { FleetStore, FleetTurbine } from './fleet.store';
 import { STALENESS_LABELS, STALENESS_ORDER, Staleness } from './staleness';
 import { paginate } from '../ui/paging';
@@ -62,7 +64,7 @@ const COLUMNS: Column[] = [
   },
   {
     key: 'time',
-    label: 'Last reading (UTC)',
+    label: 'Last reading',
     value: (t) => t.latest?.timestamp ?? null,
   },
 ];
@@ -81,7 +83,7 @@ const COLUMNS: Column[] = [
   // filters keep their height, the table frame takes what is left and scrolls its rows.
   host: { class: 'flex min-h-0 flex-1 flex-col' },
   imports: [
-    DatePipe,
+    AppTimePipe,
     DecimalPipe,
     MatFormField,
     MatIcon,
@@ -107,6 +109,7 @@ export class TurbineTable {
   readonly hiddenColumns = input<readonly TurbineSortKey[]>([]);
 
   protected readonly store = inject(FleetStore);
+  protected readonly tz = inject(TimeZoneSettings);
   protected readonly columnKeys = computed(() =>
     COLUMNS.map((c) => c.key).filter((key) => !this.hiddenColumns().includes(key)),
   );

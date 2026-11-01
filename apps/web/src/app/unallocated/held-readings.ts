@@ -4,7 +4,9 @@ import { MatButton } from '@angular/material/button';
 import { latestLoad } from '../ui/latest-load';
 import { TABLE_IMPORTS } from '../ui/table';
 import { UnallocatedApi } from './unallocated-api.service';
-import { HeldReading, UnallocatedTurbine, utcTime } from './unallocated.model';
+import { HeldReading, UnallocatedTurbine } from './unallocated.model';
+import { AppTimePipe } from '../core/app-time.pipe';
+import { TimeZoneSettings } from '../core/time-zone';
 
 /** How many held readings an expanded row shows (two hours of 5-minute readings). */
 export const HELD_READINGS_SHOWN = 24;
@@ -16,7 +18,7 @@ export const HELD_READINGS_SHOWN = 24;
  */
 @Component({
   selector: 'app-held-readings',
-  imports: [DecimalPipe, MatButton, TABLE_IMPORTS],
+  imports: [AppTimePipe, DecimalPipe, MatButton, TABLE_IMPORTS],
   template: `
     @if (load.failed()) {
       <p
@@ -42,12 +44,16 @@ export const HELD_READINGS_SHOWN = 24;
         [attr.aria-label]="'Held readings for ' + entry().turbineId"
       >
         <ng-container matColumnDef="timestamp">
-          <th mat-header-cell *matHeaderCellDef>Measured (UTC)</th>
-          <td mat-cell *matCellDef="let r" class="tabular-nums">{{ time(r.timestamp) }}</td>
+          <th mat-header-cell *matHeaderCellDef>Measured ({{ tz.tag() }})</th>
+          <td mat-cell *matCellDef="let r" class="tabular-nums">
+            {{ r.timestamp | appTime: 'MMM d, HH:mm' }}
+          </td>
         </ng-container>
         <ng-container matColumnDef="receivedAt">
-          <th mat-header-cell *matHeaderCellDef>Received (UTC)</th>
-          <td mat-cell *matCellDef="let r" class="tabular-nums">{{ time(r.receivedAt) }}</td>
+          <th mat-header-cell *matHeaderCellDef>Received ({{ tz.tag() }})</th>
+          <td mat-cell *matCellDef="let r" class="tabular-nums">
+            {{ r.receivedAt | appTime: 'MMM d, HH:mm' }}
+          </td>
         </ng-container>
         <ng-container matColumnDef="farmId">
           <th mat-header-cell *matHeaderCellDef>Reported farm</th>
@@ -93,7 +99,7 @@ export class HeldReadings {
     'farmId',
     ...this.metrics.map((m) => m.key),
   ];
-  protected readonly time = utcTime;
+  protected readonly tz = inject(TimeZoneSettings);
   protected readonly trackByTime = (_: number, r: HeldReading) => r.timestamp;
 
   /** Changes when there is something new to load (not on every reload of the same list). */

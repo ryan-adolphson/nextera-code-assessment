@@ -190,7 +190,7 @@ describe('seedDemo', () => {
     expect(prisma.telemetryAlert.createMany).not.toHaveBeenCalled();
 
     const later = await run(new Date(END.getTime() + HOUR));
-    // 12 new steps for each turbine (the stopped one's window moves too), plus the earlier gap,
+    // 12 new steps for each turbine (the stopped and lagging ones' windows move too), plus the earlier gap,
     // which is no longer at the gap's offset.
     expect(later.inserted).toBe(
       DEMO_TURBINES.length * 12 + DEMO_ANOMALIES.gap.readings,

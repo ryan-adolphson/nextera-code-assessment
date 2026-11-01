@@ -1,10 +1,11 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { TestRequest } from '@angular/common/http/testing';
-import { TestBed } from '@angular/core/testing';
+import { DeferBlockBehavior, DeferBlockState, TestBed } from '@angular/core/testing';
 import { MatDateRangeInputHarness } from '@angular/material/datepicker/testing';
 import { MatPaginatorHarness } from '@angular/material/paginator/testing';
 import { Title } from '@angular/platform-browser';
 import { Router } from '@angular/router';
+import { TimeZoneSettings } from '../core/time-zone';
 import { Telemetry } from '../fleet/fleet.model';
 import { TEST_API_BASE_URL, openFleet, reading } from '../fleet/testing';
 import { AlertConfig } from './alert-config.model';
@@ -299,5 +300,131 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     for (const th of app.root().querySelectorAll('[data-testid=alert-history] thead th')) {
       expect(th.classList).toContain('mat-mdc-table-sticky');
     }
+  });
+});
+
+/** Local time (Settings → Local, browser zone America/Chicago): local days and times. */
+describe('AlertHistoryPage in local time', () => {
+  let app: Awaited<ReturnType<typeof openFleet>>;
+  const q = (id: string) => app.root().querySelector<HTMLElement>(`[data-testid=${id}]`);
+  const expectAlerts = (): TestRequest => {
+    TestBed.tick();
+    return app.http.expectOne((r) => r.method === 'GET' && r.url === ALERTS_URL);
+  };
+  const range = (req: TestRequest) => [
+    req.request.params.get('from'),
+    req.request.params.get('to'),
+  ];
+
+  beforeEach(async () => {
+    app = await openFleet('/alerting/history', () => CLOCK, undefined, undefined, 'admin', {
+      timeZone: 'local',
+    });
+  });
+  afterEach(() => app.http.verify());
+
+  it('asks for yesterday and today as local days (local midnights) and shows local times', async () => {
+    // 2026-01-03 00:00:30 UTC is Jan 2, 18:00 CST: yesterday and today are Jan 1 and Jan 2.
+    const req = expectAlerts();
+    expect(range(req)).toEqual(['2026-01-01T06:00:00.000Z', '2026-01-03T06:00:00.000Z']);
+    req.flush(flagged());
+    await app.stable();
+
+    const picker = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatDateRangeInputHarness,
+    );
+    expect(await picker.getValue()).toBe('1/1/2026 – 1/2/2026');
+    expect(await (await picker.getEndInput()).getMax()).toBe('2026-01-02'); // today, locally
+    expect(app.text(q('history-range')!.querySelector('mat-label'))).toBe('Dates (local)');
+    expect(app.text(app.root().querySelector('h1 + p'))).toBe(
+      'Readings that triggered alert rules when they arrived, by turbine. Times are local time (America/Chicago).',
+    );
+    const row = app.root().querySelector('[data-testid=history-turbine][data-turbine-id=TURB001]')!;
+    expect([...row.querySelectorAll('td')].map((td) => app.text(td))).toContain('Jan 2, 07:40');
+    expect(app.text(q('alert-history')!.querySelectorAll('thead th')[3])).toBe('Latest (local)');
+  });
+
+  it('keeps the picked calendar days and queries them again when the zone changes', async () => {
+    expectAlerts().flush([]);
+    await app.stable();
+
+    TestBed.inject(TimeZoneSettings).setMode('utc');
+    const req = expectAlerts();
+    expect(range(req)).toEqual(['2026-01-01T00:00:00.000Z', '2026-01-03T00:00:00.000Z']);
+    req.flush(flagged());
+    await app.stable();
+    expect(app.text(q('history-range')!.querySelector('mat-label'))).toBe('Dates (UTC)');
+  });
+});
+
+/** The detail rows' chips: `@defer (when isExpanded(…); prefetch on idle)`, driven by hand. */
+describe('AlertHistoryPage deferred chips (@defer)', () => {
+  let app: Awaited<ReturnType<typeof openFleet>>;
+  beforeEach(async () => {
+    app = await openFleet('/alerting/history', () => CLOCK, undefined, undefined, 'admin', {
+      deferBlockBehavior: DeferBlockBehavior.Manual,
+    });
+    TestBed.tick();
+    app.http.expectOne((r) => r.url === ALERTS_URL).flush(flagged());
+    await app.stable();
+  });
+  afterEach(() => app.http.verify());
+
+  const detail = (turbineId: string) =>
+    app
+      .root()
+      .querySelector<HTMLElement>(`[data-testid=history-detail][data-turbine-id=${turbineId}]`)!;
+  const expand = async (turbineId: string) => {
+    app
+      .root()
+      .querySelector<HTMLButtonElement>(
+        `[data-testid=history-turbine][data-turbine-id=${turbineId}] [data-testid=history-expand]`,
+      )!
+      .click();
+    await app.stable();
+  };
+
+  it('holds the expanded readings’ rows (their times) until the chips load, then shows the chips', async () => {
+    const blocks = await app.harness.fixture.getDeferBlocks();
+    expect(blocks).toHaveLength(2); // one per detail row
+    expect(app.root().querySelector('[data-testid=history-detail-placeholder]')).toBeNull();
+
+    await expand('TURB002');
+
+    const placeholder = detail('TURB002').querySelector(
+      '[data-testid=history-detail-placeholder]',
+    )!;
+    expect([...placeholder.querySelectorAll('li')].map((li) => app.text(li))).toEqual([
+      'Jan 2, 03:30',
+      'Jan 2, 03:25',
+      'Jan 2, 03:20',
+    ]);
+    expect(detail('TURB002').querySelector('[data-testid=alert-chip]')).toBeNull();
+    expect(detail('TURB001').querySelector('[data-testid=history-detail-placeholder]')).toBeNull();
+
+    for (const block of blocks) await block.render(DeferBlockState.Complete);
+    await app.stable();
+
+    expect(detail('TURB002').querySelector('[data-testid=history-detail-placeholder]')).toBeNull();
+    expect(detail('TURB002').querySelectorAll('[data-testid=history-reading]')).toHaveLength(3);
+    expect(detail('TURB002').querySelectorAll('[data-testid=alert-chip]')).toHaveLength(6);
+    // A collapsed row renders no readings even once the chips have loaded.
+    expect(detail('TURB001').querySelector('[data-testid=history-reading]')).toBeNull();
+  });
+
+  it('announces loading, and asks for a reload if the chips fail to load', async () => {
+    await expand('TURB002');
+    const blocks = await app.harness.fixture.getDeferBlocks();
+    for (const block of blocks) await block.render(DeferBlockState.Loading);
+    await app.stable();
+    const loading = detail('TURB002').querySelector('[data-testid=history-detail-loading]')!;
+    expect(app.text(loading.querySelector('[role=status]'))).toBe('Loading alerts…');
+    expect(loading.querySelectorAll('li')).toHaveLength(4); // the status + one per reading
+
+    for (const block of blocks) await block.render(DeferBlockState.Error);
+    await app.stable();
+    const error = detail('TURB002').querySelector('[data-testid=history-detail-load-error]')!;
+    expect(error.getAttribute('role')).toBe('alert');
+    expect(app.text(error)).toBe('The alerts could not be loaded. Reload the page to try again.');
   });
 });

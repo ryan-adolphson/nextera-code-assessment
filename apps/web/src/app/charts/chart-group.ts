@@ -2,7 +2,7 @@ import { Component, effect, input, signal, untracked } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { minutesToMilliseconds } from 'date-fns';
 import { AlertSeries } from './alert-series';
-import { ChartKind, LineChart, RangeStats, TimeRange } from './line-chart';
+import { ChartKind, ChartOverlay, LineChart, RangeStats, TimeRange } from './line-chart';
 import { ChartPoint } from './scales';
 
 /** One metric chart of the group. */
@@ -14,11 +14,18 @@ export interface ChartSeries {
   points: ChartPoint[];
   /** Median/high/low reference lines, or null for none. */
   stats?: RangeStats | null;
+  /** A reference line over the readings (e.g. modelled wind), or null. */
+  overlay?: ChartOverlay | null;
+  /** Overrides the group's `kind` (e.g. a line among candlesticks). */
+  kind?: ChartKind;
+  /** Overrides the group's `gapMs` (points of another spacing). */
+  gapMs?: number;
 }
 
 /**
  * Small multiples on one time axis: a `LineChart` per metric plus, optionally, the "Alert rules
- * triggered" chart (a line with the flagged times as a scatter overlay). The group owns the shared
+ * triggered" chart (a line with the flagged times as a scatter overlay), then any projected content
+ * and `extraCharts` (e.g. the farm's weather). The group owns the shared
  * crosshair (`hoverT`) and zoom (`view`) and a "Reset zoom" button shown while zoomed; both are
  * cleared whenever `resetKey` changes (another turbine, range or report).
  */
@@ -47,19 +54,20 @@ export interface ChartSeries {
     >
       @for (chart of charts(); track chart.key) {
         <app-line-chart
-          [kind]="kind()"
+          [kind]="chart.kind ?? kind()"
           [attr.data-metric]="chart.key"
           [title]="chart.title"
           [unit]="chart.unit"
           [decimals]="chart.decimals"
           [points]="chart.points"
           [domain]="domain()"
-          [gapMs]="gapMs()"
+          [gapMs]="chart.gapMs ?? gapMs()"
           [hoverT]="hoverT()"
           (hoverTChange)="hoverT.set($event)"
           [view]="view()"
           (viewChange)="view.set($event)"
           [stats]="chart.stats ?? null"
+          [overlay]="chart.overlay ?? null"
         />
       }
       @if (alerts(); as alerts) {
@@ -75,6 +83,26 @@ export interface ChartSeries {
           (hoverTChange)="hoverT.set($event)"
           [view]="view()"
           (viewChange)="view.set($event)"
+        />
+      }
+      <!-- Projected content (e.g. a heading and status for the extra charts). -->
+      <ng-content />
+      @for (chart of extraCharts(); track chart.key) {
+        <app-line-chart
+          [kind]="chart.kind ?? kind()"
+          [attr.data-metric]="chart.key"
+          [title]="chart.title"
+          [unit]="chart.unit"
+          [decimals]="chart.decimals"
+          [points]="chart.points"
+          [domain]="domain()"
+          [gapMs]="chart.gapMs ?? gapMs()"
+          [hoverT]="hoverT()"
+          (hoverTChange)="hoverT.set($event)"
+          [view]="view()"
+          (viewChange)="view.set($event)"
+          [stats]="chart.stats ?? null"
+          [overlay]="chart.overlay ?? null"
         />
       }
     </section>
@@ -95,6 +123,11 @@ export class ChartGroup {
   readonly label = input('Charts');
   readonly testId = input<string | null>(null);
   readonly resetTestId = input('reset-zoom');
+  /**
+   * More charts after the alerts chart and the projected content, on the same time axis,
+   * crosshair and zoom (e.g. the weather at the turbine's farm).
+   */
+  readonly extraCharts = input<ChartSeries[]>([]);
 
   /** Shared crosshair (epoch ms) and zoomed window across the charts. */
   protected readonly hoverT = signal<number | null>(null);

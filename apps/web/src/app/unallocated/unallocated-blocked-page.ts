@@ -1,19 +1,15 @@
 import { Component, inject } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { map } from 'rxjs';
+import { AppTimePipe } from '../core/app-time.pipe';
+import { TimeZoneSettings } from '../core/time-zone';
 import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
 import { UnallocatedActions } from './unallocated-actions';
 import { UnallocatedApi } from './unallocated-api.service';
 import { UnallocatedTabs } from './unallocated-tabs';
 import { UNALLOCATED_STATUS, UnallocatedStore } from './unallocated.store';
-import {
-  KIND_LABELS,
-  UnallocatedKind,
-  UnallocatedTurbine,
-  farmLabel,
-  utcTime,
-} from './unallocated.model';
+import { KIND_LABELS, UnallocatedKind, UnallocatedTurbine, farmLabel } from './unallocated.model';
 
 /**
  * /unallocated/blocked (owner and up): the (turbine, reported farm) pairs whose readings
@@ -27,7 +23,7 @@ import {
     { provide: UNALLOCATED_STATUS, useValue: 'blocked' },
     UnallocatedActions,
   ],
-  imports: [MatButton, TABLE_IMPORTS, UnallocatedTabs],
+  imports: [AppTimePipe, MatButton, TABLE_IMPORTS, UnallocatedTabs],
   templateUrl: './unallocated-blocked-page.html',
 })
 export class UnallocatedBlockedPage {
@@ -36,7 +32,7 @@ export class UnallocatedBlockedPage {
   private readonly api = inject(UnallocatedApi);
 
   protected readonly kindLabel = (kind: UnallocatedKind) => KIND_LABELS[kind];
-  protected readonly time = utcTime;
+  protected readonly tz = inject(TimeZoneSettings);
   protected readonly farmLabel = farmLabel;
   protected readonly paging = paginate(this.store.entries, 25);
   protected readonly columns = ['turbine', 'kind', 'reported', 'blockedAt', 'blockedBy', 'actions'];

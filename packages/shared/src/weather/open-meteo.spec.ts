@@ -1,13 +1,15 @@
 import { readFileSync } from 'node:fs';
 import {
-  ARCHIVE_LAG_DAYS,
+  HISTORICAL_LAG_DAYS,
   OpenMeteoError,
   buildOpenMeteoUrl,
   fetchFarmWeather,
   isUtcDay,
-  parseHourly,
+  parseMinutely15,
   planRequests,
+  toHalfHourBuckets,
   type FetchFarmWeatherOptions,
+  type WeatherSample,
 } from './open-meteo.js';
 
 /** Recorded Open-Meteo responses (FARM01's coordinates): tests never call the real API. */
@@ -18,7 +20,7 @@ const fixture = (name: string): unknown =>
       'utf8',
     ),
   );
-const ARCHIVE = fixture('archive-farm01-2026-01-01');
+const HISTORICAL = fixture('historical-farm01-2026-01-01');
 const FORECAST = fixture('forecast-farm01-2026-10-30');
 const INVALID_VARIABLE = fixture('error-invalid-variable');
 
@@ -33,7 +35,7 @@ const options = (
 ): FetchFarmWeatherOptions => ({
   latitude: 41.25,
   longitude: -96.53,
-  source: 'archive',
+  api: 'historical',
   from: '2026-01-01',
   to: '2026-01-01',
   sleep: vi.fn().mockResolvedValue(undefined),
@@ -55,27 +57,27 @@ describe('isUtcDay', () => {
 describe('planRequests', () => {
   const now = new Date('2026-10-31T09:15:00Z'); // today = 2026-10-31
 
-  it(`reads days before today − ${ARCHIVE_LAG_DAYS} from the archive, the rest from the forecast`, () => {
+  it(`reads days before today − ${HISTORICAL_LAG_DAYS} from the Historical Forecast API, the rest from the Forecast API`, () => {
     expect(planRequests('2026-10-25', '2026-10-31', now)).toEqual([
-      { source: 'archive', from: '2026-10-25', to: '2026-10-25' },
-      { source: 'forecast', from: '2026-10-26', to: '2026-10-31' },
+      { api: 'historical', from: '2026-10-25', to: '2026-10-25' },
+      { api: 'forecast', from: '2026-10-26', to: '2026-10-31' },
     ]);
   });
 
-  it('uses only the archive for old days, and only the forecast for recent ones', () => {
+  it('uses only one API for old days, or for recent ones', () => {
     expect(planRequests('2026-01-01', '2026-01-03', now)).toEqual([
-      { source: 'archive', from: '2026-01-01', to: '2026-01-03' },
+      { api: 'historical', from: '2026-01-01', to: '2026-01-03' },
     ]);
     expect(planRequests('2026-10-26', '2026-10-30', now)).toEqual([
-      { source: 'forecast', from: '2026-10-26', to: '2026-10-30' },
+      { api: 'forecast', from: '2026-10-26', to: '2026-10-30' },
     ]);
   });
 
-  it('splits archive ranges into chunks of at most 366 days', () => {
-    expect(planRequests('2024-01-01', '2026-01-05', now)).toEqual([
-      { source: 'archive', from: '2024-01-01', to: '2024-12-31' }, // 366 days (leap year)
-      { source: 'archive', from: '2025-01-01', to: '2026-01-01' },
-      { source: 'archive', from: '2026-01-02', to: '2026-01-05' },
+  it('splits historical ranges into chunks of at most 92 days', () => {
+    expect(planRequests('2026-01-01', '2026-07-05', now)).toEqual([
+      { api: 'historical', from: '2026-01-01', to: '2026-04-02' }, // 92 days
+      { api: 'historical', from: '2026-04-03', to: '2026-07-03' },
+      { api: 'historical', from: '2026-07-04', to: '2026-07-05' },
     ]);
   });
 
@@ -93,18 +95,18 @@ describe('planRequests', () => {
 });
 
 describe('buildOpenMeteoUrl', () => {
-  it('asks the archive for every variable in m/s, UTC, ISO times', () => {
+  it('asks the Historical Forecast API for every 15-minute variable in m/s, UTC, ISO times', () => {
     const url = buildOpenMeteoUrl(options());
     expect(url.origin + url.pathname).toBe(
-      'https://archive-api.open-meteo.com/v1/archive',
+      'https://historical-forecast-api.open-meteo.com/v1/forecast',
     );
     expect(Object.fromEntries(url.searchParams)).toEqual({
       latitude: '41.25',
       longitude: '-96.53',
       start_date: '2026-01-01',
       end_date: '2026-01-01',
-      hourly:
-        'wind_speed_10m,wind_speed_100m,wind_direction_10m,wind_direction_100m,wind_gusts_10m,' +
+      minutely_15:
+        'wind_speed_10m,wind_speed_80m,wind_direction_10m,wind_direction_80m,wind_gusts_10m,' +
         'temperature_2m,relative_humidity_2m,surface_pressure,precipitation,cloud_cover',
       timezone: 'UTC',
       wind_speed_unit: 'ms',
@@ -112,89 +114,84 @@ describe('buildOpenMeteoUrl', () => {
     });
   });
 
-  it('uses the forecast API for forecast requests', () => {
-    const url = buildOpenMeteoUrl(options({ source: 'forecast' }));
+  it('uses the Forecast API for recent days', () => {
+    const url = buildOpenMeteoUrl(options({ api: 'forecast' }));
     expect(url.origin + url.pathname).toBe(
       'https://api.open-meteo.com/v1/forecast',
     );
   });
 
   it('switches to the customer-* hosts with the API key', () => {
-    const archive = buildOpenMeteoUrl(options({ apiKey: 'k3y' }));
+    const historical = buildOpenMeteoUrl(options({ apiKey: 'k3y' }));
     const forecast = buildOpenMeteoUrl(
-      options({ apiKey: 'k3y', source: 'forecast' }),
+      options({ apiKey: 'k3y', api: 'forecast' }),
     );
-    expect(archive.host).toBe('customer-archive-api.open-meteo.com');
+    expect(historical.host).toBe(
+      'customer-historical-forecast-api.open-meteo.com',
+    );
     expect(forecast.host).toBe('customer-api.open-meteo.com');
-    expect(archive.searchParams.get('apikey')).toBe('k3y');
+    expect(historical.searchParams.get('apikey')).toBe('k3y');
   });
 });
 
-describe('parseHourly', () => {
-  const body = (hourly: Record<string, unknown[]>, extra = {}) => ({
+describe('parseMinutely15', () => {
+  const body = (series: Record<string, unknown[]>, extra = {}) => ({
     utc_offset_seconds: 0,
-    hourly: {
-      time: ['2026-01-01T00:00', '2026-01-01T01:00'],
+    minutely_15: {
+      time: ['2026-01-01T00:00', '2026-01-01T00:15'],
       wind_speed_10m: [5, null],
-      wind_speed_100m: [10, null],
+      wind_speed_80m: [10, null],
       wind_direction_10m: [350, null],
-      wind_direction_100m: [355, null],
+      wind_direction_80m: [355, null],
       wind_gusts_10m: [9, null],
       temperature_2m: [1.5, null],
       relative_humidity_2m: [80, null],
       surface_pressure: [990, null],
       precipitation: [0.2, 0.1],
       cloud_cover: [100, null],
-      ...hourly,
+      ...series,
     },
     ...extra,
   });
 
-  it('maps the recorded archive day to 24 UTC rows', () => {
-    const rows = parseHourly(ARCHIVE, 'archive');
-    expect(rows).toHaveLength(24);
-    expect(rows[0]).toEqual({
+  it('maps the recorded historical day to 96 UTC value sets', () => {
+    const samples = parseMinutely15(HISTORICAL);
+    expect(samples).toHaveLength(96);
+    expect(samples[0]).toEqual({
       time: new Date('2026-01-01T00:00:00Z'),
-      source: 'archive',
-      windSpeed10mMs: 5.03,
-      windSpeed100mMs: 10.78,
-      windDirection10mDeg: 323,
-      windDirection100mDeg: 330,
-      windGusts10mMs: 7.4,
-      temperature2mC: 5.9,
-      relativeHumidity2mPct: 51,
-      surfacePressureHpa: 969.3,
+      windSpeed10mMs: 4.16,
+      windSpeed80mMs: 10.48,
+      windDirection10mDeg: 333,
+      windDirection80mDeg: 331,
+      windGusts10mMs: 8.9,
+      temperature2mC: 7.1,
+      relativeHumidity2mPct: 46,
+      surfacePressureHpa: 968.5,
       precipitationMm: 0,
       cloudCoverPct: 0,
     });
-    expect(rows[23].time).toEqual(new Date('2026-01-01T23:00:00Z'));
+    expect(samples[95].time).toEqual(new Date('2026-01-01T23:45:00Z'));
   });
 
   it('keeps nulls of missing values', () => {
-    const [, second] = parseHourly(body({}), 'forecast');
+    const [, second] = parseMinutely15(body({}));
     expect(second).toMatchObject({
-      source: 'forecast',
       windSpeed10mMs: null,
       temperature2mC: null,
       precipitationMm: 0.1,
     });
   });
 
-  it('drops hours without any value (they would block a later forecast)', () => {
-    const rows = parseHourly(body({ precipitation: [0.2, null] }), 'archive');
-    expect(rows.map((r) => r.time)).toEqual([new Date('2026-01-01T00:00:00Z')]);
-  });
-
   it.each([
     [
       'mismatched array lengths',
       body({ wind_speed_10m: [5] }),
-      'hourly.wind_speed_10m has 1 values for 2 times',
+      'minutely_15.wind_speed_10m has 1 values for 2 times',
     ],
     [
       'a missing variable',
       body({ cloud_cover: undefined as never }),
-      'hourly.cloud_cover is missing',
+      'minutely_15.cloud_cover is missing',
     ],
     [
       'a non-numeric value',
@@ -203,46 +200,175 @@ describe('parseHourly', () => {
     ],
     [
       'a bad time',
-      body({ time: ['2026-01-01 00:00', '2026-01-01T01:00'] }),
+      body({ time: ['2026-01-01 00:00', '2026-01-01T00:15'] }),
+      'bad time',
+    ],
+    [
+      'a time off the 15-minute grid',
+      body({ time: ['2026-01-01T00:00', '2026-01-01T00:20'] }),
       'bad time',
     ],
     ['a non-UTC offset', body({}, { utc_offset_seconds: 3600 }), 'not UTC'],
-    ['no hourly object', { error: false }, 'no hourly object'],
+    ['hourly data only', { hourly: { time: [] } }, 'no minutely_15 object'],
   ])('rejects %s', (_case, input, message) => {
-    expect(() => parseHourly(input, 'archive')).toThrow(message);
+    expect(() => parseMinutely15(input)).toThrow(message);
+  });
+});
+
+describe('toHalfHourBuckets', () => {
+  const sample = (
+    iso: string,
+    values: Partial<WeatherSample> = {},
+  ): WeatherSample => ({
+    time: new Date(iso),
+    windSpeed10mMs: 4,
+    windSpeed80mMs: 10,
+    windDirection10mDeg: 180,
+    windDirection80mDeg: 180,
+    windGusts10mMs: 8,
+    temperature2mC: 2,
+    relativeHumidity2mPct: 80,
+    surfacePressureHpa: 990,
+    precipitationMm: 0.1,
+    cloudCoverPct: 50,
+    ...values,
+  });
+  const empty = Object.fromEntries(
+    [
+      'windSpeed10mMs',
+      'windSpeed80mMs',
+      'windDirection10mDeg',
+      'windDirection80mDeg',
+      'windGusts10mMs',
+      'temperature2mC',
+      'relativeHumidity2mPct',
+      'surfacePressureHpa',
+      'precipitationMm',
+      'cloudCoverPct',
+    ].map((k) => [k, null]),
+  );
+
+  it('aggregates :00 + :15 and :30 + :45: means, max gust, summed precipitation, vector-mean directions', () => {
+    const buckets = toHalfHourBuckets([
+      sample('2026-01-01T00:00:00Z', {
+        windSpeed80mMs: 10,
+        windDirection80mDeg: 350,
+        windDirection10mDeg: 90,
+        windGusts10mMs: 8,
+        precipitationMm: 0.1,
+        temperature2mC: 1,
+      }),
+      sample('2026-01-01T00:15:00Z', {
+        windSpeed80mMs: 11,
+        windDirection80mDeg: 10,
+        windDirection10mDeg: 180,
+        windGusts10mMs: 9.5,
+        precipitationMm: 0.2,
+        temperature2mC: 2,
+      }),
+      sample('2026-01-01T00:30:00Z', { windSpeed80mMs: 7 }),
+      sample('2026-01-01T00:45:00Z', { windSpeed80mMs: 9 }),
+    ]);
+
+    expect(buckets).toEqual([
+      {
+        time: new Date('2026-01-01T00:00:00Z'),
+        samples: 2,
+        windSpeed10mMs: 4,
+        windSpeed80mMs: 10.5,
+        windDirection10mDeg: 135,
+        windDirection80mDeg: 0, // vector mean of 350° and 10°, not 180°
+        windGusts10mMs: 9.5,
+        temperature2mC: 1.5,
+        relativeHumidity2mPct: 80,
+        surfacePressureHpa: 990,
+        precipitationMm: 0.3, // not 0.30000000000000004
+        cloudCoverPct: 50,
+      },
+      expect.objectContaining({
+        time: new Date('2026-01-01T00:30:00Z'),
+        samples: 2,
+        windSpeed80mMs: 8,
+      }),
+    ]);
+  });
+
+  it('counts only value sets with a value, and aggregates each metric over the values present', () => {
+    const buckets = toHalfHourBuckets([
+      sample('2026-01-01T01:00:00Z', { windSpeed80mMs: null }),
+      sample('2026-01-01T01:15:00Z', { windSpeed80mMs: 12 }),
+      sample('2026-01-01T01:30:00Z', { ...empty, temperature2mC: 3 }),
+      { time: new Date('2026-01-01T01:45:00Z'), ...empty } as WeatherSample,
+    ]);
+
+    expect(buckets.map((b) => [b.time.toISOString(), b.samples])).toEqual([
+      ['2026-01-01T01:00:00.000Z', 2],
+      ['2026-01-01T01:30:00.000Z', 1],
+    ]);
+    expect(buckets[0].windSpeed80mMs).toBe(12);
+    expect(buckets[1]).toMatchObject({
+      temperature2mC: 3,
+      windSpeed80mMs: null,
+      precipitationMm: null,
+    });
+  });
+
+  it('drops buckets without any value, and sorts by time', () => {
+    const buckets = toHalfHourBuckets([
+      sample('2026-01-01T03:00:00Z'),
+      { time: new Date('2026-01-01T02:00:00Z'), ...empty } as WeatherSample,
+      { time: new Date('2026-01-01T02:15:00Z'), ...empty } as WeatherSample,
+      sample('2026-01-01T01:30:00Z'),
+    ]);
+    expect(buckets.map((b) => b.time.toISOString())).toEqual([
+      '2026-01-01T01:30:00.000Z',
+      '2026-01-01T03:00:00.000Z',
+    ]);
+  });
+
+  it('turns the recorded historical day into 48 complete buckets', () => {
+    const buckets = toHalfHourBuckets(parseMinutely15(HISTORICAL));
+    expect(buckets).toHaveLength(48);
+    expect(buckets.every((b) => b.samples === 2)).toBe(true);
+    expect(buckets[0]).toMatchObject({
+      time: new Date('2026-01-01T00:00:00Z'),
+      windSpeed80mMs: 10.67, // (10.48 + 10.85) / 2 = 10.665
+      windGusts10mMs: 9.2, // max(8.9, 9.2)
+      surfacePressureHpa: 968.55,
+    });
+    expect(buckets[47].time).toEqual(new Date('2026-01-01T23:30:00Z'));
   });
 });
 
 describe('fetchFarmWeather', () => {
-  it('fetches and maps a forecast day', async () => {
+  it('fetches a forecast day and returns 30-minute buckets', async () => {
     const fetch = vi.fn().mockResolvedValue(json(FORECAST));
     const rows = await fetchFarmWeather(
       options({
-        source: 'forecast',
+        api: 'forecast',
         from: '2026-10-30',
         to: '2026-10-30',
         fetch,
       }),
     );
-    expect(rows).toHaveLength(24);
+    expect(rows).toHaveLength(48);
     expect(rows[0]).toMatchObject({
-      source: 'forecast',
       time: new Date('2026-10-30T00:00:00Z'),
-      windSpeed100mMs: 8.2,
+      samples: 2,
+      windSpeed80mMs: 5.91, // (5.4 + 6.42) / 2
     });
     const [url, init] = fetch.mock.calls[0];
     expect(String(url)).toContain('https://api.open-meteo.com/v1/forecast?');
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
-
   it.each([429, 500, 503])('retries HTTP %i and succeeds', async (status) => {
     const sleep = vi.fn().mockResolvedValue(undefined);
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(json({ error: true, reason: 'busy' }, status))
-      .mockResolvedValueOnce(json(ARCHIVE));
+      .mockResolvedValueOnce(json(HISTORICAL));
     const rows = await fetchFarmWeather(options({ fetch, sleep }));
-    expect(rows).toHaveLength(24);
+    expect(rows).toHaveLength(48);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(1000);
   });
@@ -261,7 +387,8 @@ describe('fetchFarmWeather', () => {
     expect(error).toMatchObject({
       status: 429,
       transient: true,
-      message: 'Open-Meteo archive 2026-01-01..2026-01-01: HTTP 429 (Too many)',
+      message:
+        'Open-Meteo historical 2026-01-01..2026-01-01: HTTP 429 (Too many)',
     });
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(sleep.mock.calls).toEqual([[1000], [2000]]);
@@ -273,7 +400,7 @@ describe('fetchFarmWeather', () => {
       status: 400,
       transient: false,
       message: expect.stringMatching(
-        /^Open-Meteo archive .*: HTTP 400 \(Invalid value: /,
+        /^Open-Meteo historical .*: HTTP 400 \(Invalid value: /,
       ),
     });
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -289,9 +416,9 @@ describe('fetchFarmWeather', () => {
     const fetch = vi
       .fn()
       .mockImplementationOnce(hang)
-      .mockResolvedValueOnce(json(ARCHIVE));
+      .mockResolvedValueOnce(json(HISTORICAL));
     const rows = await fetchFarmWeather(options({ fetch, timeoutMs: 10 }));
-    expect(rows).toHaveLength(24);
+    expect(rows).toHaveLength(48);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -314,18 +441,18 @@ describe('fetchFarmWeather', () => {
     const fetch = vi
       .fn()
       .mockRejectedValueOnce(new TypeError('fetch failed'))
-      .mockResolvedValueOnce(json(ARCHIVE));
+      .mockResolvedValueOnce(json(HISTORICAL));
     await expect(fetchFarmWeather(options({ fetch }))).resolves.toHaveLength(
-      24,
+      48,
     );
   });
 
   it('fails at once on a malformed body', async () => {
     const fetch = vi
       .fn()
-      .mockResolvedValue(json({ hourly: { time: ['2026-01-01T00:00'] } }));
+      .mockResolvedValue(json({ minutely_15: { time: ['2026-01-01T00:00'] } }));
     await expect(fetchFarmWeather(options({ fetch }))).rejects.toThrow(
-      'hourly.wind_speed_10m is missing',
+      'minutely_15.wind_speed_10m is missing',
     );
     expect(fetch).toHaveBeenCalledTimes(1);
   });

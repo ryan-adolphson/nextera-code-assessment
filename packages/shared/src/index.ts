@@ -3,7 +3,7 @@ export { Prisma, PrismaClient } from './generated/prisma/client.js';
 export type {
   AlertConfig,
   Farm,
-  FarmWeatherHourly,
+  FarmWeather,
   Telemetry,
   HeldTelemetry,
   TelemetryAlert,
@@ -18,7 +18,6 @@ export {
   Role,
   UnallocatedKind,
   UnallocatedStatus,
-  WeatherSource,
 } from './generated/prisma/enums.js';
 export { PrismaModule } from './prisma/prisma.module.js';
 export { PrismaService } from './prisma/prisma.service.js';
@@ -47,7 +46,7 @@ export {
   toTelemetryStatsResponse,
   toTurbineResponse,
   toWeatherDayResponse,
-  toWeatherHourResponse,
+  toWeatherHalfHourResponse,
 } from './wind/responses.js';
 export type {
   FarmResponse,
@@ -59,9 +58,10 @@ export type {
   TelemetryWithAlerts,
   TurbineResponse,
   FarmWeatherResponse,
+  TurbineWeatherResponse,
   WeatherDayResponse,
   WeatherDayRow,
-  WeatherHourResponse,
+  WeatherHalfHourResponse,
   WeatherInterval,
 } from './wind/responses.js';
 
@@ -81,12 +81,14 @@ export {
 export {
   ALERT_RULE_ORDER,
   DEFAULT_TELEMETRY_LIMIT,
+  DEFAULT_WEATHER_TIME_ZONE,
   MAX_QUERY_RANGE_DAYS,
   MAX_TELEMETRY_LIMIT,
   QueryError,
   QueryInputError,
   QueryNotFoundError,
   alertsInRange,
+  checkTimeZone,
   farmWeather,
   getTurbine,
   getUnallocated,
@@ -99,6 +101,7 @@ export {
   reportTelemetry,
   telemetryStats,
   turbineTelemetry,
+  turbineWeather,
 } from './wind/queries.js';
 export type {
   FarmOverview,
@@ -115,10 +118,10 @@ export type {
   TurbineOverview,
 } from './wind/queries.js';
 
-// Farm weather (Open-Meteo → farm_weather_hourly): client, request planning and the sync
+// Farm weather (Open-Meteo minutely_15 → 30-minute farm_weather): client, request planning and the sync
 // (`node dist/weather-sync/main.js` in the ingestion image, `npm run weather:sync`)
 export {
-  ARCHIVE_LAG_DAYS,
+  HISTORICAL_LAG_DAYS,
   MAX_REQUEST_DAYS,
   OPEN_METEO_ATTEMPTS,
   OPEN_METEO_BACKOFF_MS,
@@ -129,21 +132,25 @@ export {
   buildOpenMeteoUrl,
   fetchFarmWeather,
   isUtcDay,
-  parseHourly,
+  parseMinutely15,
   planRequests,
+  toHalfHourBuckets,
   utcDay,
 } from './weather/open-meteo.js';
 export type {
   FetchFarmWeatherOptions,
-  WeatherHourRow,
+  WeatherAggregate,
+  WeatherApi,
+  WeatherBucketRow,
   WeatherMetric,
   WeatherRequest,
+  WeatherSample,
 } from './weather/open-meteo.js';
 export {
   WEATHER_REQUEST_DELAY_MS,
   WEATHER_UPSERT_BATCH,
   syncFarmWeather,
-  upsertWeatherHours,
+  upsertFarmWeather,
 } from './weather/sync-weather.js';
 export type {
   FarmWeatherSyncResult,
@@ -243,6 +250,7 @@ export type { DemoTurbine } from './seed/demo-fleet.js';
 export {
   DEMO_ANOMALIES,
   TELEMETRY_STEP_MINUTES,
+  demoReportingLagMinutes,
   floorToTelemetryStep,
   generateTelemetry,
 } from './seed/generate-telemetry.js';

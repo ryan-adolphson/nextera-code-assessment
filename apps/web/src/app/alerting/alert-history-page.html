@@ -1,16 +1,16 @@
 <h1 class="text-3xl font-bold">Alerting</h1>
 <p class="mt-1 text-sm text-muted">
-  Readings that triggered alert rules when they arrived, by turbine. Times are UTC.
+  Readings that triggered alert rules when they arrived, by turbine. Times are {{ tz.label() }}.
 </p>
 
 <app-alerting-tabs />
 
-<!-- The days (UTC): a Material date range picker, default yesterday and today; a complete,
+<!-- The days (in the zone shown, Settings): a Material date range picker, default yesterday and today; a complete,
      valid range reloads. -->
 <div class="mt-6 flex flex-wrap items-start gap-3" role="search" aria-label="Alert date range">
   <mat-form-field appearance="outline" subscriptSizing="dynamic" data-testid="history-range">
-    <mat-label>Dates (UTC)</mat-label>
-    <mat-date-range-input [rangePicker]="picker" [max]="maxDate">
+    <mat-label>Dates ({{ tz.tag() }})</mat-label>
+    <mat-date-range-input [rangePicker]="picker" [max]="maxDate()">
       <input
         matStartDate
         placeholder="Start date"
@@ -119,9 +119,9 @@
       </ng-container>
 
       <ng-container matColumnDef="latest">
-        <th mat-header-cell *matHeaderCellDef>Latest (UTC)</th>
+        <th mat-header-cell *matHeaderCellDef>Latest ({{ tz.tag() }})</th>
         <td mat-cell *matCellDef="let t" class="tabular-nums">
-          {{ t.latest | date: 'MMM d, HH:mm' : 'UTC' }}
+          {{ t.latest | appTime: 'MMM d, HH:mm' }}
         </td>
       </ng-container>
 
@@ -146,27 +146,52 @@
           [attr.colspan]="columns.length"
           [id]="'history-detail-' + t.turbineId"
         >
-          @if (isExpanded(t.turbineId)) {
-            <ul class="grid gap-1 py-2 pl-10" [attr.aria-label]="'Readings for ' + t.turbineId">
-              @for (r of t.readings; track r.id) {
-                <li class="flex flex-wrap items-center gap-3" data-testid="history-reading">
-                  <span class="w-28 text-muted tabular-nums">{{
-                    r.timestamp | date: 'MMM d, HH:mm' : 'UTC'
-                  }}</span>
-                  <mat-chip-set aria-label="Triggered alerts" data-testid="reading-alert-chips">
-                    @for (alert of r.alerts; track alert.id) {
-                      <mat-chip
-                        class="alert-chip"
-                        disableRipple
-                        data-testid="alert-chip"
-                        [attr.data-level]="alert.alertLevel"
-                        >{{ describe(r, alert) }}</mat-chip
-                      >
-                    }
-                  </mat-chip-set>
-                </li>
-              }
-            </ul>
+          <!-- Material chips are only needed once a row is expanded: their chunk is prefetched
+               when idle and the readings render on the first expand. -->
+          @defer (when isExpanded(t.turbineId); prefetch on idle) {
+            @if (isExpanded(t.turbineId)) {
+              <ul class="grid gap-1 py-2 pl-10" [attr.aria-label]="'Readings for ' + t.turbineId">
+                @for (r of t.readings; track r.id) {
+                  <li class="flex flex-wrap items-center gap-3" data-testid="history-reading">
+                    <span class="w-28 text-muted tabular-nums">{{
+                      r.timestamp | appTime: 'MMM d, HH:mm'
+                    }}</span>
+                    <app-alert-chips [reading]="r" />
+                  </li>
+                }
+              </ul>
+            }
+          } @placeholder {
+            @if (isExpanded(t.turbineId)) {
+              <!-- The readings' times at the chips' row height, so the row doesn't jump. -->
+              <ul class="grid gap-1 py-2 pl-10" data-testid="history-detail-placeholder">
+                @for (r of t.readings; track r.id) {
+                  <li class="flex min-h-9 items-center gap-3">
+                    <span class="w-28 text-muted tabular-nums">{{
+                      r.timestamp | appTime: 'MMM d, HH:mm'
+                    }}</span>
+                  </li>
+                }
+              </ul>
+            }
+          } @loading (after 100ms; minimum 300ms) {
+            @if (isExpanded(t.turbineId)) {
+              <!-- The readings' times at the chips' row height, so the row doesn't jump. -->
+              <ul class="grid gap-1 py-2 pl-10" data-testid="history-detail-loading">
+                <li class="sr-only" role="status">Loading alerts…</li>
+                @for (r of t.readings; track r.id) {
+                  <li class="flex min-h-9 items-center gap-3">
+                    <span class="w-28 text-muted tabular-nums">{{
+                      r.timestamp | appTime: 'MMM d, HH:mm'
+                    }}</span>
+                  </li>
+                }
+              </ul>
+            }
+          } @error {
+            <p class="py-2 pl-10" role="alert" data-testid="history-detail-load-error">
+              The alerts could not be loaded. Reload the page to try again.
+            </p>
           }
         </td>
       </ng-container>

@@ -16,6 +16,7 @@ describe('provideIcons', () => {
       'map',
       'menu',
       'notifications',
+      'settings',
       'wind-power',
     ]);
     for (const name of Object.keys(ICONS)) {

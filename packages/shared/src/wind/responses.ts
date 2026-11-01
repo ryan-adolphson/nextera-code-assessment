@@ -1,12 +1,11 @@
 import type {
   AlertConfig,
   Farm,
-  FarmWeatherHourly,
+  FarmWeather,
   Prisma,
   Telemetry,
   Turbine,
 } from '../generated/prisma/client.js';
-import type { WeatherSource } from '../generated/prisma/enums.js';
 import {
   toAlertConfigResponse,
   type AlertConfigResponse,
@@ -192,43 +191,44 @@ export function toTelemetryResponse(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Farm weather (Open-Meteo, farm_weather_hourly)
+// Farm weather (Open-Meteo forecast models, 30-minute farm_weather)
 
-/** One hour of a farm's weather (GET /api/farms/:farmId/weather?interval=hourly). */
-export interface WeatherHourResponse {
-  /** Start of the UTC hour (ISO). */
+/** 30 minutes of a farm's weather (GET /api/farms/:farmId/weather?interval=30min). */
+export interface WeatherHalfHourResponse {
+  /** Start of the 30-minute UTC bucket (ISO; :00 or :30). */
   time: string;
-  /** `archive` (final, ERA5) or `forecast` (recent days; replaced once the archive has them). */
-  source: WeatherSource;
+  /** 15-minute values the bucket was aggregated from (1 or 2). */
+  samples: number;
+  /** Means of the 15-minute values (gusts: max, precipitation: sum, directions: vector mean). */
   windSpeed10mMs: number | null;
-  windSpeed100mMs: number | null;
+  /** 80 m: the Open-Meteo level closest to hub height. */
+  windSpeed80mMs: number | null;
   windDirection10mDeg: number | null;
-  windDirection100mDeg: number | null;
-  /** Maximum gust in the preceding hour. */
+  windDirection80mDeg: number | null;
   windGusts10mMs: number | null;
   temperature2mC: number | null;
   relativeHumidity2mPct: number | null;
   surfacePressureHpa: number | null;
-  /** Sum over the preceding hour. */
   precipitationMm: number | null;
   cloudCoverPct: number | null;
 }
 
-/** One UTC day of a farm's weather, aggregated from its hours (interval=daily). */
+/** One day of a farm's weather in the query's time zone, aggregated from its 30-minute buckets (interval=daily). */
 export interface WeatherDayResponse {
-  /** The UTC day (YYYY-MM-DD). */
+  /** The local calendar day in the query's `timeZone` (YYYY-MM-DD; UTC by default). */
   date: string;
-  /** Hours stored for the day within the range (24 for a complete day). */
-  hours: number;
-  /** `forecast` if any hour of the day is a forecast hour, else `archive`. */
-  source: WeatherSource;
+  /**
+   * 30-minute buckets stored for the day within the range: 48 for a complete day, 46 or 50 for a
+   * complete local day with a DST change.
+   */
+  samples: number;
   windSpeed10mMeanMs: number | null;
   windSpeed10mMaxMs: number | null;
-  windSpeed100mMeanMs: number | null;
-  windSpeed100mMaxMs: number | null;
+  windSpeed80mMeanMs: number | null;
+  windSpeed80mMaxMs: number | null;
+  /** Dominant 80 m wind direction: the vector mean of the 30-minute directions, 0–360. */
+  windDirection80mDeg: number | null;
   windGusts10mMaxMs: number | null;
-  /** Dominant 100 m wind direction: the vector mean of the hourly directions, 0–360. */
-  windDirection100mDeg: number | null;
   temperature2mMinC: number | null;
   temperature2mMaxC: number | null;
   temperature2mMeanC: number | null;
@@ -238,7 +238,7 @@ export interface WeatherDayResponse {
   cloudCoverMeanPct: number | null;
 }
 
-export type WeatherInterval = 'hourly' | 'daily';
+export type WeatherInterval = '30min' | 'daily';
 
 /** GET /api/farms/:farmId/weather. */
 export type FarmWeatherResponse = {
@@ -246,21 +246,29 @@ export type FarmWeatherResponse = {
   /** The requested [from, to) range (ISO). */
   from: string;
   to: string;
+  /** IANA zone of the daily buckets (default `UTC`); 30-minute `time`s are UTC instants regardless. */
+  timeZone: string;
 } & (
-  | { interval: 'hourly'; points: WeatherHourResponse[] }
+  | { interval: '30min'; points: WeatherHalfHourResponse[] }
   | { interval: 'daily'; points: WeatherDayResponse[] }
 );
 
-export function toWeatherHourResponse(
-  row: FarmWeatherHourly,
-): WeatherHourResponse {
+/** GET /api/turbines/:id/weather: the weather of the turbine's current farm. */
+export type TurbineWeatherResponse = FarmWeatherResponse & {
+  /** The turbine's business key ('TURB001'). */
+  turbineId: string;
+};
+
+export function toWeatherHalfHourResponse(
+  row: FarmWeather,
+): WeatherHalfHourResponse {
   return {
     time: row.time.toISOString(),
-    source: row.source,
+    samples: row.samples,
     windSpeed10mMs: row.windSpeed10mMs,
-    windSpeed100mMs: row.windSpeed100mMs,
+    windSpeed80mMs: row.windSpeed80mMs,
     windDirection10mDeg: row.windDirection10mDeg,
-    windDirection100mDeg: row.windDirection100mDeg,
+    windDirection80mDeg: row.windDirection80mDeg,
     windGusts10mMs: row.windGusts10mMs,
     temperature2mC: row.temperature2mC,
     relativeHumidity2mPct: row.relativeHumidity2mPct,
@@ -272,15 +280,15 @@ export function toWeatherHourResponse(
 
 /** A row of the daily weather query (snake_case aliases; numbers may arrive as strings). */
 export interface WeatherDayRow {
-  day: Date;
-  hours: number | bigint;
-  has_forecast: boolean;
+  /** The local calendar day (YYYY-MM-DD), formatted in Postgres. */
+  day: string;
+  samples: number | bigint;
   wind_speed_10m_mean: unknown;
   wind_speed_10m_max: unknown;
-  wind_speed_100m_mean: unknown;
-  wind_speed_100m_max: unknown;
+  wind_speed_80m_mean: unknown;
+  wind_speed_80m_max: unknown;
+  wind_direction_80m: unknown;
   wind_gusts_10m_max: unknown;
-  wind_direction_100m: unknown;
   temperature_2m_min: unknown;
   temperature_2m_max: unknown;
   temperature_2m_mean: unknown;
@@ -297,18 +305,17 @@ const round2 = (value: unknown): number | null =>
     : Math.round(Number(value) * 100) / 100;
 
 export function toWeatherDayResponse(row: WeatherDayRow): WeatherDayResponse {
-  const direction = round2(row.wind_direction_100m);
+  const direction = round2(row.wind_direction_80m);
   return {
-    date: row.day.toISOString().slice(0, 10),
-    hours: Number(row.hours),
-    source: row.has_forecast ? 'forecast' : 'archive',
+    date: row.day,
+    samples: Number(row.samples),
     windSpeed10mMeanMs: round2(row.wind_speed_10m_mean),
     windSpeed10mMaxMs: round2(row.wind_speed_10m_max),
-    windSpeed100mMeanMs: round2(row.wind_speed_100m_mean),
-    windSpeed100mMaxMs: round2(row.wind_speed_100m_max),
-    windGusts10mMaxMs: round2(row.wind_gusts_10m_max),
+    windSpeed80mMeanMs: round2(row.wind_speed_80m_mean),
+    windSpeed80mMaxMs: round2(row.wind_speed_80m_max),
     // 359.999 rounds to 360, which is north: report it as 0.
-    windDirection100mDeg: direction === null ? null : direction % 360,
+    windDirection80mDeg: direction === null ? null : direction % 360,
+    windGusts10mMaxMs: round2(row.wind_gusts_10m_max),
     temperature2mMinC: round2(row.temperature_2m_min),
     temperature2mMaxC: round2(row.temperature_2m_max),
     temperature2mMeanC: round2(row.temperature_2m_mean),

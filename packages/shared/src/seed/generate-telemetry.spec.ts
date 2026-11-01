@@ -1,6 +1,7 @@
 import { DEMO_SEED, DEMO_TURBINES } from './demo-fleet.js';
 import {
   DEMO_ANOMALIES,
+  demoReportingLagMinutes,
   floorToTelemetryStep,
   generateTelemetry,
   type GeneratedTelemetryRow,
@@ -55,10 +56,12 @@ describe('generateTelemetry', () => {
     }
   });
 
-  it('writes 72 h × 12 readings per turbine, minus the gap and the stopped turbine', () => {
+  it('writes 72 h × 12 readings per turbine, minus the gap, the stopped and the lagging turbines', () => {
     const perTurbine = 72 * 12;
     const missing =
-      DEMO_ANOMALIES.gap.readings + DEMO_ANOMALIES.stopped.offsetMinutes / 5;
+      DEMO_ANOMALIES.gap.readings +
+      DEMO_ANOMALIES.stopped.offsetMinutes / 5 +
+      DEMO_ANOMALIES.lagging.reduce((n, l) => n + l.lagMinutes / 5, 0);
     expect(rows).toHaveLength(DEMO_TURBINES.length * perTurbine - missing);
     expect(of('TURB003')).toHaveLength(perTurbine);
     expect(of(DEMO_ANOMALIES.gap.turbineId)).toHaveLength(
@@ -122,12 +125,51 @@ describe('generateTelemetry', () => {
     expect(hot.every((r) => r.gearbox_temp_c === 126.5)).toBe(true);
   });
 
-  it('stops the stopped turbine 40 min before end', () => {
+  it('stops TURB013 90 min before end ("No data in 60 min")', () => {
     const { turbineId, offsetMinutes } = DEMO_ANOMALIES.stopped;
+    expect(turbineId).toBe('TURB013');
+    expect(offsetMinutes).toBe(90);
     expect(of(turbineId).at(-1)?.timestamp).toBe(
       new Date(END.getTime() - offsetMinutes * MIN).toISOString(),
     );
     expect(at(turbineId, offsetMinutes - 5)).toBeUndefined();
+  });
+
+  it('ends the lagging turbines 20 and 45 min before end, on two farms without other anomalies', () => {
+    expect(DEMO_ANOMALIES.lagging).toEqual([
+      { turbineId: 'TURB011', lagMinutes: 20 },
+      { turbineId: 'TURB018', lagMinutes: 45 },
+    ]);
+    const anomalous = new Set<string>([
+      DEMO_ANOMALIES.frozenPower.turbineId,
+      DEMO_ANOMALIES.pitchSpike.turbineId,
+      DEMO_ANOMALIES.gearboxStuck.turbineId,
+      DEMO_ANOMALIES.stopped.turbineId,
+      DEMO_ANOMALIES.gap.turbineId,
+      ...DEMO_ANOMALIES.late.map((l) => l.turbineId),
+    ]);
+    const farms = new Set<string>();
+    for (const { turbineId, lagMinutes } of DEMO_ANOMALIES.lagging) {
+      expect(anomalous.has(turbineId), turbineId).toBe(false);
+      expect(lagMinutes % 5, turbineId).toBe(0); // the feed stays on 5-min boundaries
+      expect(demoReportingLagMinutes(turbineId)).toBe(lagMinutes);
+      farms.add(DEMO_TURBINES.find((t) => t.turbineId === turbineId)!.farmId);
+      expect(of(turbineId).at(-1)?.timestamp).toBe(
+        new Date(END.getTime() - lagMinutes * MIN).toISOString(),
+      );
+      expect(at(turbineId, lagMinutes - 5)).toBeUndefined();
+      // Everything before the lag is there: a lag, not a gap.
+      expect(of(turbineId)).toHaveLength(72 * 12 - lagMinutes / 5);
+    }
+    expect(farms.size).toBe(DEMO_ANOMALIES.lagging.length);
+  });
+
+  it('demoReportingLagMinutes: the stopped offset, a lag, else 0', () => {
+    expect(demoReportingLagMinutes('TURB013')).toBe(90);
+    expect(demoReportingLagMinutes('TURB011')).toBe(20);
+    expect(demoReportingLagMinutes('TURB018')).toBe(45);
+    expect(demoReportingLagMinutes('TURB003')).toBe(0);
+    expect(demoReportingLagMinutes('TURB099')).toBe(0);
   });
 
   it('leaves a gap of a few readings', () => {
@@ -156,13 +198,17 @@ describe('generateTelemetry', () => {
     expect(rows.every((r) => delay(r) > 0)).toBe(true);
   });
 
-  it('returns one reading per turbine for a single step (the live feed), without the stopped one', () => {
+  it('returns one reading per turbine for a single step, without the stopped and lagging ones', () => {
     const tick = generate(END, 5 / 60);
-    expect(tick).toHaveLength(DEMO_TURBINES.length - 1);
-    expect(tick.every((r) => r.timestamp === END.toISOString())).toBe(true);
-    expect(tick.map((r) => r.turbine_id)).not.toContain(
+    const missing = [
       DEMO_ANOMALIES.stopped.turbineId,
-    );
+      ...DEMO_ANOMALIES.lagging.map((l) => l.turbineId),
+    ];
+    expect(tick).toHaveLength(DEMO_TURBINES.length - missing.length);
+    expect(tick.every((r) => r.timestamp === END.toISOString())).toBe(true);
+    for (const id of missing) {
+      expect(tick.map((r) => r.turbine_id)).not.toContain(id);
+    }
   });
 
   it('rejects a non-positive window and an invalid end', () => {

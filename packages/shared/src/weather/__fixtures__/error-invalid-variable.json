@@ -1,4 +1,1 @@
-{
-  "error": true,
-  "reason": "Invalid value: Cannot initialize SurfacePressureAndHeightVariable<VariableAndPreviousDay, VariableOrSpread<ForecastPressureVariable>, ForecastHeightVariable> from invalid String value nope"
-}
+{"error":true,"reason":"Invalid value: Cannot initialize SurfacePressureAndHeightVariable<VariableAndPreviousDay, VariableOrSpread<ForecastPressureVariable>, ForecastHeightVariable> from invalid String value wind_speed_100m_bogus"}

@@ -935,3 +935,152 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
 #### 11.7. Not yet automated (covered by the Angular unit specs, `unallocated-pages.spec.ts`)
 
   - Move disabled with a reason when the reported farm doesn't exist; Assign with coordinates, and picking a farm from the autocomplete when the reported farm doesn't exist; a 409/404 when the entry was resolved in another browser; load errors and Retry.
+
+### 12. 12. Settings: time zone
+
+**Seed:** none (own setup in `tests/settings/time-zone.spec.ts`: `fixBrowserDate(page, SEED_NOW)` from `tests/support/clock.ts`, then `logIn(page, role)` from `tests/support/session.ts`)
+
+/settings (every role) chooses how times are shown: UTC (the default) or the browser's zone, saved in this browser's localStorage per user (`nextera.timeZone.<email>` = `utc` | `local`). The spec's context runs in America/Chicago (`test.use({ timezoneId })`; the config pins UTC for everything else), so SEED_NOW (2026-01-03T00:00Z) is Jan 2, 18:00 CST (UTC−6). Read-only: localStorage isn't data, and each test has its own browser context.
+
+**Clock:** not `page.clock`. Its fake `Date` returns plain Dates from `new`, which breaks the app's Date subclasses (date-fns' `UTCDate` in UTC mode, `@date-fns/tz`'s `TZDate` in Local mode): in a Chicago browser UTC mode then shows Chicago times labelled UTC ("Jan 2, 18:00 UTC" for SEED_NOW), and Local mode is right only because the browser's zone is the chosen one. `fixBrowserDate` installs a Proxy of the native `Date` as an init script (fixed `new Date()`/`Date.now()`, subclasses intact, timers running, survives reloads).
+
+**Live stream:** `page.route('**/api/events**', route => route.abort())`, so no reading arrives mid-test (demo feed, other tests' uploads) and no resync reloads the fleet. The latest reading's expected text is derived from the GET /api/farms response the page rendered, formatted with Node's Intl as an independent oracle; with the db:seed fixture alone it is TURB001's 2026-01-02T23:55Z reading: 'Jan 2, 23:55' (UTC) / 'Jan 2, 17:55 CST' (Local).
+
+#### 12.1. UTC everywhere by default
+
+**File:** `tests/settings/time-zone.spec.ts`
+
+**Steps:**
+  1. Admin opens Settings from the nav.
+    - expect: title 'Settings · Nextera'; radio 'UTC' aria-checked true, 'Local (America/Chicago, UTC−6)' false; 'Now: Jan 3, 00:00 UTC'; 'Saved in this browser.'
+  2. Turbines, filtered to TURB001.
+    - expect: header 'Last reading (UTC)'; the row shows the latest reading in UTC ('Jan 2, 23:55' on the fixture)
+  3. Open TURB001.
+    - expect: 'Ending now (00:00 UTC)'; status 'Latest reading Jan 2, 23:55 UTC' (fixture)
+  4. Alerting (→ History).
+    - expect: GET /api/alerts from=2026-01-02T00:00:00.000Z to=2026-01-04T00:00:00.000Z; label 'Dates (UTC)'
+
+#### 12.2. Local shows Chicago time, 6 hours earlier, with the zone name
+
+**File:** `tests/settings/time-zone.spec.ts`
+
+**Steps:**
+  1. Admin chooses Local on Settings.
+    - expect: Local aria-checked true; 'Now: Jan 2, 18:00 CST'
+  2. Without reload: Turbines filtered to TURB001.
+    - expect: header 'Last reading (local)'; row 'Jan 2, 17:55' (fixture)
+  3. Open TURB001.
+    - expect: 'Ending now (18:00 CST)'; status 'Latest reading Jan 2, 17:55 CST' (fixture)
+
+#### 12.3. History's default days are local days
+
+**File:** `tests/settings/time-zone.spec.ts`
+
+**Steps:**
+  1. Admin chooses Local, then opens Alerting.
+    - expect: GET /api/alerts from=2026-01-01T06:00:00.000Z to=2026-01-03T06:00:00.000Z (yesterday and today, Jan 1–2, from 00:00 CST)
+    - expect: label 'Dates (local)'; inputs '1/1/2026' – '1/2/2026'
+
+#### 12.4. Reporting runs whole local days
+
+**File:** `tests/settings/time-zone.spec.ts`
+
+**Steps:**
+  1. Owner chooses Local, opens Reporting, picks TURB001 from the autocomplete, types 1/1/2026 – 1/2/2026, Run report.
+    - expect: label 'Dates (local)'; GET /api/reports/telemetry from=2026-01-01T06:00:00.000Z to=2026-01-03T06:00:00.000Z
+    - expect: status 'TURB001 · Prairie Ridge, Jan 1, 2026 – Jan 2, 2026 (local)'; table header 'Measured (local)'; first row 'Jan 1, 00:00' (the fixture's 2026-01-01T06:00Z reading)
+
+#### 12.5. The setting survives a reload, is per user, and switches back
+
+**File:** `tests/settings/time-zone.spec.ts`
+
+**Steps:**
+  1. Admin chooses Local.
+    - expect: localStorage `nextera.timeZone.admin@nextera.local` = 'local'
+  2. Reload.
+    - expect: Local still checked, 'Now: Jan 2, 18:00 CST'; Turbines row in Chicago time
+  3. Sign out, sign in as viewer (same browser).
+    - expect: 'Last reading (UTC)', row in UTC; Settings shows UTC checked
+  4. Sign out, sign in as admin again.
+    - expect: 'Last reading (local)'
+  5. Choose UTC on Settings.
+    - expect: 'Now: Jan 3, 00:00 UTC'; Turbines header 'Last reading (UTC)', row in UTC
+
+#### 12.6. Not yet automated in the browser (covered by the Angular unit specs)
+
+  - Unallocated (`last-seen`, `first-seen`, `blocked-at`) and turbine-page chart ticks/candles/tooltips in local time (`unallocated-pages.spec.ts`, `scales.spec.ts`, `line-chart.spec.ts`, `chart-tooltips.spec.ts`): the fixture has no unallocated entries, and chart labels are canvas/SVG text best checked visually.
+  - DST days (23/25 h local days, the 30-day limit across a fall-back change) and a +5:30 zone (`days.spec.ts`, `scales.spec.ts`); the fixture's January has no DST change.
+  - Storage errors and unknown stored values (`time-zone.spec.ts`).
+
+### 13. 13. Weather (Open-Meteo, farm page and turbine page)
+
+**Seed:** none (own setup in `tests/weather/weather.spec.ts`: `signIn(page, 'admin')` at SEED_NOW in a UTC browser; the Chicago test uses `fixBrowserDate` + `logIn` like section 12)
+
+The turbine page asks `GET /api/turbines/:id/weather?interval=30min` for its window in whole 30-minute UTC buckets (no `timeZone`); the farm page asks `GET /api/farms/:id/weather` twice: `interval=30min` for the last 24 h (latest tiles) and `interval=daily&timeZone=<zone shown>` for the last 7 days ending today. The db:seed fixture has no weather (the sync only fetches recent days), so populated views are `page.route` mocks in the API's shape (`tests/support/weather.ts`: bodies built from each request's own from/to/timeZone, values in 0.5 steps so the one-decimal UI text is exact). One test per page uses the real API. Read-only.
+
+**Isolation:** the live stream is aborted (as in section 12). The turbine's history and stats requests are bounded at SEED_NOW (`boundTelemetryAt`, `tests/support/telemetry.ts`, adds `to`): the app sends `from` + `limit` without `to`, so a DB that also holds later readings (db:seed:demo, the demo feed) would otherwise fill the limit and hide the fixture's Jan 2. A no-op on the db:seed fixture alone (CI).
+
+#### 13.1. Turbine page: farm 80 m wind overlay and weather charts (mocked)
+
+**File:** `tests/weather/weather.spec.ts`
+
+**Steps:**
+  1. Admin opens /farms/FARM01/turbines/TURB001 (24 h window, Jan 2).
+    - expect: one weather request, from=2026-01-02T00:00:00.000Z to=2026-01-03T00:30:00.000Z interval=30min, no timeZone
+    - expect: `weather` data-state 'ok'; heading 'Weather at Prairie Ridge'; note mentions the 80 m comparison; no loading/empty/error
+    - expect: the wind chart's `series-legend` 'Turbine (measured)' and `overlay-legend` 'Open-Meteo 80 m (farm)'; its text alternative names the overlay's latest value (the 00:00 bucket); no overlay on the power chart
+    - expect: charts `weather-temperature`, `weather-gusts`, `weather-precipitation` with their titles, latest values from the 00:00 bucket, SVG drawn, 49 buckets in the window
+
+#### 13.2. Turbine page: weather 500 keeps the telemetry; Retry recovers (mocked)
+
+**Steps:**
+  1. Weather answers 500.
+    - expect: data-state 'error'; 'Weather is unavailable right now; the telemetry is not affected.' with Retry
+    - expect: every metric chart and the alerts chart drawn, readings listed, no overlay legend, no weather charts
+  2. Weather healthy again, click Retry.
+    - expect: the same request sent again; data-state 'ok', overlay legend and the three weather charts; the readings row count unchanged
+
+#### 13.3. Turbine page: real API at the fixture date
+
+**Steps:**
+  1. Open TURB001 unmocked.
+    - expect: 200 `{ farmId: 'FARM01', turbineId: 'TURB001', interval: '30min', timeZone: 'UTC' }` (no timeZone sent → UTC)
+    - expect: no buckets in the window → data-state 'empty', 'No weather synced for this period.', no overlay, no weather charts (if the DB has Jan 2026 weather: data-state 'ok' instead); the telemetry charts drawn either way
+
+#### 13.4. Farm page: latest tiles and 7 daily rows, today partial (mocked)
+
+**Steps:**
+  1. Admin opens /farms/FARM01.
+    - expect: 30min request 2026-01-02T00:00Z – 2026-01-03T00:30Z, no timeZone; daily request 2025-12-28T00:00Z – 2026-01-04T00:00Z, timeZone=UTC
+    - expect: 'Latest 30 minutes from Jan 3, 00:00 UTC' (the newest bucket that has started); tiles wind 80 m, gusts, temperature, precipitation from that bucket; 'Today min / max' '-3.0 / 6.0 °C'
+    - expect: header 'Day (UTC)'; 7 `weather-day` rows, data-date 2025-12-28 … 2026-01-03; first row 'Sun, Dec 28', 6.0 / 10.0 / -6.0 / 3.0 / 1.5, '48 / 48' not partial; last row 'Sat, Jan 3 (today)', '1 / 48' with `data-partial`; exactly one partial cell
+    - expect: the farm's Turbines section still there
+
+#### 13.5. Farm page: weather 500 and Retry (mocked)
+
+**Steps:**
+  1. Both weather requests answer 500.
+    - expect: 'Weather is unavailable right now.' with Retry; no tiles, no daily table; the farm summary and Turbines unaffected
+  2. Healthy again, Retry.
+    - expect: both requests sent again; 7 daily rows and the wind tile
+
+#### 13.6. Farm page: real API at the fixture date
+
+**Steps:**
+  1. Open FARM01 unmocked.
+    - expect: both 200, `interval` echoed, `timeZone` 'UTC'
+    - expect: `weather-latest-empty` and `weather-daily-empty` 'No weather synced for this period.' (or the tiles/rows if the DB has weather for those days)
+
+#### 13.7. Daily days follow Settings → Local (browser in America/Chicago, mocked)
+
+**Steps:**
+  1. Admin opens FARM01 from the farms table (UTC, the default).
+    - expect: daily request 2025-12-28T00:00Z – 2026-01-04T00:00Z, timeZone=UTC; header 'Day (UTC)'
+  2. Settings → Local, then Farms → Prairie Ridge (no reload).
+    - expect: daily request from=2025-12-27T06:00:00.000Z to=2026-01-03T06:00:00.000Z timeZone=America/Chicago (Dec 27 … Jan 2 from 00:00 CST); the 30min request still has no timeZone
+    - expect: header 'Day (local)'; 7 rows Dec 27 … Jan 2, last 'Fri, Jan 2 (today)' '37 / 48' partial; 'Latest 30 minutes from Jan 2, 18:00 CST'
+
+#### 13.8. Not yet automated in the browser (covered by the Angular unit specs)
+
+  - Missing values ('–'), a zone change reloading only the daily view in place, no refetch on live readings, refetch when the window enters a new bucket, the turbine page without readings showing no weather and sending no weather request, and DST days' expected buckets (`weather/farm-weather.spec.ts`, `fleet/turbine-weather.spec.ts`, `weather/weather.spec.ts`).
+  - Real synced weather in the browser: the fixture's January has none; it would need seeded `farm_weather` rows for Jan 2026 or a clock inside the synced days.

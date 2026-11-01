@@ -8,9 +8,9 @@ import {
 } from './weather-sync.js';
 
 const NOW = new Date('2026-10-31T01:30:00Z');
-const ARCHIVE = readFileSync(
+const HISTORICAL = readFileSync(
   new URL(
-    '../../../../packages/shared/src/weather/__fixtures__/archive-farm01-2026-01-01.json',
+    '../../../../packages/shared/src/weather/__fixtures__/historical-farm01-2026-01-01.json',
     import.meta.url,
   ),
   'utf8',
@@ -80,7 +80,7 @@ describe('runWeatherSync', () => {
     vi.clearAllMocks();
     db = mockDeep();
     db.$disconnect.mockResolvedValue(undefined);
-    db.$executeRaw.mockImplementation((async () => 24) as never);
+    db.$executeRaw.mockImplementation((async () => 48) as never);
     db.farm.findMany.mockResolvedValue([
       {
         id: 'FARM01',
@@ -97,7 +97,7 @@ describe('runWeatherSync', () => {
       env: { DATABASE_URL: 'postgresql://db' },
       createDb,
       now: () => NOW,
-      fetch: (async () => new Response(ARCHIVE)) as never,
+      fetch: (async () => new Response(HISTORICAL)) as never,
       sleep: async () => undefined,
       log,
       ...overrides,
@@ -108,20 +108,20 @@ describe('runWeatherSync', () => {
     expect(createDb).toHaveBeenCalledWith('postgresql://db');
     expect(log.log.mock.calls.map(([line]) => line)).toEqual([
       'Weather sync: 2026-01-01..2026-01-01, every farm, Open-Meteo free API (non-commercial use only)',
-      'Weather sync: FARM01: ok: 24 archive + 0 forecast hours, 24 rows written',
-      'Weather sync: 1/1 farms synced, 24 rows written',
+      'Weather sync: FARM01: ok: 48 historical + 0 forecast 30-minute buckets, 48 rows written',
+      'Weather sync: 1/1 farms synced, 48 rows written',
     ]);
     expect(db.$disconnect).toHaveBeenCalled();
   });
 
   it('uses the customer host with OPEN_METEO_API_KEY, without logging the key', async () => {
-    const fetch = vi.fn(async () => new Response(ARCHIVE));
+    const fetch = vi.fn(async () => new Response(HISTORICAL));
     await run({
       env: { DATABASE_URL: 'postgresql://db', OPEN_METEO_API_KEY: 's3cret' },
       fetch: fetch as never,
     });
     const [url] = fetch.mock.calls[0] as unknown as [URL];
-    expect(url.host).toBe('customer-archive-api.open-meteo.com');
+    expect(url.host).toBe('customer-historical-forecast-api.open-meteo.com');
     expect(url.searchParams.get('apikey')).toBe('s3cret');
     expect(JSON.stringify(log.log.mock.calls)).not.toContain('s3cret');
   });

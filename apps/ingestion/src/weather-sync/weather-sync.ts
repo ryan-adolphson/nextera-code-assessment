@@ -11,12 +11,13 @@ import {
 
 /**
  * The farm weather sync (`npm run weather:sync`, or `node dist/weather-sync/main.js` in the
- * ingestion image: the Cloud Run Job nextera-weather-sync on a daily schedule). It fetches hourly
- * Open-Meteo weather for every farm (or --farm) and upserts it into farm_weather_hourly (archive
- * rows win over forecast rows). It is not part of the ingestion service: the worker never imports it.
+ * ingestion image: the Cloud Run Job nextera-weather-sync on a daily schedule). It fetches the
+ * 15-minute Open-Meteo forecast-model weather for every farm (or --farm), aggregates it into
+ * 30-minute buckets and upserts them into farm_weather (a re-fetch overwrites). It is not part of
+ * the ingestion service: the worker never imports it.
  *
  * Args: --from YYYY-MM-DD --to YYYY-MM-DD (UTC days, inclusive; default the last 7 days up to
- * today, which also turns the oldest forecast days into archive rows), --farm FARM01 (repeatable).
+ * today, which also refreshes the recent days with the latest model run), --farm FARM01 (repeatable).
  * Env: DATABASE_URL (required), OPEN_METEO_API_KEY (optional: the paid customer-* hosts; the free
  * API is for non-commercial use only).
  * Exit code: 0 when every farm synced, 1 when any failed or the arguments/env are invalid.

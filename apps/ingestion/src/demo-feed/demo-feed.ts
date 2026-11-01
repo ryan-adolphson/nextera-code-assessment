@@ -5,6 +5,7 @@ import {
   DEMO_SEED,
   DEMO_TURBINES,
   TELEMETRY_STEP_MINUTES,
+  demoReportingLagMinutes,
   floorToTelemetryStep,
   generateTelemetry,
   type GeneratedTelemetryRow,
@@ -13,7 +14,8 @@ import {
 /**
  * The live demo feed (`npm run demo:feed`, or `node dist/demo-feed/main.js` in the ingestion
  * image): every tick publishes one reading per demo turbine to the telemetry topic, timestamped at
- * the current 5-minute boundary and continuing the demo seed's curve (same generator and seed).
+ * the current 5-minute boundary (a lagging turbine: its lag earlier; the stopped one: none) and
+ * continuing the demo seed's curve (same generator and seed).
  * The readings go through Pub/Sub → ingestion like a real turbine's, so alerts and SSE work as in
  * production. It is not part of the ingestion service: the worker never imports it.
  *
@@ -45,19 +47,42 @@ export interface DemoFeedDeps {
 }
 
 /**
- * The readings of one tick: one per demo turbine at `at` (floored), minus a stopped turbine, plus
- * one for the unallocated turbine (DEMO_ANOMALIES.unallocated: TURB099 claiming FARM01, not in the
- * fleet), which ingestion holds for the Unallocated tab.
+ * The readings of one tick, in DEMO_TURBINES order then the unallocated turbine:
+ * - one per demo turbine at `at` (floored to the 5-minute boundary);
+ * - a lagging turbine (DEMO_ANOMALIES.lagging) at the boundary at or before `at` − its lag, so its
+ *   staleness stays constant (ingestion is idempotent on (turbine_id, timestamp): an older boundary
+ *   is just a late reading);
+ * - none for the stopped turbine (TURB013), which stays red;
+ * - one for the unallocated turbine (DEMO_ANOMALIES.unallocated: TURB099 claiming FARM01, not in
+ *   the fleet), which ingestion holds for the Unallocated tab.
+ * Values come from the seed's generator, so each continues the seeded curve.
  */
 export function demoFeedReadings(
   at: Date | number,
 ): Omit<GeneratedTelemetryRow, 'received_at'>[] {
-  return generateTelemetry({
-    turbines: [...DEMO_TURBINES, DEMO_ANOMALIES.unallocated],
-    end: floorToTelemetryStep(at),
-    hours: TELEMETRY_STEP_MINUTES / 60, // one step
+  const end = floorToTelemetryStep(at).getTime();
+  const turbines = [...DEMO_TURBINES, DEMO_ANOMALIES.unallocated];
+  const maxLag = Math.max(...DEMO_ANOMALIES.lagging.map((l) => l.lagMinutes));
+  // A window back to the oldest lagging boundary: the generator leaves out each turbine's
+  // last `lag` minutes, so the reading at end − lag is in it.
+  const rows = generateTelemetry({
+    turbines,
+    end,
+    hours: (maxLag + TELEMETRY_STEP_MINUTES) / 60,
     seed: DEMO_SEED,
-  }).map(({ received_at: _receivedAt, ...reading }) => reading); // live: Pub/Sub publishTime
+  });
+  return turbines.flatMap(({ turbineId }) => {
+    if (turbineId === DEMO_ANOMALIES.stopped.turbineId) return [];
+    const timestamp = floorToTelemetryStep(
+      end - demoReportingLagMinutes(turbineId) * 60_000,
+    ).toISOString();
+    const row = rows.find(
+      (r) => r.turbine_id === turbineId && r.timestamp === timestamp,
+    );
+    if (!row) return [];
+    const { received_at: _receivedAt, ...reading } = row; // live: Pub/Sub publishTime
+    return [reading];
+  });
 }
 
 /** Runs the feed; resolves with the process exit code. */
@@ -91,12 +116,20 @@ export async function runDemoFeed({
   const pubsub = createPubSub(projectId);
   const topic = pubsub.topic(topicName);
   const tick = async () => {
-    const readings = demoFeedReadings(now());
+    const at = now();
+    const readings = demoFeedReadings(at);
     await Promise.all(
       readings.map((reading) => topic.publishMessage({ json: reading })),
     );
+    const lagging = DEMO_ANOMALIES.lagging
+      .map(({ turbineId }) => {
+        const r = readings.find((x) => x.turbine_id === turbineId);
+        return r && `${turbineId} at ${r.timestamp}`;
+      })
+      .filter(Boolean);
     log.log(
-      `Demo feed: published ${readings.length} readings for ${readings[0]?.timestamp} to ${topicName}`,
+      `Demo feed: published ${readings.length} readings for ${floorToTelemetryStep(at).toISOString()} ` +
+        `(lagging: ${lagging.join(', ')}) to ${topicName}`,
     );
   };
 

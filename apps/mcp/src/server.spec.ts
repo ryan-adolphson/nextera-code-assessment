@@ -87,10 +87,22 @@ describe('MCP server (mocked Prisma)', () => {
       'limit',
     ]);
     const weather = tools.find((t) => t.name === 'get_weather')!;
-    expect(weather.inputSchema.required).toEqual(['farmId', 'from', 'to']);
+    expect(weather.inputSchema.required).toEqual(['from', 'to']);
+    expect(Object.keys(weather.inputSchema.properties!)).toEqual([
+      'farmId',
+      'turbineId',
+      'from',
+      'to',
+      'interval',
+      'timeZone',
+    ]);
     expect(weather.inputSchema.properties!.interval).toMatchObject({
-      enum: ['hourly', 'daily'],
+      enum: ['30min', 'daily'],
       default: 'daily',
+    });
+    expect(weather.inputSchema.properties!.timeZone).toMatchObject({
+      type: 'string',
+      default: 'UTC',
     });
     const unallocated = tools.find((t) => t.name === 'list_unallocated')!;
     expect(unallocated.inputSchema.properties!.status).toMatchObject({
@@ -157,6 +169,24 @@ describe('MCP server (mocked Prisma)', () => {
         'interval',
       ],
       [
+        'the removed hourly interval',
+        'get_weather',
+        { farmId: 'FARM01', ...RANGE, interval: 'hourly' },
+        'interval',
+      ],
+      [
+        'neither farmId nor turbineId',
+        'get_weather',
+        { ...RANGE },
+        'Provide exactly one of farmId or turbineId',
+      ],
+      [
+        'both farmId and turbineId',
+        'get_weather',
+        { farmId: 'FARM01', turbineId: 'TURB001', ...RANGE },
+        'Provide exactly one of farmId or turbineId',
+      ],
+      [
         'a weather range without to',
         'get_weather',
         { farmId: 'FARM01', from: RANGE.from },
@@ -221,11 +251,7 @@ describe('MCP server (mocked Prisma)', () => {
       ['list_alerts', { ...RANGE, turbineId: 'TURB001' }, 'turbineId'],
       ['list_alert_rules', { enabled: true }, 'enabled'],
       ['get_report_summary', { farmId: 'FARM01', ...RANGE, limit: 5 }, 'limit'],
-      [
-        'get_weather',
-        { farmId: 'FARM01', ...RANGE, turbineId: 'x' },
-        'turbineId',
-      ],
+      ['get_weather', { farmId: 'FARM01', ...RANGE, zone: 'UTC' }, 'zone'],
       ['list_unallocated', { status: 'pending', farmId: 'FARM01' }, 'farmId'],
       ['get_unallocated_readings', { id: ENTRY_ID, from: RANGE.from }, 'from'],
     ])('%s rejects an unknown argument, naming it', async (tool, args, key) => {
@@ -275,7 +301,7 @@ describe('MCP server (mocked Prisma)', () => {
           text: 'to must be after from',
         });
         expect(prisma.telemetry.findMany).not.toHaveBeenCalled();
-        expect(prisma.farmWeatherHourly.findMany).not.toHaveBeenCalled();
+        expect(prisma.farmWeather.findMany).not.toHaveBeenCalled();
         expect(prisma.$queryRaw).not.toHaveBeenCalled();
       },
     );
@@ -470,14 +496,14 @@ describe('MCP server (mocked Prisma)', () => {
   });
 
   describe('get_weather', () => {
-    const hour = (time: string, source: 'archive' | 'forecast') => ({
+    const bucket = (time: string) => ({
       farmId: 'FARM01',
       time: new Date(time),
-      source,
+      samples: 2,
       windSpeed10mMs: 6.1,
-      windSpeed100mMs: 9.4,
+      windSpeed80mMs: 9.4,
       windDirection10mDeg: 200,
-      windDirection100mDeg: 210,
+      windDirection80mDeg: 210,
       windGusts10mMs: 12.3,
       temperature2mC: -3.5,
       relativeHumidity2mPct: 80,
@@ -491,28 +517,28 @@ describe('MCP server (mocked Prisma)', () => {
       prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
     });
 
-    it('hourly: the stored hours by column, with the source counts', async () => {
-      prisma.farmWeatherHourly.findMany.mockResolvedValue([
-        hour('2026-01-01T00:00:00Z', 'archive'),
-        hour('2026-01-01T01:00:00Z', 'forecast'),
+    it('30min: the stored buckets by column', async () => {
+      prisma.farmWeather.findMany.mockResolvedValue([
+        bucket('2026-01-01T00:00:00Z'),
+        bucket('2026-01-01T00:30:00Z'),
       ]);
 
       const result = (
         await mcp.call('get_weather', {
           farmId: 'FARM01',
           from: '2026-01-01T00:00:00Z',
-          to: '2026-01-01T02:00:00+00:00',
-          interval: 'hourly',
+          to: '2026-01-01T01:00:00+00:00',
+          interval: '30min',
         })
       ).json();
 
-      expect(prisma.farmWeatherHourly.findMany).toHaveBeenCalledWith(
+      expect(prisma.farmWeather.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             farmId: 'FARM01',
             time: {
               gte: new Date('2026-01-01T00:00:00Z'),
-              lt: new Date('2026-01-01T02:00:00Z'),
+              lt: new Date('2026-01-01T01:00:00Z'),
             },
           },
         }),
@@ -520,17 +546,17 @@ describe('MCP server (mocked Prisma)', () => {
       expect(result).toEqual({
         farmId: 'FARM01',
         from: '2026-01-01T00:00:00.000Z',
-        to: '2026-01-01T02:00:00.000Z',
-        interval: 'hourly',
+        to: '2026-01-01T01:00:00.000Z',
+        interval: '30min',
+        timeZone: 'UTC',
         count: 2,
-        sources: { archive: 1, forecast: 1 },
         columns: [
           'time',
-          'source',
+          'samples',
           'windSpeed10mMs',
-          'windSpeed100mMs',
+          'windSpeed80mMs',
           'windDirection10mDeg',
-          'windDirection100mDeg',
+          'windDirection80mDeg',
           'windGusts10mMs',
           'temperature2mC',
           'relativeHumidity2mPct',
@@ -541,7 +567,7 @@ describe('MCP server (mocked Prisma)', () => {
         rows: [
           [
             '2026-01-01T00:00:00.000Z',
-            'archive',
+            2,
             6.1,
             9.4,
             200,
@@ -554,8 +580,8 @@ describe('MCP server (mocked Prisma)', () => {
             null,
           ],
           [
-            '2026-01-01T01:00:00.000Z',
-            'forecast',
+            '2026-01-01T00:30:00.000Z',
+            2,
             6.1,
             9.4,
             200,
@@ -574,15 +600,14 @@ describe('MCP server (mocked Prisma)', () => {
     it('daily by default: one row per UTC day from Postgres', async () => {
       prisma.$queryRaw.mockResolvedValue([
         {
-          day: new Date('2026-01-01T00:00:00Z'),
-          hours: 24,
-          has_forecast: false,
+          day: '2026-01-01',
+          samples: 48,
           wind_speed_10m_mean: 6.123,
           wind_speed_10m_max: 9,
-          wind_speed_100m_mean: '9.456',
-          wind_speed_100m_max: 14,
+          wind_speed_80m_mean: '9.456',
+          wind_speed_80m_max: 14,
+          wind_direction_80m: 359.999,
           wind_gusts_10m_max: 18.2,
-          wind_direction_100m: 359.999,
           temperature_2m_min: -8,
           temperature_2m_max: 1,
           temperature_2m_mean: -3.25,
@@ -597,29 +622,28 @@ describe('MCP server (mocked Prisma)', () => {
         await mcp.call('get_weather', { farmId: 'FARM01', ...RANGE })
       ).json();
 
-      expect(prisma.farmWeatherHourly.findMany).not.toHaveBeenCalled();
+      expect(prisma.farmWeather.findMany).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         interval: 'daily',
+        timeZone: 'UTC',
         count: 1,
-        sources: { archive: 1, forecast: 0 },
       });
-      expect(result.columns.slice(0, 4)).toEqual([
+      expect(result).not.toHaveProperty('turbineId');
+      expect(result.columns.slice(0, 3)).toEqual([
         'date',
-        'hours',
-        'source',
+        'samples',
         'windSpeed10mMeanMs',
       ]);
       expect(result.rows).toEqual([
         [
           '2026-01-01',
-          24,
-          'archive',
+          48,
           6.12,
           9,
           9.46,
           14,
-          18.2,
           0,
+          18.2,
           -8,
           1,
           -3.25,
@@ -629,6 +653,55 @@ describe('MCP server (mocked Prisma)', () => {
           null,
         ],
       ]);
+    });
+
+    it("turbineId: its current farm's weather, with the turbine id and the zone bound", async () => {
+      prisma.turbine.findUnique.mockResolvedValue({
+        farmId: 'FARM02',
+      } as never);
+      prisma.$queryRaw
+        .mockResolvedValueOnce([{ known: true }]) // pg_timezone_names
+        .mockResolvedValueOnce([]);
+
+      const result = (
+        await mcp.call('get_weather', {
+          turbineId: 'TURB002',
+          ...RANGE,
+          timeZone: 'America/Phoenix',
+        })
+      ).json();
+
+      expect(prisma.turbine.findUnique).toHaveBeenCalledWith({
+        where: { turbineId: 'TURB002' },
+        select: { farmId: true },
+      });
+      expect(prisma.farm.findUnique).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        farmId: 'FARM02',
+        turbineId: 'TURB002',
+        interval: 'daily',
+        timeZone: 'America/Phoenix',
+        count: 0,
+        rows: [],
+      });
+      const [strings, ...values] = prisma.$queryRaw.mock
+        .calls[1] as unknown as [TemplateStringsArray, ...unknown[]];
+      expect(Prisma.sql(strings, ...values).values[0]).toBe('America/Phoenix');
+    });
+
+    it('reports an unknown time zone as an error result', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ known: false }]);
+
+      expect(
+        await mcp.call('get_weather', {
+          farmId: 'FARM01',
+          ...RANGE,
+          timeZone: 'Mars/Olympus',
+        }),
+      ).toMatchObject({
+        isError: true,
+        text: 'timeZone must be an IANA time zone name, e.g. "America/Chicago" (default "UTC")',
+      });
     });
 
     it('an empty range is a result, not an error', async () => {
@@ -643,12 +716,16 @@ describe('MCP server (mocked Prisma)', () => {
       expect(result.json()).toMatchObject({ count: 0, rows: [] });
     });
 
-    it('reports an unknown farm as an error result before reading weather', async () => {
+    it('reports an unknown farm or turbine as an error result before reading weather', async () => {
       prisma.farm.findUnique.mockResolvedValue(null);
+      prisma.turbine.findUnique.mockResolvedValue(null);
 
       expect(
         await mcp.call('get_weather', { farmId: 'FARM99', ...RANGE }),
       ).toMatchObject({ isError: true, text: 'Farm FARM99 not found' });
+      expect(
+        await mcp.call('get_weather', { turbineId: 'TURB999', ...RANGE }),
+      ).toMatchObject({ isError: true, text: 'Turbine TURB999 not found' });
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
 

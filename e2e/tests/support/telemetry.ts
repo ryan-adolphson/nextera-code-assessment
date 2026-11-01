@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext } from '@playwright/test';
+import { expect, type APIRequestContext, type Page } from '@playwright/test';
 import { API_URL, INGESTION_URL } from './session.js';
 
 /** One telemetry.csv row (received_at empty: ingestion uses the upload time). */
@@ -75,4 +75,23 @@ export async function turbineTelemetry(
   );
   expect(response.status()).toBe(200);
   return response.json();
+}
+
+/**
+ * Bounds the turbine page's history and stats requests at `at` (adds `to`). The app asks for
+ * `?from=<window start>&limit=…` without `to` (its window ends at "now" and live readings join
+ * it), so the API answers the newest readings after `from`. With a fixed browser clock and a DB
+ * that also holds later readings (db:seed:demo, the demo feed), those later rows fill the limit
+ * and the fixture's day disappears from the page. With the db:seed fixture alone (CI) this
+ * changes nothing; the rows still come from the real API.
+ */
+export async function boundTelemetryAt(page: Page, at: Date): Promise<void> {
+  await page.route(
+    (url) => /\/api\/turbines\/[^/]+\/telemetry(\/stats)?$/.test(url.pathname),
+    async (route) => {
+      const url = new URL(route.request().url());
+      if (!url.searchParams.has('to')) url.searchParams.set('to', at.toISOString());
+      await route.continue({ url: url.toString() });
+    },
+  );
 }

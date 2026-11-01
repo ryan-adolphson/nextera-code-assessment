@@ -15,6 +15,13 @@ config({ path: ['.env', '../../.env'], quiet: true });
 /** The fixture CSVs (prisma/data). */
 export const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data');
 
+/** Creates or resets the SEED_USERS with SEED_USER_PASSWORD (argon2id); throws without one. */
+export function seedTestUsers(prisma: PrismaClient): Promise<number> {
+  return seedUsers(prisma, process.env.SEED_USER_PASSWORD, (pw) =>
+    argon2.hash(pw, PASSWORD_HASH_OPTIONS),
+  );
+}
+
 /**
  * Runs `seed` with a client on DATABASE_URL, after seeding the test users (SEED_USER_PASSWORD is
  * checked before anything is written: no password, no seed). Prints the returned summary; on an
@@ -23,14 +30,11 @@ export const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data');
 export async function runSeed(
   seed: (prisma: PrismaClient) => Promise<string>,
 ): Promise<void> {
-  const password = process.env.SEED_USER_PASSWORD;
   const prisma = new PrismaClient({
     adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
   });
   try {
-    const users = await seedUsers(prisma, password, (pw) =>
-      argon2.hash(pw, PASSWORD_HASH_OPTIONS),
-    );
+    const users = await seedTestUsers(prisma);
     const summary = await seed(prisma);
     console.log(
       `${summary} ${users} users (${SEED_USERS.map((u) => u.email).join(', ')}; ` +

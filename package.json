@@ -29,6 +29,7 @@
     "db:status": "npm run db:status -w @nextera/shared",
     "db:seed": "npm run db:seed -w @nextera/shared",
     "db:seed:demo": "npm run db:seed:demo -w @nextera/shared",
+    "demo:reset": "npm run demo:reset -w @nextera/shared --",
     "ingest:publish": "npm run publish:sample -w @nextera/ingestion --",
     "demo:feed": "npm run demo:feed -w @nextera/ingestion --",
     "weather:sync": "npm run weather:sync -w @nextera/ingestion --",

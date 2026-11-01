@@ -1,7 +1,5 @@
-import { DatePipe } from '@angular/common';
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
 import { MatButton, MatIconButton } from '@angular/material/button';
-import { MatChip, MatChipSet } from '@angular/material/chips';
 import { provideNativeDateAdapter } from '@angular/material/core';
 import {
   MatDateRangeInput,
@@ -13,35 +11,37 @@ import {
 import { MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
 import { MatIcon } from '@angular/material/icon';
 import { RouterLink } from '@angular/router';
+import { AppTimePipe } from '../core/app-time.pipe';
 import { NOW } from '../core/clock';
+import { TimeZoneSettings } from '../core/time-zone';
 import { FleetStore } from '../fleet/fleet.store';
 import { latestLoad } from '../ui/latest-load';
 import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
 import { AlertHistoryApi } from './alert-history-api.service';
 import { TurbineAlerts, groupAlertsByTurbine } from './alert-history';
-import { dayOf, dayRange, defaultDays, pickerDate, rangeError } from '../core/utc-days';
+import { dayOf, dayRange, defaultDays, pickerDate, rangeError } from '../core/days';
 import { AlertingTabs } from './alerting-tabs';
-import { describeTriggerWithLevel } from './alert-text';
+import { AlertChips } from './alert-chips';
 import { AlertLevelBadge } from './alert-level-badge';
 
 /**
- * /alerting/history: the readings that triggered alert rules over whole UTC days chosen with a
+ * /alerting/history: the readings that triggered alert rules over whole days chosen with a
  * Material date range picker (GET /api/alerts for [start 00:00, the day after end 00:00)), default
  * yesterday and today. A Material table with expandable rows: one summary row per turbine
  * (latest alert, a pill per level with its alert count) that
  * expands to its flagged readings, newest first, each with its rules as chips. 25 turbines per
- * page. Days are UTC like every time in the app; choosing a valid range reloads.
+ * page. Days and times are in the zone shown (Settings: UTC or local); choosing a valid range
+ * reloads, and so does a zone change (the same calendar days, in the new zone).
  */
 @Component({
   selector: 'app-alert-history-page',
   imports: [
+    AlertChips,
     AlertLevelBadge,
     AlertingTabs,
-    DatePipe,
+    AppTimePipe,
     MatButton,
-    MatChip,
-    MatChipSet,
     MatDateRangeInput,
     MatDateRangePicker,
     MatDatepickerToggle,
@@ -56,7 +56,8 @@ import { AlertLevelBadge } from './alert-level-badge';
     TABLE_IMPORTS,
   ],
   templateUrl: './alert-history-page.html',
-  // The datepicker's DateAdapter: native Dates (local midnights, read as UTC days by utcDayOf).
+  // The datepicker's DateAdapter: native Dates (browser-local midnights; their calendar dates name
+  // days in the zone shown, see core/days.ts).
   providers: [provideNativeDateAdapter()],
   // A column filling the shell's window-high page (route data `fillViewport`): heading, tabs and
   // range keep their height, the table frame takes what is left and scrolls its rows.
@@ -67,14 +68,19 @@ export class AlertHistoryPage {
   private readonly fleet = inject(FleetStore);
 
   private readonly now = inject(NOW);
+  protected readonly tz = inject(TimeZoneSettings);
   /** The picked days (the picker's Dates; null while not chosen or not a valid date). */
   protected readonly start = signal<Date | null>(null);
   protected readonly end = signal<Date | null>(null);
-  /** No future days to pick: the last selectable day is today (UTC). */
-  protected readonly maxDate = pickerDate(defaultDays(this.now()).end);
-  private readonly startDay = computed(() => dayOf(this.start()));
-  private readonly endDay = computed(() => dayOf(this.end()));
-  protected readonly error = computed(() => rangeError(this.startDay(), this.endDay()));
+  /** No future days to pick: the last selectable day is today (in the zone shown). */
+  protected readonly maxDate = computed(() =>
+    pickerDate(defaultDays(this.now(), this.tz.zone()).end, this.tz.zone()),
+  );
+  private readonly startDay = computed(() => dayOf(this.start(), this.tz.zone()));
+  private readonly endDay = computed(() => dayOf(this.end(), this.tz.zone()));
+  protected readonly error = computed(() =>
+    rangeError(this.startDay(), this.endDay(), this.tz.zone()),
+  );
 
   /** The latest range's answer (an earlier range's late answer is dropped); keeps it on failure. */
   private readonly alerts = latestLoad(
@@ -100,13 +106,21 @@ export class AlertHistoryPage {
   protected readonly trackTurbine = (_: number, t: TurbineAlerts) => t.turbineId;
   /** The turbines whose rows are expanded (any number at once). */
   protected readonly expanded = signal<ReadonlySet<string>>(new Set());
-  protected readonly describe = describeTriggerWithLevel;
 
   constructor() {
-    const { start, end } = defaultDays(this.now());
-    this.start.set(pickerDate(start));
-    this.end.set(pickerDate(end));
+    const zone = this.tz.zone();
+    const { start, end } = defaultDays(this.now(), zone);
+    this.start.set(pickerDate(start, zone));
+    this.end.set(pickerDate(end, zone));
     this.load();
+    // A zone change (Settings) keeps the picked calendar days and queries them in the new zone.
+    let loadedZone = zone;
+    effect(() => {
+      const current = this.tz.zone();
+      if (current === loadedZone) return;
+      loadedZone = current;
+      untracked(() => this.load());
+    });
   }
 
   protected isExpanded(turbineId: string): boolean {
@@ -136,7 +150,7 @@ export class AlertHistoryPage {
   /** Loads the chosen days (an incomplete or invalid range keeps the last results and says why). */
   protected load(): void {
     if (this.error()) return;
-    this.alerts.run(dayRange(this.startDay()!, this.endDay()!));
+    this.alerts.run(dayRange(this.startDay()!, this.endDay()!, this.tz.zone()));
   }
 
   private readonly farmNames = computed(

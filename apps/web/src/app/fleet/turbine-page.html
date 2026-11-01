@@ -23,7 +23,7 @@
       }
       @if (turbine.latest) {
         <span class="text-muted"
-          >Latest reading {{ turbine.latest.timestamp | date: 'MMM d, HH:mm' : 'UTC' }} UTC, arrived
+          >Latest reading {{ turbine.latest.timestamp | appTime: 'MMM d, HH:mm' : true }}, arrived
           after {{ delayMinutes(turbine.latest) }} min</span
         >
       }
@@ -45,7 +45,7 @@
       }
     </mat-button-toggle-group>
     <span class="text-sm text-muted" data-testid="window-end"
-      >Ending now ({{ store.now() | date: 'HH:mm' : 'UTC' }} UTC)</span
+      >Ending now ({{ store.now() | appTime: 'HH:mm' : true }})</span
     >
   </div>
 
@@ -64,7 +64,7 @@
         </p>
         @if (turbine.latest) {
           <p class="mt-1 text-sm text-muted" data-testid="empty-window-last-reading">
-            Last reading: {{ turbine.latest.timestamp | date: 'MMM d, y, HH:mm' : 'UTC' }} UTC
+            Last reading: {{ turbine.latest.timestamp | appTime: 'MMM d, y, HH:mm' : true }}
           </p>
           @if (longerRange(); as longer) {
             <button
@@ -84,21 +84,92 @@
         }
       </section>
     }
-  } @else {
-    @if (window(); as window) {
-      <!-- Refetch keeps the frame: previous charts stay, dimmed, until new data arrives. -->
-      <app-chart-group
-        kind="candlestick"
-        label="Telemetry charts"
-        [charts]="charts()"
-        [alerts]="alertChart()"
-        [domain]="window"
-        [gapMs]="gapMs"
-        [refreshing]="store.historyLoading()"
-        [resetKey]="chartResetKey()"
-      />
-    }
+  }
 
+  <!-- The charts load ECharts in their own chunk, so the route renders the header, range and
+       readings without waiting for it. The block exists from the start: the chunk downloads at once
+       (prefetch on immediate) while the readings load, and the charts render at the first idle
+       moment. Not `on immediate`: with a @loading block that skips the placeholder, leaving the
+       slot empty until the loading skeleton appears (a layout shift). The group is deferred as a
+       unit (shared crosshair and zoom); the skeleton has one card per chart, at the charts' size. -->
+  @defer (on idle; prefetch on immediate) {
+    @if (store.history().length) {
+      @if (window(); as window) {
+        <!-- Refetch keeps the frame: previous charts stay, dimmed, until new data arrives. -->
+        <app-chart-group
+          kind="candlestick"
+          label="Telemetry charts"
+          [charts]="charts()"
+          [alerts]="alertChart()"
+          [domain]="window"
+          [gapMs]="gapMs"
+          [refreshing]="store.historyLoading()"
+          [resetKey]="chartResetKey()"
+          [extraCharts]="weatherCharts()"
+        >
+          <!-- The farm's weather heading and status, under the telemetry charts. -->
+          <div class="mt-3" data-testid="weather" [attr.data-state]="weatherState()">
+            <h2 class="text-lg font-semibold" data-testid="weather-heading">
+              Weather at {{ turbine.farmName }}
+            </h2>
+            <p class="text-sm text-muted" data-testid="weather-note">
+              Open-Meteo model data for the farm location, per 30 minutes. The wind chart compares
+              it at 80 m with the turbine's measured wind.
+            </p>
+            @switch (weatherState()) {
+              @case ('loading') {
+                <p class="mt-1 text-sm text-muted" role="status" data-testid="weather-loading">
+                  Loading weather…
+                </p>
+              }
+              @case ('error') {
+                <p
+                  class="mt-1 flex flex-wrap items-center gap-3 text-sm"
+                  role="status"
+                  data-testid="weather-error"
+                >
+                  Weather is unavailable right now; the telemetry is not affected.
+                  <button
+                    matButton="outlined"
+                    type="button"
+                    data-testid="weather-retry"
+                    (click)="retryWeather()"
+                  >
+                    Retry
+                  </button>
+                </p>
+              }
+              @case ('empty') {
+                <p class="mt-1 text-sm text-muted" role="status" data-testid="weather-empty">
+                  No weather synced for this period.
+                </p>
+              }
+            }
+          </div>
+        </app-chart-group>
+      }
+    }
+  } @placeholder {
+    @if (store.history().length) {
+      <app-chart-skeleton [cards]="chartSkeleton()" />
+    }
+  } @loading (after 100ms; minimum 300ms) {
+    @if (store.history().length) {
+      <app-chart-skeleton [cards]="chartSkeleton()" [loading]="true" />
+    }
+  } @error {
+    @if (store.history().length) {
+      <p
+        class="rounded-lg border border-line bg-surface px-4 py-6 text-center"
+        role="alert"
+        data-testid="charts-load-error"
+      >
+        The charts could not be loaded. Reload the page to try again; the readings are below.
+      </p>
+    }
+  }
+
+  @if (store.history().length) {
     <h2 class="mt-8 mb-3 text-lg font-semibold">Readings</h2>
     <!-- Scrolls within 500px; focusable so keyboard users can scroll it too. -->
     <div
@@ -120,8 +191,8 @@
         [trackBy]="trackById"
       >
         <ng-container matColumnDef="measured">
-          <th mat-header-cell *matHeaderCellDef>Measured (UTC)</th>
-          <td mat-cell *matCellDef="let r">{{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}</td>
+          <th mat-header-cell *matHeaderCellDef>Measured ({{ tz.tag() }})</th>
+          <td mat-cell *matCellDef="let r">{{ r.timestamp | appTime: 'MMM d, HH:mm' }}</td>
         </ng-container>
         <ng-container matColumnDef="delay">
           <th mat-header-cell *matHeaderCellDef>Arrived after</th>

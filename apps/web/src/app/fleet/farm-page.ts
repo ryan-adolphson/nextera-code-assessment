@@ -1,20 +1,25 @@
 import { DecimalPipe } from '@angular/common';
 import { Component, computed, inject, input } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import { MapMarker, MapView } from '../map/map-view';
+import { MapPlaceholder } from '../map/map-placeholder';
+// Separate declarations: MapView is @defer-red, and the compiler only defers a dependency whose
+// whole import declaration it can drop.
+import { MapView } from '../map/map-view';
+import type { MapMarker } from '../map/map-view';
 import { StatTile } from '../ui/stat-tile';
+import { FarmWeather } from '../weather/farm-weather';
 import { TURBINE_LEGEND, turbineMarkers } from './fleet-markers';
 import { FleetStore } from './fleet.store';
 import { TurbineSortKey, TurbineTable } from './turbine-table';
 
 /**
- * /farms/:farmId: one farm's totals, a map of its turbines and the shared turbines table (as on
- * /turbines, scoped to this farm, without the Farm column); a marker or a turbine id opens the
- * turbine page.
+ * /farms/:farmId: one farm's totals, its Open-Meteo weather (`FarmWeather`), a map of its turbines
+ * and the shared turbines table (as on /turbines, scoped to this farm, without the Farm column); a
+ * marker or a turbine id opens the turbine page.
  */
 @Component({
   selector: 'app-farm-page',
-  imports: [DecimalPipe, RouterLink, MapView, StatTile, TurbineTable],
+  imports: [DecimalPipe, RouterLink, FarmWeather, MapPlaceholder, MapView, StatTile, TurbineTable],
   templateUrl: './farm-page.html',
 })
 export class FarmPage {

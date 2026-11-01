@@ -5,8 +5,17 @@ import { Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { of, throwError } from 'rxjs';
 import { LineChart } from '../charts/line-chart';
+import { TimeZoneSettings } from '../core/time-zone';
 import { FarmOverview, TelemetryStats } from './fleet.model';
-import { FakeFleetApi, FakeSse, farmsFixture, openFleet, reading, statsFixture } from './testing';
+import {
+  FakeFleetApi,
+  FakeSse,
+  farmsFixture,
+  openFleet,
+  reading,
+  settle,
+  statsFixture,
+} from './testing';
 
 /** Drives the real routes: overview -> farm -> turbine, with fake API and SSE. */
 describe('Fleet routes', () => {
@@ -34,6 +43,7 @@ describe('Fleet routes', () => {
         if (stats) api.telemetryStats.mockReturnValue(of(stats));
       },
     ));
+    await stable(); // the deferred map / charts render
   }
 
   const el = () => harness.routeNativeElement!.parentElement!.parentElement as HTMLElement;
@@ -49,7 +59,7 @@ describe('Fleet routes', () => {
     [...row.querySelectorAll('td')].map((td) => td.textContent?.replace(/\s+/g, ' ').trim());
   const turbineLink = (row: Element) => row.querySelector<HTMLAnchorElement>('td a')!;
   const badge = (row: Element) => row.querySelector('[data-testid=staleness]');
-  const stable = () => harness.fixture.whenStable();
+  const stable = () => settle(harness.fixture);
   const staleness = (selector: string) =>
     el().querySelector(selector)?.getAttribute('data-staleness');
   const MINUTE = 60_000;
@@ -319,6 +329,19 @@ describe('Fleet routes', () => {
       expect(text('[data-testid=status] [data-testid=staleness]')).toBe('Reporting');
       expect(staleness('[data-testid=status] [data-testid=staleness]')).toBe('ok');
       expect(text('[data-testid=status]')).toContain('Latest reading Jan 2, 23:55 UTC');
+    });
+
+    it('shows its times in local time when chosen in Settings (the window stays relative)', async () => {
+      await start('/farms/FARM01/turbines/TURB001', history);
+      TestBed.inject(TimeZoneSettings).setMode('local'); // browser zone America/Chicago
+      await stable();
+
+      expect(text('[data-testid=status]')).toContain('Latest reading Jan 2, 17:55 CST');
+      expect(text('[data-testid=window-end]')).toBe('Ending now (18:00 CST)');
+      const header = [...el().querySelectorAll('[data-testid=history] thead th')];
+      expect(header[0].textContent?.trim()).toBe('Measured (local)');
+      expect(text('[data-testid=history] tbody td')).toBe('Jan 2, 17:55'); // newest first
+      expect(api.telemetry).toHaveBeenCalledTimes(1); // no refetch: the window is relative
     });
 
     it('adds nothing for a commissioned turbine and a quiet pill for one that is not', async () => {

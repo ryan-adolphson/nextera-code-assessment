@@ -3,12 +3,12 @@ import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { Prisma } from '../generated/prisma/client.js';
 import {
   syncFarmWeather,
-  upsertWeatherHours,
+  upsertFarmWeather,
   type WeatherWriteClient,
 } from './sync-weather.js';
 
-const ARCHIVE = readFileSync(
-  new URL('./__fixtures__/archive-farm01-2026-01-01.json', import.meta.url),
+const HISTORICAL = readFileSync(
+  new URL('./__fixtures__/historical-farm01-2026-01-01.json', import.meta.url),
   'utf8',
 );
 const FORECAST = readFileSync(
@@ -32,17 +32,17 @@ const executed = (db: DeepMockProxy<WeatherWriteClient>, n = 0) => {
   return { text: sql.sql.replace(/\s+/g, ' '), values: sql.values };
 };
 
-describe('upsertWeatherHours', () => {
-  it('inserts every hour in one statement, archive wins over forecast', async () => {
+describe('upsertFarmWeather', () => {
+  it('inserts every bucket in one statement and overwrites existing rows', async () => {
     const db = mockDeep<WeatherWriteClient>();
     db.$executeRaw.mockResolvedValue(2);
-    const row = (hour: number, value: number | null) => ({
-      time: new Date(Date.UTC(2026, 0, 1, hour)),
-      source: 'archive' as const,
+    const row = (half: number, value: number | null) => ({
+      time: new Date(Date.UTC(2026, 0, 1, 0, 30 * half)),
+      samples: 2,
       windSpeed10mMs: value,
-      windSpeed100mMs: 1,
+      windSpeed80mMs: 1,
       windDirection10mDeg: 1,
-      windDirection100mDeg: 1,
+      windDirection80mDeg: 1,
       windGusts10mMs: 1,
       temperature2mC: 1,
       relativeHumidity2mPct: 1,
@@ -51,8 +51,8 @@ describe('upsertWeatherHours', () => {
       cloudCoverPct: 1,
     });
 
-    // The duplicate hour is sent once (the last one wins).
-    const written = await upsertWeatherHours(db, 'FARM01', [
+    // The duplicate bucket is sent once (the last one wins).
+    const written = await upsertFarmWeather(db, 'FARM01', [
       row(0, 1),
       row(1, null),
       row(0, 3),
@@ -60,23 +60,22 @@ describe('upsertWeatherHours', () => {
 
     expect(written).toBe(2);
     const { text, values } = executed(db);
-    expect(text).toContain(
-      'ON CONFLICT (farm_id, time) DO UPDATE SET wind_speed_10m_ms = EXCLUDED.wind_speed_10m_ms,',
+    expect(text).toContain('INSERT INTO farm_weather (farm_id, time, samples,');
+    expect(text).toMatch(
+      /ON CONFLICT \(farm_id, time\) DO UPDATE SET samples = EXCLUDED\.samples, wind_speed_10m_ms = EXCLUDED\.wind_speed_10m_ms, .*fetched_at = EXCLUDED\.fetched_at$/,
     );
-    expect(text).toContain(
-      "WHERE farm_weather_hourly.source = 'forecast' OR EXCLUDED.source = 'archive'",
-    );
+    expect(text).not.toContain('WHERE farm_weather'); // no archive-wins rule: the newer fetch wins
     expect(values.slice(0, 4)).toEqual([
       'FARM01',
-      ['2026-01-01T00:00:00.000Z', '2026-01-01T01:00:00.000Z'],
-      ['archive', 'archive'],
+      ['2026-01-01T00:00:00.000Z', '2026-01-01T00:30:00.000Z'],
+      [2, 2],
       [3, null],
     ]);
   });
 
   it('writes nothing for no rows', async () => {
     const db = mockDeep<WeatherWriteClient>();
-    expect(await upsertWeatherHours(db, 'FARM01', [])).toBe(0);
+    expect(await upsertFarmWeather(db, 'FARM01', [])).toBe(0);
     expect(db.$executeRaw).not.toHaveBeenCalled();
   });
 });
@@ -89,16 +88,16 @@ describe('syncFarmWeather', () => {
 
   beforeEach(() => {
     db = mockDeep<WeatherWriteClient>();
-    db.$executeRaw.mockImplementation((async () => 24) as never);
+    db.$executeRaw.mockImplementation((async () => 48) as never);
     log = vi.fn<(line: string) => void>();
     sleep.mockClear();
   });
 
-  it('fetches the archive and forecast parts of each farm and stores them', async () => {
+  it('fetches the historical and forecast parts of each farm and stores them', async () => {
     db.farm.findMany.mockResolvedValue([farm('FARM01', '41.25')] as never);
     const fetch = vi.fn(
       async (url: URL) =>
-        new Response(url.host.startsWith('archive') ? ARCHIVE : FORECAST),
+        new Response(url.host.startsWith('historical') ? HISTORICAL : FORECAST),
     );
 
     const result = await syncFarmWeather(db, {
@@ -121,16 +120,16 @@ describe('syncFarmWeather', () => {
         {
           farmId: 'FARM01',
           ok: true,
-          archiveHours: 24,
-          forecastHours: 24,
-          written: 48,
+          historicalBuckets: 48,
+          forecastBuckets: 48,
+          written: 96,
         },
       ],
     });
     expect(db.$executeRaw).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1); // between the two requests
     expect(log).toHaveBeenCalledWith(
-      'FARM01: ok: 24 archive + 24 forecast hours, 48 rows written',
+      'FARM01: ok: 48 historical + 48 forecast 30-minute buckets, 96 rows written',
     );
   });
 
@@ -145,7 +144,7 @@ describe('syncFarmWeather', () => {
         ? new Response('{"error":true,"reason":"Latitude bad"}', {
             status: 400,
           })
-        : new Response(ARCHIVE),
+        : new Response(HISTORICAL),
     );
 
     const result = await syncFarmWeather(db, {
@@ -164,16 +163,16 @@ describe('syncFarmWeather', () => {
       ['FARM03', true],
     ]);
     expect(result.farms[1].error).toBe(
-      'Open-Meteo archive 2026-01-01..2026-01-01: HTTP 400 (Latitude bad)',
+      'Open-Meteo historical 2026-01-01..2026-01-01: HTTP 400 (Latitude bad)',
     );
     expect(log).toHaveBeenCalledWith(
-      'FARM02: failed: Open-Meteo archive 2026-01-01..2026-01-01: HTTP 400 (Latitude bad)',
+      'FARM02: failed: Open-Meteo historical 2026-01-01..2026-01-01: HTTP 400 (Latitude bad)',
     );
   });
 
   it('only syncs the requested farms and reports unknown ones as failures', async () => {
     db.farm.findMany.mockResolvedValue([farm('FARM01', '41.25')] as never);
-    const fetch = vi.fn(async () => new Response(ARCHIVE));
+    const fetch = vi.fn(async () => new Response(HISTORICAL));
 
     const result = await syncFarmWeather(db, {
       from: '2026-01-01',

@@ -25,15 +25,35 @@
     }}</app-stat-tile>
   </section>
 
+  <app-farm-weather [farmId]="farm.id" />
+
   <h2 class="mt-8 mb-3 text-lg font-semibold">Turbines</h2>
-  <app-map-view
-    class="mb-4 block [--map-height:20rem]"
-    [label]="'Map of turbines at ' + farm.name"
-    [markers]="markers()"
-    [legend]="turbines().length ? legend : []"
-    [maxZoom]="13"
-    (markerClick)="onMarkerClick($event)"
-  />
+  <!-- Below the weather: Leaflet loads in its own chunk when the map scrolls into view
+       (prefetched when idle). The placeholder has the map's height and legend row. -->
+  @defer (on viewport; prefetch on idle) {
+    <app-map-view
+      class="mb-4 block [--map-height:20rem]"
+      [label]="'Map of turbines at ' + farm.name"
+      [markers]="markers()"
+      [legend]="turbines().length ? legend : []"
+      [maxZoom]="13"
+      (markerClick)="onMarkerClick($event)"
+    />
+  } @placeholder {
+    <app-map-placeholder class="mb-4 [--map-height:20rem]" [legend]="turbines().length > 0" />
+  } @loading (after 100ms; minimum 300ms) {
+    <app-map-placeholder
+      class="mb-4 [--map-height:20rem]"
+      state="loading"
+      [legend]="turbines().length > 0"
+    />
+  } @error {
+    <app-map-placeholder
+      class="mb-4 [--map-height:20rem]"
+      state="error"
+      [legend]="turbines().length > 0"
+    />
+  }
   @if (turbines().length === 0) {
     <p class="text-muted" data-testid="no-turbines">
       No turbines are registered for this farm yet.

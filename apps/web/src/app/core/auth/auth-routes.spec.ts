@@ -206,8 +206,18 @@ describe('auth routes and role-based UI', () => {
     it('hides Reporting from viewers and keeps them out of /reporting', async () => {
       await open('/reporting', 'viewer');
       expect(url()).toBe('/farms');
-      expect(navIds()).toEqual(['nav-farms', 'nav-turbines', 'nav-alerting']);
+      expect(navIds()).toEqual(['nav-farms', 'nav-turbines', 'nav-alerting', 'nav-settings']);
     });
+
+    it.each(['viewer', 'owner', 'admin'] as const)(
+      'shows Settings (last) to the %s and opens it',
+      async (role) => {
+        await open('/settings', role);
+        expect(url()).toBe('/settings');
+        expect(navIds().at(-1)).toBe('nav-settings');
+        expect(app.root().querySelector('[data-testid=time-zone]')).not.toBeNull();
+      },
+    );
 
     it.each(['owner', 'admin'] as const)('shows Reporting to the %s', async (role) => {
       await open('/reporting', role);

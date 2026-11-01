@@ -1,7 +1,7 @@
 <h1 class="text-3xl font-bold">Unallocated turbines</h1>
 <p class="mt-1 text-sm text-muted">
   Readings from these turbines that report these farms are dropped on arrival. Unblock one to see
-  its next readings under Pending again. Times are UTC.
+  its next readings under Pending again. Times are {{ tz.label() }}.
 </p>
 
 <app-unallocated-tabs />
@@ -70,9 +70,9 @@
         </td>
       </ng-container>
       <ng-container matColumnDef="blockedAt">
-        <th mat-header-cell *matHeaderCellDef>Blocked (UTC)</th>
+        <th mat-header-cell *matHeaderCellDef>Blocked ({{ tz.tag() }})</th>
         <td mat-cell *matCellDef="let entry" class="tabular-nums" data-testid="blocked-at">
-          {{ entry.blockedAt ? time(entry.blockedAt) : '–' }}
+          {{ entry.blockedAt ? (entry.blockedAt | appTime: 'MMM d, HH:mm') : '–' }}
         </td>
       </ng-container>
       <ng-container matColumnDef="blockedBy">

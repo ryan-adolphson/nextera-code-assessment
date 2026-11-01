@@ -159,6 +159,17 @@ describe('CSV', () => {
 
   it('names the file after the scope and the chosen days (to is exclusive)', () => {
     expect(csvFileName(report('turbine', []))).toBe('report-TURB002-2026-01-01-2026-01-02.csv');
+    // Local days: Jan 1–2 in Chicago are [Jan 1 06:00Z, Jan 3 06:00Z).
+    expect(
+      csvFileName(
+        {
+          ...report('turbine', []),
+          from: '2026-01-01T06:00:00.000Z',
+          to: '2026-01-03T06:00:00.000Z',
+        },
+        'America/Chicago',
+      ),
+    ).toBe('report-TURB002-2026-01-01-2026-01-02.csv');
   });
 
   it('downloads through a temporary object URL and link', () => {

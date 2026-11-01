@@ -7,6 +7,7 @@ import { DEMO_SEED, DEMO_TURBINES } from '../src/seed/demo-fleet.js';
 import { DEMO_UNALLOCATED } from '../src/seed/demo-unallocated.js';
 import {
   DEMO_ANOMALIES,
+  demoReportingLagMinutes,
   generateTelemetry,
 } from '../src/seed/generate-telemetry.js';
 import { importHeld, lockUnallocated } from '../src/wind/unallocated.js';
@@ -149,14 +150,17 @@ describe('demo seed (e2e)', () => {
       ]),
     ]);
 
-    // The newest reading is at SEED_NOW; the stopped turbine's is 40 min older.
+    // The newest reading is at SEED_NOW, except the stale turbines: the stopped one 90 min
+    // older, the lagging ones 20 and 45 min.
     const { rows: latest } = await m.db.query(`
       SELECT turbine_id, max(timestamp) AS latest FROM telemetry GROUP BY turbine_id`);
+    expect(latest).toHaveLength(DEMO_TURBINES.length);
     for (const { turbine_id, latest: at } of latest) {
       expect(minutesBefore(at), turbine_id).toBe(
-        turbine_id === DEMO_ANOMALIES.stopped.turbineId ? 40 : 0,
+        demoReportingLagMinutes(turbine_id),
       );
     }
+    expect(demoReportingLagMinutes(DEMO_ANOMALIES.stopped.turbineId)).toBe(90);
   });
 
   it('inserts nothing on a second run with the same SEED_NOW', async () => {

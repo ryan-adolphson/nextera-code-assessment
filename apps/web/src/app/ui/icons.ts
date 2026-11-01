@@ -9,6 +9,7 @@ import help from '@material-symbols/svg-400/outlined/help.svg';
 import map from '@material-symbols/svg-400/outlined/map.svg';
 import menu from '@material-symbols/svg-400/outlined/menu.svg';
 import notifications from '@material-symbols/svg-400/outlined/notifications.svg';
+import settings from '@material-symbols/svg-400/outlined/settings.svg';
 import windPower from '@material-symbols/svg-400/outlined/wind_power.svg';
 
 /**
@@ -24,6 +25,7 @@ export const ICONS = {
   map,
   menu,
   notifications,
+  settings,
   'wind-power': windPower,
 } as const satisfies Record<string, string>;
 

@@ -6,6 +6,7 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import { filter } from 'rxjs';
 import { AuthStore } from '../core/auth/auth.store';
 import { ROLE_LABELS, Role } from '../core/auth/roles';
+import { TimeZoneSettings } from '../core/time-zone';
 import { IconName } from '../ui/icons';
 import { FleetStore, LiveStatus } from './fleet.store';
 
@@ -38,6 +39,7 @@ export const NAV_ITEMS = [
     minRole: 'owner',
   },
   { id: 'reporting', path: '/reporting', label: 'Reporting', icon: 'bar-chart', minRole: 'owner' },
+  { id: 'settings', path: '/settings', label: 'Settings', icon: 'settings', minRole: 'viewer' },
 ] as const satisfies readonly {
   id: string;
   path: string;
@@ -87,6 +89,9 @@ export class FleetShell implements OnInit {
   });
 
   constructor() {
+    // Times follow the signed-in user's setting (saved per user in this browser). Set before any
+    // page renders; signing out destroys the shell, and the next sign-in creates a new one.
+    inject(TimeZoneSettings).useAccount(this.auth.user()?.email ?? null);
     this.router.events
       .pipe(
         filter((e) => e instanceof NavigationEnd),

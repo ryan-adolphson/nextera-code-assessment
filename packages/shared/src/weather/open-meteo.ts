@@ -1,34 +1,37 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import type { WeatherSource } from '../generated/prisma/enums.js';
 
 /**
- * Open-Meteo client for the farm weather dataset (hourly rows in farm_weather_hourly).
+ * Open-Meteo client for the farm weather dataset (30-minute rows in farm_weather).
  *
- * - Days older than ARCHIVE_LAG_DAYS come from the Historical Weather API (ERA5 reanalysis, about
- *   5 days behind): `source = 'archive'`, final.
- * - More recent days (up to today) come from the Forecast API with start_date/end_date (it serves
- *   the last ~3 months of past days as well as the forecast): `source = 'forecast'`, replaced by
- *   the archive once it covers them.
+ * Only the forecast models, at 15-minute resolution (`minutely_15`; native in North America and
+ * Central Europe, interpolated from hourly elsewhere), two APIs with the same models and response:
+ * - days older than HISTORICAL_LAG_DAYS come from the Historical Forecast API (the archived
+ *   forecasts, from about 2022);
+ * - the more recent days (up to today) from the Forecast API with start_date/end_date.
+ * There is no reanalysis (ERA5): a later fetch of a day simply overwrites its rows.
+ *
+ * Each pair of 15-minute values (:00 + :15, :30 + :45) is aggregated into one 30-minute bucket
+ * (`toHalfHourBuckets`).
  *
  * Licence: the free API is for non-commercial use only (about 10k calls a day). With an API key
  * the paid `customer-*` hosts are used with `&apikey=`.
  */
 
-/** Days older than this many days (before today − 5, UTC) are read from the archive. */
-export const ARCHIVE_LAG_DAYS = 5;
-/** The widest single request (archive): longer ranges are split. */
-export const MAX_REQUEST_DAYS = 366;
+/** Days before today − 5 (UTC) are read from the Historical Forecast API, the rest from the Forecast API. */
+export const HISTORICAL_LAG_DAYS = 5;
+/** The widest single request (about 9k 15-minute steps): longer ranges are split. */
+export const MAX_REQUEST_DAYS = 92;
 export const OPEN_METEO_TIMEOUT_MS = 15_000;
 export const OPEN_METEO_ATTEMPTS = 3;
 /** Backoff before the 2nd and 3rd attempt: 1 s, then 2 s. */
 export const OPEN_METEO_BACKOFF_MS = 1_000;
 
-/** Fields of an hour of weather (Prisma names of farm_weather_hourly's metric columns). */
+/** Fields of a 30-minute bucket (Prisma names of farm_weather's metric columns). */
 export type WeatherMetric =
   | 'windSpeed10mMs'
-  | 'windSpeed100mMs'
+  | 'windSpeed80mMs'
   | 'windDirection10mDeg'
-  | 'windDirection100mDeg'
+  | 'windDirection80mDeg'
   | 'windGusts10mMs'
   | 'temperature2mC'
   | 'relativeHumidity2mPct'
@@ -36,73 +39,101 @@ export type WeatherMetric =
   | 'precipitationMm'
   | 'cloudCoverPct';
 
+/** How the two 15-minute values of a bucket become one: mean, max, sum or vector mean (directions). */
+export type WeatherAggregate = 'mean' | 'max' | 'sum' | 'direction';
+
 /**
- * Each stored metric: the Open-Meteo hourly variable (with `wind_speed_unit=ms`), the Prisma field
- * and the column. Fixed constants, so SQL built from `column` is safe.
+ * Each stored metric: the Open-Meteo `minutely_15` variable (with `wind_speed_unit=ms`), the Prisma
+ * field, the column and the 30-minute aggregate. Fixed constants, so SQL built from `column` is safe.
  */
 export const WEATHER_VARIABLES: readonly {
   api: string;
   field: WeatherMetric;
   column: string;
+  aggregate: WeatherAggregate;
 }[] = [
   {
     api: 'wind_speed_10m',
     field: 'windSpeed10mMs',
     column: 'wind_speed_10m_ms',
+    aggregate: 'mean',
   },
   {
-    api: 'wind_speed_100m',
-    field: 'windSpeed100mMs',
-    column: 'wind_speed_100m_ms',
+    api: 'wind_speed_80m',
+    field: 'windSpeed80mMs',
+    column: 'wind_speed_80m_ms',
+    aggregate: 'mean',
   },
   {
     api: 'wind_direction_10m',
     field: 'windDirection10mDeg',
     column: 'wind_direction_10m_deg',
+    aggregate: 'direction',
   },
   {
-    api: 'wind_direction_100m',
-    field: 'windDirection100mDeg',
-    column: 'wind_direction_100m_deg',
+    api: 'wind_direction_80m',
+    field: 'windDirection80mDeg',
+    column: 'wind_direction_80m_deg',
+    aggregate: 'direction',
   },
   {
     api: 'wind_gusts_10m',
     field: 'windGusts10mMs',
     column: 'wind_gusts_10m_ms',
+    aggregate: 'max',
   },
   {
     api: 'temperature_2m',
     field: 'temperature2mC',
     column: 'temperature_2m_c',
+    aggregate: 'mean',
   },
   {
     api: 'relative_humidity_2m',
     field: 'relativeHumidity2mPct',
     column: 'relative_humidity_2m_pct',
+    aggregate: 'mean',
   },
   {
     api: 'surface_pressure',
     field: 'surfacePressureHpa',
     column: 'surface_pressure_hpa',
+    aggregate: 'mean',
   },
   {
     api: 'precipitation',
     field: 'precipitationMm',
     column: 'precipitation_mm',
+    aggregate: 'sum',
   },
-  { api: 'cloud_cover', field: 'cloudCoverPct', column: 'cloud_cover_pct' },
+  {
+    api: 'cloud_cover',
+    field: 'cloudCoverPct',
+    column: 'cloud_cover_pct',
+    aggregate: 'mean',
+  },
 ];
 
-/** One hour of weather as stored (farm_weather_hourly without farm_id and fetched_at). */
-export type WeatherHourRow = {
-  /** Start of the UTC hour. */
+/** One 15-minute value set as Open-Meteo returns it (UTC). */
+export type WeatherSample = { time: Date } & Record<
+  WeatherMetric,
+  number | null
+>;
+
+/** One 30-minute bucket as stored (farm_weather without farm_id and fetched_at). */
+export type WeatherBucketRow = {
+  /** Start of the UTC bucket (:00 or :30). */
   time: Date;
-  source: WeatherSource;
+  /** 15-minute value sets with at least one value (1 or 2). */
+  samples: number;
 } & Record<WeatherMetric, number | null>;
+
+/** Which Open-Meteo API a request goes to (not stored: both serve the same forecast models). */
+export type WeatherApi = 'historical' | 'forecast';
 
 /** One Open-Meteo request: whole UTC days, `from`..`to` inclusive (YYYY-MM-DD). */
 export interface WeatherRequest {
-  source: WeatherSource;
+  api: WeatherApi;
   from: string;
   to: string;
 }
@@ -131,9 +162,9 @@ const daysBetween = (from: string, to: string) =>
   );
 
 /**
- * Splits the UTC days `from`..`to` (inclusive) into Open-Meteo requests: archive for days before
- * today − ARCHIVE_LAG_DAYS, in chunks of at most MAX_REQUEST_DAYS, then one forecast request for the
- * rest. `to` may not be after today.
+ * Splits the UTC days `from`..`to` (inclusive) into Open-Meteo requests: the Historical Forecast
+ * API for days before today − HISTORICAL_LAG_DAYS, in chunks of at most MAX_REQUEST_DAYS, then one
+ * Forecast API request for the rest. `to` may not be after today.
  */
 export function planRequests(
   from: string,
@@ -147,20 +178,21 @@ export function planRequests(
   const today = utcDay(now);
   if (to > today) throw new RangeError(`to must not be after today (${today})`);
 
-  const firstForecastDay = addDays(today, -ARCHIVE_LAG_DAYS);
+  const firstForecastDay = addDays(today, -HISTORICAL_LAG_DAYS);
   const requests: WeatherRequest[] = [];
-  const archiveEnd = to < firstForecastDay ? to : addDays(firstForecastDay, -1);
-  for (let start = from; start <= archiveEnd;) {
+  const historicalEnd =
+    to < firstForecastDay ? to : addDays(firstForecastDay, -1);
+  for (let start = from; start <= historicalEnd;) {
     const end =
-      daysBetween(start, archiveEnd) < MAX_REQUEST_DAYS
-        ? archiveEnd
+      daysBetween(start, historicalEnd) < MAX_REQUEST_DAYS
+        ? historicalEnd
         : addDays(start, MAX_REQUEST_DAYS - 1);
-    requests.push({ source: 'archive', from: start, to: end });
+    requests.push({ api: 'historical', from: start, to: end });
     start = addDays(end, 1);
   }
   if (to >= firstForecastDay) {
     requests.push({
-      source: 'forecast',
+      api: 'forecast',
       from: from > firstForecastDay ? from : firstForecastDay,
       to,
     });
@@ -197,15 +229,15 @@ export interface FetchFarmWeatherOptions extends WeatherRequest {
  * when given, switches to the paid customer-* host.
  */
 export function buildOpenMeteoUrl(options: FetchFarmWeatherOptions): URL {
-  const archive = options.source === 'archive';
-  const host = `${options.apiKey ? 'customer-' : ''}${archive ? 'archive-api' : 'api'}.open-meteo.com`;
-  const url = new URL(`https://${host}/v1/${archive ? 'archive' : 'forecast'}`);
+  const historical = options.api === 'historical';
+  const host = `${options.apiKey ? 'customer-' : ''}${historical ? 'historical-forecast-api' : 'api'}.open-meteo.com`;
+  const url = new URL(`https://${host}/v1/forecast`);
   const params = url.searchParams;
   params.set('latitude', String(options.latitude));
   params.set('longitude', String(options.longitude));
   params.set('start_date', options.from);
   params.set('end_date', options.to);
-  params.set('hourly', WEATHER_VARIABLES.map((v) => v.api).join(','));
+  params.set('minutely_15', WEATHER_VARIABLES.map((v) => v.api).join(','));
   params.set('timezone', 'UTC');
   params.set('wind_speed_unit', 'ms');
   params.set('timeformat', 'iso8601');
@@ -214,21 +246,20 @@ export function buildOpenMeteoUrl(options: FetchFarmWeatherOptions): URL {
 }
 
 /**
- * Fetches the hourly weather of one location for whole UTC days and maps it to rows. Retries 429,
- * 5xx, network errors and timeouts (OPEN_METEO_ATTEMPTS, backoff 1 s, 2 s); any other status or a
- * malformed body fails at once. Hours with no value at all are dropped (an empty archive row would
- * otherwise block the forecast for that hour).
+ * Fetches the 15-minute weather of one location for whole UTC days and aggregates it into 30-minute
+ * buckets. Retries 429, 5xx, network errors and timeouts (OPEN_METEO_ATTEMPTS, backoff 1 s, 2 s);
+ * any other status or a malformed body fails at once. Buckets without any value are dropped.
  */
 export async function fetchFarmWeather(
   options: FetchFarmWeatherOptions,
-): Promise<WeatherHourRow[]> {
+): Promise<WeatherBucketRow[]> {
   const {
     fetch: fetchFn = fetch,
     sleep = (ms: number) => delay(ms),
     timeoutMs = OPEN_METEO_TIMEOUT_MS,
   } = options;
   const url = buildOpenMeteoUrl(options);
-  const what = `${options.source} ${options.from}..${options.to}`;
+  const what = `${options.api} ${options.from}..${options.to}`;
 
   let lastError: OpenMeteoError | undefined;
   for (let attempt = 1; attempt <= OPEN_METEO_ATTEMPTS; attempt++) {
@@ -266,7 +297,7 @@ export async function fetchFarmWeather(
     } catch {
       throw new OpenMeteoError(`Open-Meteo ${what}: the body is not JSON`);
     }
-    return parseHourly(body, options.source, what);
+    return toHalfHourBuckets(parseMinutely15(body, what));
   }
   throw lastError!;
 }
@@ -284,32 +315,33 @@ async function errorReason(response: Response): Promise<string> {
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const HOUR_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+const TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 
 /**
- * Validates an Open-Meteo response by hand (`hourly.time` and one array per variable, all the same
- * length, numbers or null, UTC times) and maps it to rows.
+ * Validates an Open-Meteo response by hand (`minutely_15.time` and one array per variable, all the
+ * same length, numbers or null, UTC times) and maps it to 15-minute value sets.
  */
-export function parseHourly(
+export function parseMinutely15(
   body: unknown,
-  source: WeatherSource,
-  what: string = source,
-): WeatherHourRow[] {
+  what: string = 'response',
+): WeatherSample[] {
   const fail = (problem: string) =>
     new OpenMeteoError(`Open-Meteo ${what}: unexpected response (${problem})`);
-  if (!isObject(body) || !isObject(body.hourly)) throw fail('no hourly object');
+  if (!isObject(body) || !isObject(body.minutely_15)) {
+    throw fail('no minutely_15 object');
+  }
   if (body.utc_offset_seconds !== undefined && body.utc_offset_seconds !== 0) {
     throw fail('times are not UTC');
   }
-  const { hourly } = body;
-  const times = hourly.time;
-  if (!Array.isArray(times)) throw fail('hourly.time is not an array');
+  const series = body.minutely_15;
+  const times = series.time;
+  if (!Array.isArray(times)) throw fail('minutely_15.time is not an array');
   const columns = WEATHER_VARIABLES.map(({ api }) => {
-    const values = hourly[api];
-    if (!Array.isArray(values)) throw fail(`hourly.${api} is missing`);
+    const values = series[api];
+    if (!Array.isArray(values)) throw fail(`minutely_15.${api} is missing`);
     if (values.length !== times.length) {
       throw fail(
-        `hourly.${api} has ${values.length} values for ${times.length} times`,
+        `minutely_15.${api} has ${values.length} values for ${times.length} times`,
       );
     }
     for (const value of values) {
@@ -317,25 +349,84 @@ export function parseHourly(
         value !== null &&
         (typeof value !== 'number' || !Number.isFinite(value))
       ) {
-        throw fail(`hourly.${api} has a non-numeric value`);
+        throw fail(`minutely_15.${api} has a non-numeric value`);
       }
     }
     return values as (number | null)[];
   });
 
-  const rows: WeatherHourRow[] = [];
-  times.forEach((time, i) => {
-    if (typeof time !== 'string' || !HOUR_PATTERN.test(time)) {
+  return times.map((time, i) => {
+    if (typeof time !== 'string' || !TIME_PATTERN.test(time)) {
       throw fail(`bad time ${JSON.stringify(time)}`);
     }
     const at = new Date(`${time}:00Z`);
-    if (Number.isNaN(at.getTime()))
+    if (Number.isNaN(at.getTime()) || at.getUTCMinutes() % 15 !== 0) {
       throw fail(`bad time ${JSON.stringify(time)}`);
-    const values = columns.map((column) => column[i]);
-    if (values.every((value) => value === null)) return;
-    const row = { time: at, source } as WeatherHourRow;
-    WEATHER_VARIABLES.forEach(({ field }, j) => (row[field] = values[j]));
-    rows.push(row);
+    }
+    const sample = { time: at } as WeatherSample;
+    WEATHER_VARIABLES.forEach(
+      ({ field }, j) => (sample[field] = columns[j][i]),
+    );
+    return sample;
   });
-  return rows;
+}
+
+const HALF_HOUR_MS = 30 * 60 * 1000;
+
+/** Rounded to 2 decimals (means of doubles carry float noise). */
+const round2 = (value: number) => Math.round(value * 100) / 100;
+
+function aggregate(kind: WeatherAggregate, values: number[]): number | null {
+  if (!values.length) return null;
+  switch (kind) {
+    case 'mean':
+      return round2(values.reduce((a, b) => a + b, 0) / values.length);
+    case 'max':
+      return Math.max(...values);
+    case 'sum':
+      return round2(values.reduce((a, b) => a + b, 0));
+    case 'direction': {
+      const rad = values.map((v) => (v * Math.PI) / 180);
+      const sin = rad.reduce((a, r) => a + Math.sin(r), 0);
+      const cos = rad.reduce((a, r) => a + Math.cos(r), 0);
+      // 359.999 rounds to 360, which is north: report it as 0.
+      return round2(((Math.atan2(sin, cos) * 180) / Math.PI + 360) % 360) % 360;
+    }
+  }
+}
+
+/**
+ * Aggregates 15-minute value sets into 30-minute UTC buckets starting at :00 and :30, oldest first:
+ * per metric the mean (gusts: max, precipitation: sum, directions: vector mean) of the values
+ * present; `samples` = the value sets with at least one value. Buckets without any value are
+ * dropped.
+ */
+export function toHalfHourBuckets(
+  samples: readonly WeatherSample[],
+): WeatherBucketRow[] {
+  const buckets = new Map<number, WeatherSample[]>();
+  for (const sample of samples) {
+    if (WEATHER_VARIABLES.every(({ field }) => sample[field] === null))
+      continue;
+    const start =
+      Math.floor(sample.time.getTime() / HALF_HOUR_MS) * HALF_HOUR_MS;
+    const bucket = buckets.get(start);
+    if (bucket) bucket.push(sample);
+    else buckets.set(start, [sample]);
+  }
+  return [...buckets.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([start, members]) => {
+      const row = {
+        time: new Date(start),
+        samples: members.length,
+      } as WeatherBucketRow;
+      for (const { field, aggregate: kind } of WEATHER_VARIABLES) {
+        row[field] = aggregate(
+          kind,
+          members.flatMap((m) => (m[field] === null ? [] : [m[field]])),
+        );
+      }
+      return row;
+    });
 }

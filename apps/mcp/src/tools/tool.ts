@@ -21,6 +21,14 @@ export interface ToolDefinition<Shape extends z.ZodRawShape> {
   description: string;
   /** The fields; `defineTool` makes them a strict object, so unknown arguments are rejected. */
   inputSchema: Shape;
+  /**
+   * A rule across fields that only this tool has (e.g. "exactly one of farmId and turbineId"):
+   * the problem as a message, or undefined. Checked by the schema, so the SDK rejects the call
+   * before `run`. Rules the API shares belong in the shared query instead (QueryInputError).
+   */
+  refine?: (
+    args: z.output<z.ZodObject<Shape, z.core.$strict>>,
+  ) => string | undefined;
   run(
     ctx: ToolContext,
     args: z.output<z.ZodObject<Shape, z.core.$strict>>,
@@ -49,7 +57,14 @@ export interface Tool {
 export function defineTool<Shape extends z.ZodRawShape>(
   definition: ToolDefinition<Shape>,
 ): Tool {
-  const inputSchema = z.strictObject(definition.inputSchema);
+  const { refine } = definition;
+  const strict = z.strictObject(definition.inputSchema);
+  const inputSchema = refine
+    ? strict.superRefine((args, ctx) => {
+        const message = refine(args);
+        if (message) ctx.addIssue({ code: 'custom', message });
+      })
+    : strict;
   return {
     name: definition.name,
     title: definition.title,

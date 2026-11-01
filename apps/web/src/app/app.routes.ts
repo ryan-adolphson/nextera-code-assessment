@@ -86,6 +86,11 @@ export const routes: Routes = [
         canMatch: [roleGuard('owner')], // owners and admins (the API answers viewers 404)
         loadComponent: () => import('./reporting/reporting-page').then((m) => m.ReportingPage),
       },
+      {
+        path: 'settings',
+        title: 'Settings · Nextera',
+        loadComponent: () => import('./settings/settings-page').then((m) => m.SettingsPage),
+      },
     ],
   },
   { path: '**', redirectTo: 'farms' },

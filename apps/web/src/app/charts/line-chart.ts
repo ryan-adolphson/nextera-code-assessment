@@ -52,6 +52,7 @@ import {
 } from './chart-options';
 import { ChartTheme, MarkerLevel, readTheme } from './chart-theme';
 import { candleSpan, candleTooltip, tooltipContent } from './chart-tooltips';
+import { TimeZoneSettings } from '../core/time-zone';
 
 export type { ChartKind } from './chart-options';
 export type { ChartTheme, MarkerLevel } from './chart-theme';
@@ -117,12 +118,27 @@ export interface ChartMarker {
 }
 
 /**
+ * A second, reference line drawn over the readings in the same unit (e.g. modelled wind against
+ * the measured wind), in its own colour with a legend entry, its value in the tooltip and the
+ * aria-label. Only the readings are hovered and zoomed; the overlay just follows the time axis.
+ */
+export interface ChartOverlay {
+  /** Its name in the legend, tooltip and aria-label, e.g. "Open-Meteo 80 m (farm)". */
+  label: string;
+  /** Ascending by t. */
+  points: ChartPoint[];
+  /** The spacing of the points: the line breaks where one is missing, and the tooltip shows the
+   *  point within half a step of the hovered time. */
+  stepMs: number;
+}
+
+/**
  * Single-series line chart (Apache ECharts, SVG renderer) for one metric over time; small
  * multiples share `domain`.
  * - 2px line that breaks at gaps (missing readings are shown, not interpolated); isolated
  *   readings as dots; an 8px end dot with a surface ring; latest value labelled in the header.
  * - The y-axis spans the data range ±10%, so the line never touches the frame. Hairline grid,
- *   round y ticks and UTC time ticks (our own tick values via `customValues`).
+ *   round y ticks and time ticks in the zone shown (Settings) (our own tick values via `customValues`).
  * - Crosshair + tooltip snapping to the nearest reading. `hoverT` is an input/output pair so
  *   several charts share one crosshair. Keyboard: focus the chart, then ←/→, Home/End, Esc.
  * - Optional `stats` (median/high/low of the whole selected range, not the zoomed window) as
@@ -134,7 +150,7 @@ export interface ChartMarker {
  *   points of interest such as readings that triggered alerts; a legend names the levels shown,
  *   and each marker's `lines` join the tooltip and the aria-label (colour is never the only cue).
  * - With `decimals` 0 (counts), the y-axis ticks are whole numbers.
- * - `kind: 'candlestick'`: the readings become UTC-aligned candles (open = first, close = last
+ * - `kind: 'candlestick'`: the readings become candles aligned in the zone shown (open = first, close = last
  *   reading of each bucket, plus low/high; the size adapts to the range, about 24–48 candles),
  *   hollow when rising and solid when falling (no red/green: those are status colours); the
  *   crosshair snaps to candle centres. Dragging over the plot draws a horizontal brush (ECharts
@@ -168,9 +184,13 @@ export class LineChart {
   readonly markers = input<ChartMarker[]>([]);
   /** Line or candlestick (fixed for the chart's lifetime: read when ECharts is created). */
   readonly kind = input<ChartKind>('line');
+  /** A reference line over the readings (same unit), or null. */
+  readonly overlay = input<ChartOverlay | null>(null);
 
   private readonly plot = viewChild.required<ElementRef<HTMLElement>>('plot');
   private readonly destroyRef = inject(DestroyRef);
+  /** The zone times are shown in (Settings): ticks, candles and tooltips follow it. */
+  private readonly zone = inject(TimeZoneSettings).zone;
   /** The ECharts instance (exposed for tests). */
   chart?: echarts.ECharts;
   /** Index (in the series data) of the reading under the crosshair, -1 for none. */
@@ -198,7 +218,7 @@ export class LineChart {
   });
   protected readonly candleLabel = computed(() => formatDuration(this.candleMs()));
   protected readonly candles = computed(() =>
-    this.kind() === 'candlestick' ? toCandles(this.visible(), this.candleMs()) : [],
+    this.kind() === 'candlestick' ? toCandles(this.visible(), this.candleMs(), this.zone()) : [],
   );
   private readonly candleAt = computed(() => new Map(this.candles().map((c) => [c.t, c])));
   /** What the crosshair snaps to: the readings, or the candle centres (value = close). */
@@ -211,6 +231,21 @@ export class LineChart {
     const { from, to } = this.domain();
     return this.markers().filter((m) => m.t >= from && m.t <= to);
   });
+  /** The overlay's points inside the domain. */
+  private readonly overlayVisible = computed(() => {
+    const overlay = this.overlay();
+    if (!overlay) return [];
+    const { from, to } = this.domain();
+    return overlay.points.filter((p) => p.t >= from && p.t <= to);
+  });
+  private readonly overlayData = computed(() => {
+    const overlay = this.overlay();
+    return overlay ? withGapBreaks(this.overlayVisible(), overlay.stepMs * 1.5) : [];
+  });
+  /** The legend of a chart with an overlay: the readings, then the overlay. */
+  protected readonly overlayLabel = computed(() =>
+    this.overlay() && this.overlayVisible().length ? this.overlay()!.label : null,
+  );
   private readonly markerAt = computed(() => new Map(this.visibleMarkers().map((m) => [m.t, m])));
   /** The marker levels shown, worst first, with their counts (the legend). */
   protected readonly markerLegend = computed(() =>
@@ -241,6 +276,7 @@ export class LineChart {
     const values = this.visible().map((p) => p.v);
     if (!values.length) return null;
     values.push(...this.statLines().map((line) => line.value));
+    values.push(...this.overlayVisible().map((p) => p.v));
     return paddedRange(Math.min(...values), Math.max(...values));
   });
   protected readonly last = computed(() => this.visible().at(-1) ?? null);
@@ -265,15 +301,22 @@ export class LineChart {
       this.kind() === 'candlestick'
         ? `${this.visible().length} readings in ${this.candles().length} ${this.candleLabel()} candles.`
         : `${this.visible().length} readings.`;
+    const overlayLast = this.overlayVisible().at(-1);
+    const overlay =
+      overlayLast && this.overlayLabel()
+        ? ` ${this.overlayLabel()}: latest ${this.withUnit(overlayLast.v)} at ${formatTimestamp(overlayLast.t, this.zone())}.`
+        : '';
     const summary = last
-      ? `${this.title()}: latest ${this.format(last.v)} ${this.unit()} at ${formatTimestamp(last.t)}. ${count}${stats}${flagged}`
+      ? `${this.title()}: latest ${this.format(last.v)} ${this.unit()} at ${formatTimestamp(last.t, this.zone())}. ${count}${stats}${flagged}${overlay}`
       : `${this.title()}: no readings in this range.`;
     if (!hovered) return summary;
+    const extra = this.extraLines(hovered.t);
+    const details = extra.length ? ` ${extra.join('. ')}.` : '';
     const candle = this.candleAt().get(hovered.t);
-    if (candle) return `${summary} Selected: ${this.describeCandle(candle)}.`;
+    if (candle) return `${summary} Selected: ${this.describeCandle(candle)}.${details}`;
     const marker = this.markerAt().get(hovered.t);
-    const details = marker?.lines.length ? ` ${marker.lines.join('. ')}.` : '';
-    return `${summary} Selected: ${this.format(hovered.v)} ${this.unit()} at ${formatTimestamp(hovered.t)}.${details}`;
+    const flaggedLines = marker?.lines.length ? ` ${marker.lines.join('. ')}.` : '';
+    return `${summary} Selected: ${this.format(hovered.v)} ${this.unit()} at ${formatTimestamp(hovered.t, this.zone())}.${flaggedLines}${details}`;
   });
 
   constructor() {
@@ -283,12 +326,15 @@ export class LineChart {
       this.watchColorScheme();
     });
 
-    // Data, domain, stats or formatting changed: redraw.
+    // Data, domain, stats, formatting or the time zone (ticks, candles) changed: redraw.
     effect(() => {
       this.data();
+      this.candles();
+      this.zone();
       this.domain();
       this.statLines();
       this.visibleMarkers();
+      this.overlayData();
       this.decimals();
       this.unit();
       untracked(() => this.render());
@@ -309,6 +355,25 @@ export class LineChart {
     this.destroyRef.onDestroy(() => this.chart?.dispose());
   }
 
+  /** "9.4 m/s": a value with the chart's decimals and unit. */
+  private withUnit(v: number): string {
+    return `${this.format(v)} ${this.unit()}`.trim();
+  }
+
+  /**
+   * The tooltip line of the overlay at time t: its point within half a step
+   * ("Open-Meteo 80 m (farm): 9.4 m/s"), or none.
+   */
+  private extraLines(t: number): string[] {
+    const overlay = this.overlay();
+    const points = this.overlayVisible();
+    if (!overlay || !points.length) return [];
+    const nearest = points[nearestIndex(points, t)];
+    return Math.abs(nearest.t - t) <= overlay.stepMs / 2
+      ? [`${overlay.label}: ${this.withUnit(nearest.v)}`]
+      : [];
+  }
+
   protected format(v: number): string {
     return v.toLocaleString('en-US', {
       minimumFractionDigits: this.decimals(),
@@ -316,7 +381,7 @@ export class LineChart {
     });
   }
 
-  /** "Jan 2, 03:00–03:30 UTC: start 82.1, end 90.0, low 81.9, high 126.5 °C (4 readings)". */
+  /** "Jan 2, 03:00–03:30 UTC (or the local zone): start 82.1, end 90.0, low 81.9, high 126.5 °C (4 readings)". */
   protected describeCandle(c: Candle): string {
     const values = (
       [
@@ -329,7 +394,7 @@ export class LineChart {
       .map(([key, label]) => `${label} ${this.format(c[key])}`)
       .join(', ');
     const unit = this.unit() ? ` ${this.unit()}` : '';
-    return `${candleSpan(c)}: ${values}${unit} (${c.count} ${c.count === 1 ? 'reading' : 'readings'})`;
+    return `${candleSpan(c, this.zone())}: ${values}${unit} (${c.count} ${c.count === 1 ? 'reading' : 'readings'})`;
   }
 
   /**
@@ -440,6 +505,7 @@ export class LineChart {
             itemStyle: { color: this.theme.levels[m.level] },
           })),
         },
+        { id: 'overlay', data: this.overlayData().map((d) => [d.x, d.y]) },
       ],
     });
     this.applyView();
@@ -483,13 +549,13 @@ export class LineChart {
     this.updateTicks();
   }
 
-  /** Our own round y ticks and UTC time ticks for the visible window and chart width. */
+  /** Our own round y ticks and time ticks (in the zone shown) for the visible window and chart width. */
   private updateTicks(): void {
     const chart = this.chart;
     if (!chart) return;
     const { from, to } = this.visibleRange().range;
     const y = this.yBounds();
-    const xTicks = timeTicks(from, to, chart.getWidth() || 640);
+    const xTicks = timeTicks(from, to, chart.getWidth() || 640, undefined, this.zone());
     this.xLabels = new Map(xTicks.map((tick) => [tick.t, tick.label]));
     const xValues = xTicks.map((tick) => tick.t);
     // Counts (no decimals) get whole-number ticks only.
@@ -581,10 +647,22 @@ export class LineChart {
     const [first] = params as { value: [number, number | null] }[];
     const [t, v] = first?.value ?? [];
     const candle = t == null ? undefined : this.candleAt().get(t);
-    if (candle) return candleTooltip(candle, (key) => this.format(candle[key]), this.unit());
+    if (candle)
+      return candleTooltip(
+        candle,
+        (key) => this.format(candle[key]),
+        this.unit(),
+        this.zone(),
+        this.extraLines(t!),
+      );
     return t == null || v == null
       ? ''
-      : tooltipContent(`${this.format(v)} ${this.unit()}`, t, this.markerAt().get(t)?.lines ?? []);
+      : tooltipContent(
+          `${this.format(v)} ${this.unit()}`,
+          t,
+          [...(this.markerAt().get(t)?.lines ?? []), ...this.extraLines(t)],
+          this.zone(),
+        );
   }
 
   private applyTheme(chart: echarts.ECharts, theme: ChartTheme): void {

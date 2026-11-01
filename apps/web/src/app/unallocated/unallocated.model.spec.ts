@@ -5,7 +5,6 @@ import {
   importedText,
   isEntryGone,
   outcomeNotice,
-  utcTime,
 } from './unallocated.model';
 
 const resolution = (overrides: Partial<UnallocatedResolution> = {}): UnallocatedResolution => ({
@@ -71,9 +70,5 @@ describe('unallocated model', () => {
     expect(isEntryGone(notFound('Farm FARM09 not found'))).toBe(false);
     expect(isEntryGone(new HttpErrorResponse({ status: 409 }))).toBe(false);
     expect(isEntryGone(new Error('boom'))).toBe(false);
-  });
-
-  it('formats UTC times', () => {
-    expect(utcTime('2026-01-02T03:20:00.000Z')).toBe('Jan 2, 03:20');
   });
 });

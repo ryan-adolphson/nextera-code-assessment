@@ -45,7 +45,7 @@ describe('Unallocated turbines API (e2e)', () => {
 
   const reseed = async () => {
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, held_telemetry, unallocated_turbines, turbines, farm_weather_hourly, farms`;
+      .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, held_telemetry, unallocated_turbines, turbines, farm_weather, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
   };
 

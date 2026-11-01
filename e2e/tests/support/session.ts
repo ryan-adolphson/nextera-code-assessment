@@ -26,6 +26,11 @@ function seedPassword(): string {
 /** Fixes the browser clock at SEED_NOW and signs in through /login; ends on /farms. */
 export async function signIn(page: Page, role: Role): Promise<void> {
   await page.clock.setFixedTime(SEED_NOW);
+  await logIn(page, role);
+}
+
+/** Signs in through /login (whatever clock the page has); ends on /farms. */
+export async function logIn(page: Page, role: Role): Promise<void> {
   await page.goto('/login');
   await page.getByLabel('Email').fill(userEmail(role));
   await page.getByLabel('Password').fill(seedPassword());

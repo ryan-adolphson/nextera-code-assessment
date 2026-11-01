@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { Prisma, PrismaService } from '@nextera/shared';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { FleetService } from './fleet.service.js';
+import { WeatherQueryDto } from './dto/weather-query.dto.js';
 
 const farm = (id: string, turbineIds: string[]) => ({
   id,
@@ -338,39 +339,55 @@ describe('FleetService', () => {
 
   describe('weather', () => {
     const DAY = { from: '2026-01-01T00:00:00Z', to: '2026-01-02T00:00:00Z' };
+    const query = (
+      interval: '30min' | 'daily',
+      timeZone = 'UTC',
+    ): WeatherQueryDto =>
+      Object.assign(new WeatherQueryDto(), { ...DAY, interval, timeZone });
 
     it('throws NotFoundException for an unknown farm', async () => {
       prisma.farm.findUnique.mockResolvedValue(null);
-      await expect(
-        service.weather('FARM99', { ...DAY, interval: 'hourly' }),
-      ).rejects.toThrow(new NotFoundException('Farm FARM99 not found'));
-      expect(prisma.farmWeatherHourly.findMany).not.toHaveBeenCalled();
+      await expect(service.weather('FARM99', query('30min'))).rejects.toThrow(
+        new NotFoundException('Farm FARM99 not found'),
+      );
+      expect(prisma.farmWeather.findMany).not.toHaveBeenCalled();
     });
 
     it('throws BadRequestException for a range over 31 days', async () => {
       prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
       await expect(
         service.weather('FARM01', {
-          from: '2026-01-01T00:00:00Z',
+          ...query('daily'),
           to: '2026-03-01T00:00:00Z',
-          interval: 'daily',
         }),
       ).rejects.toThrow(
         new BadRequestException('The range may span at most 31 days'),
       );
     });
 
-    it('returns the hours in [from, to), oldest first, without internal fields', async () => {
+    it('throws BadRequestException for a time zone Postgres does not know', async () => {
       prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
-      prisma.farmWeatherHourly.findMany.mockResolvedValue([
+      prisma.$queryRaw.mockResolvedValue([{ known: false }]);
+      await expect(
+        service.weather('FARM01', query('daily', 'Mars/Olympus')),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'timeZone must be an IANA time zone name, e.g. "America/Chicago" (default "UTC")',
+        ),
+      );
+    });
+
+    it('returns the 30-minute buckets in [from, to), oldest first, without internal fields', async () => {
+      prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
+      prisma.farmWeather.findMany.mockResolvedValue([
         {
           farmId: 'FARM01',
-          time: new Date('2026-01-01T00:00:00Z'),
-          source: 'archive',
+          time: new Date('2026-01-01T00:30:00Z'),
+          samples: 2,
           windSpeed10mMs: 5.03,
-          windSpeed100mMs: 10.78,
+          windSpeed80mMs: 10.78,
           windDirection10mDeg: 323,
-          windDirection100mDeg: 330,
+          windDirection80mDeg: 330,
           windGusts10mMs: 7.4,
           temperature2mC: 5.9,
           relativeHumidity2mPct: 51,
@@ -381,12 +398,9 @@ describe('FleetService', () => {
         },
       ]);
 
-      const result = await service.weather('FARM01', {
-        ...DAY,
-        interval: 'hourly',
-      });
+      const result = await service.weather('FARM01', query('30min'));
 
-      expect(prisma.farmWeatherHourly.findMany).toHaveBeenCalledWith({
+      expect(prisma.farmWeather.findMany).toHaveBeenCalledWith({
         where: {
           farmId: 'FARM01',
           time: { gte: new Date(DAY.from), lt: new Date(DAY.to) },
@@ -397,15 +411,16 @@ describe('FleetService', () => {
         farmId: 'FARM01',
         from: '2026-01-01T00:00:00.000Z',
         to: '2026-01-02T00:00:00.000Z',
-        interval: 'hourly',
+        interval: '30min',
+        timeZone: 'UTC',
         points: [
           {
-            time: '2026-01-01T00:00:00.000Z',
-            source: 'archive',
+            time: '2026-01-01T00:30:00.000Z',
+            samples: 2,
             windSpeed10mMs: 5.03,
-            windSpeed100mMs: 10.78,
+            windSpeed80mMs: 10.78,
             windDirection10mDeg: 323,
-            windDirection100mDeg: 330,
+            windDirection80mDeg: 330,
             windGusts10mMs: 7.4,
             temperature2mC: 5.9,
             relativeHumidity2mPct: 51,
@@ -417,25 +432,54 @@ describe('FleetService', () => {
       });
     });
 
-    it('aggregates daily in one Postgres query over the UTC day', async () => {
+    it('aggregates daily in one Postgres query over the UTC day by default', async () => {
       prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
       prisma.$queryRaw.mockResolvedValue([]);
 
-      await service.weather('FARM01', { ...DAY, interval: 'daily' });
+      await service.weather('FARM01', query('daily'));
 
+      // UTC needs no zone lookup: the one query is the aggregate.
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
       const [strings, ...values] = prisma.$queryRaw.mock
         .calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
       const sql = Prisma.sql(strings, ...values);
       const text = sql.sql.replace(/\s+/g, ' ');
-      expect(text).toContain("date_trunc('day', w.time, 'UTC') AS day");
-      expect(text).toContain('avg(sin(radians(w.wind_direction_100m_deg)))');
+      expect(text).toContain(
+        "to_char(w.time AT TIME ZONE ?::text, 'YYYY-MM-DD') AS day",
+      );
+      expect(text).toContain('count(*)::int AS samples');
+      expect(text).toContain('avg(sin(radians(w.wind_direction_80m_deg)))');
       expect(text).toContain('sum(w.precipitation_mm) AS precipitation_sum');
-      expect(text).toContain("bool_or(w.source = 'forecast') AS has_forecast");
+      expect(text).toContain('FROM farm_weather w');
       expect(sql.values).toEqual([
+        'UTC',
         'FARM01',
         new Date(DAY.from),
         new Date(DAY.to),
       ]);
+    });
+
+    it("returns a turbine's farm weather with its id, 404 for an unknown turbine", async () => {
+      prisma.turbine.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.turbineWeather('TURB999', query('30min')),
+      ).rejects.toThrow(new NotFoundException('Turbine TURB999 not found'));
+
+      prisma.turbine.findUnique.mockResolvedValueOnce({
+        farmId: 'FARM02',
+      } as never);
+      prisma.farmWeather.findMany.mockResolvedValue([]);
+      await expect(
+        service.turbineWeather('TURB002', query('30min')),
+      ).resolves.toEqual({
+        farmId: 'FARM02',
+        turbineId: 'TURB002',
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-01-02T00:00:00.000Z',
+        interval: '30min',
+        timeZone: 'UTC',
+        points: [],
+      });
     });
   });
 });

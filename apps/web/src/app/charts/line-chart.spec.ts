@@ -1,7 +1,8 @@
 import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { LineChart, RangeStats, TimeRange, ChartMarker } from './line-chart';
+import { LineChart, RangeStats, TimeRange, ChartMarker, ChartOverlay } from './line-chart';
 import { ChartPoint } from './scales';
+import { BROWSER_TIME_ZONE, TimeZoneSettings } from '../core/time-zone';
 
 const MIN = 60_000;
 const t0 = Date.parse('2026-01-02T03:00:00Z');
@@ -24,6 +25,7 @@ const at = (minute: number, v: number): ChartPoint => ({ t: t0 + minute * MIN, v
         (viewChange)="view.set($event)"
         [stats]="$index ? powerStats() : gearboxStats()"
         [markers]="$index ? [] : markers()"
+        [overlay]="$index ? null : overlay()"
       />
     }
   `,
@@ -54,6 +56,7 @@ class Host {
   readonly gearboxStats = signal<RangeStats | null>(null);
   readonly powerStats = signal<RangeStats | null>(null);
   readonly markers = signal<ChartMarker[]>([]);
+  readonly overlay = signal<ChartOverlay | null>(null);
 }
 
 /** The parts of ECharts' resolved option the tests read. */
@@ -126,9 +129,11 @@ describe('LineChart (ECharts)', () => {
 
   it('draws one 2px line series (plus the hover dot) without a legend', () => {
     const option = optionOf(0);
-    // readings, hover dot, and the (empty) scatter overlay for markers
-    expect(option.series.map((s) => s.type)).toEqual(['line', 'line', 'scatter']);
+    // readings, hover dot, the (empty) scatter overlay for markers and the (empty) overlay line
+    expect(option.series.map((s) => s.type)).toEqual(['line', 'line', 'scatter', 'line']);
     expect(option.series[2].data).toEqual([]);
+    expect(option.series[3].data).toEqual([]);
+    expect(el.querySelector('[data-testid=series-legend]')).toBeNull();
     expect(option.series[0].lineStyle.width).toBe(2);
     expect(option.legend).toBeUndefined();
   });
@@ -450,6 +455,66 @@ describe('LineChart (ECharts)', () => {
     expect(ticks.every(Number.isInteger)).toBe(true);
   });
 
+  describe('overlay (a reference line, e.g. modelled wind)', () => {
+    const overlay = (points: ChartPoint[]): ChartOverlay => ({
+      label: 'Open-Meteo 80 m (farm)',
+      points,
+      stepMs: 10 * MIN,
+    });
+    const line = () => optionOf(0).series[3];
+
+    beforeEach(async () => {
+      // 03:00, 03:10, then 03:30 (03:20 missing: the line breaks), and one point outside the domain.
+      host.overlay.set(overlay([at(-10, 70), at(0, 80), at(10, 85), at(30, 140)]));
+      await fixture.whenStable();
+    });
+
+    it('draws the points inside the domain as a silent line that breaks at a missing step', () => {
+      expect(line().type).toBe('line');
+      expect((line() as unknown as { silent: boolean }).silent).toBe(true);
+      expect(line().data).toEqual([
+        [t0, 80],
+        [t0 + 10 * MIN, 85],
+        [t0 + 20 * MIN, null], // gap
+        [t0 + 30 * MIN, 140],
+      ]);
+      // The y-axis includes it (140 > the readings' 126.5), so it is never clipped.
+      expect(components()[0].yBounds()!.max).toBeGreaterThan(140);
+      expect(optionOf(1).series[3].data).toEqual([]);
+    });
+
+    it('names both lines in a legend (never colour alone)', () => {
+      expect(text(0, '[data-testid=series-legend]')).toBe(
+        'Turbine (measured) Open-Meteo 80 m (farm)',
+      );
+      expect(text(1, '[data-testid=series-legend]')).toBeUndefined();
+    });
+
+    it('adds its value within half a step to the tooltip and the aria-label', async () => {
+      const { formatter } = optionOf(0).tooltip[0];
+      const at03 = formatter([{ value: [t0 + 3 * MIN, 81.9] }]) as HTMLElement;
+      expect(at03.lastElementChild!.textContent).toBe('Open-Meteo 80 m (farm): 80.0 °C');
+      // 03:20: the nearest overlay points are 10 min away (more than half a step).
+      const at20 = formatter([{ value: [t0 + 20 * MIN, 126.5] }]) as HTMLElement;
+      expect(at20.textContent).not.toContain('Open-Meteo');
+
+      host.hoverT.set(t0 + 30 * MIN);
+      await fixture.whenStable();
+      const label = plotOf(0).getAttribute('aria-label')!;
+      expect(label).toContain('Open-Meteo 80 m (farm): latest 140.0 °C at Jan 2, 03:30 UTC.');
+      expect(label).toContain(
+        'Selected: 126.5 °C at Jan 2, 03:30 UTC. Open-Meteo 80 m (farm): 140.0 °C.',
+      );
+    });
+
+    it('shows no legend when no overlay point is inside the domain', async () => {
+      host.overlay.set(overlay([at(-60, 5)]));
+      await fixture.whenStable();
+      expect(text(0, '[data-testid=series-legend]')).toBeUndefined();
+      expect(line().data).toEqual([]);
+    });
+  });
+
   describe('stats (median, high, low reference lines)', () => {
     // Over the whole range: median 82.1, high 126.5 (the frozen gearbox), low 81.9.
     const gearbox: RangeStats = { median: 82.1, high: 126.5, low: 81.9 };
@@ -483,8 +548,8 @@ describe('LineChart (ECharts)', () => {
         tooltip: { show: false },
         lineStyle: { type: 'dashed', width: 1 },
       });
-      // Still one line series plus the hover dot: the lines are part of the readings series.
-      expect(optionOf(0).series.map((s) => s.type)).toEqual(['line', 'line', 'scatter']);
+      // No extra series: the lines are part of the readings series.
+      expect(optionOf(0).series.map((s) => s.type)).toEqual(['line', 'line', 'scatter', 'line']);
     });
 
     it('lists the values under the title and in the aria-label', async () => {
@@ -677,10 +742,12 @@ describe('LineChart (colour scheme and resizing)', () => {
       (hoverTChange)="hoverT.set($event)"
       [view]="view()"
       (viewChange)="view.set($event)"
+      [overlay]="overlay()"
     />
   `,
 })
 class CandleHost {
+  readonly overlay = signal<ChartOverlay | null>(null);
   readonly points = signal([
     at(0, 82.1),
     at(5, 81.9),
@@ -795,5 +862,63 @@ describe('LineChart (candlestick)', () => {
       'Gearbox temperature: latest 81.9 °C at Jan 2, 03:35 UTC. 7 readings in 3 15 min candles. ' +
         'Selected: Jan 2, 03:15–03:30 UTC: start 82.1, end 126.5, low 82.1, high 126.5 °C (3 readings).',
     );
+  });
+
+  it('adds the overlay value at the candle centre to the tooltip and the aria-label', async () => {
+    host.overlay.set({
+      label: 'Open-Meteo 80 m (farm)',
+      points: [at(0, 90), at(30, 100)],
+      stepMs: 30 * MIN,
+    });
+    chart.hoverAt(t0 + 24 * MIN);
+    await fixture.whenStable();
+    const content = option().tooltip[0].formatter([
+      { value: [t0 + 22.5 * MIN, 82.1, 126.5, 82.1, 126.5] },
+    ]) as HTMLElement;
+    expect(content.lastElementChild!.textContent).toBe('Open-Meteo 80 m (farm): 100.0 °C');
+    const plot = (fixture.nativeElement as HTMLElement).querySelector('[role=img]')!;
+    expect(plot.getAttribute('aria-label')).toMatch(
+      /\(3 readings\)\. Open-Meteo 80 m \(farm\): 100\.0 °C\.$/,
+    );
+  });
+});
+
+describe('LineChart in local time (Settings)', () => {
+  let fixture: ComponentFixture<CandleHost>;
+  let chart: LineChart;
+
+  beforeEach(async () => {
+    localStorage.clear();
+    TestBed.configureTestingModule({
+      providers: [{ provide: BROWSER_TIME_ZONE, useValue: 'America/Chicago' }],
+    });
+    fixture = TestBed.createComponent(CandleHost);
+    await fixture.whenStable();
+    chart = fixture.debugElement.children[0].componentInstance as LineChart;
+  });
+
+  const xLabels = () => {
+    const { customValues, formatter } = (chart.chart!.getOption() as unknown as { xAxis: Axis[] })
+      .xAxis[0].axisLabel;
+    return customValues.map((value) => formatter(value));
+  };
+  const plot = () => (fixture.nativeElement as HTMLElement).querySelector('[role=img]')!;
+
+  it('re-labels the time axis, tooltip and aria-label when the zone changes', async () => {
+    expect(xLabels()).toEqual(['03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00']);
+    expect(plot().getAttribute('aria-label')).toContain('at Jan 2, 03:35 UTC');
+
+    TestBed.inject(TimeZoneSettings).setMode('local');
+    await fixture.whenStable();
+
+    // 03:00 UTC is 21:00 CST the day before; midnight shows the date.
+    expect(xLabels()).toEqual(['21:00', '22:00', '23:00', 'Jan 2', '01:00', '02:00', '03:00']);
+    expect(plot().getAttribute('aria-label')).toContain('at Jan 1, 21:35 CST');
+    const content = (
+      chart.chart!.getOption() as unknown as {
+        tooltip: { formatter: (params: unknown) => HTMLElement }[];
+      }
+    ).tooltip[0].formatter([{ value: [t0 + 22.5 * MIN, 82.1, 126.5, 82.1, 126.5] }]);
+    expect(content.lastElementChild!.textContent).toBe('Jan 1, 21:15–21:30 CST · 3 readings');
   });
 });

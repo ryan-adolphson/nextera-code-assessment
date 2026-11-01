@@ -17,9 +17,10 @@ import {
   toTelemetryStatsResponse,
   toTurbineResponse,
   toWeatherDayResponse,
-  toWeatherHourResponse,
+  toWeatherHalfHourResponse,
   type FarmResponse,
   type FarmWeatherResponse,
+  type TurbineWeatherResponse,
   type TelemetryMetric,
   type TelemetryResponse,
   type TelemetryStatsResponse,
@@ -713,57 +714,135 @@ export async function heldReadings(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Farm weather (hourly Open-Meteo rows; daily figures computed here, never stored)
+// Farm weather (30-minute Open-Meteo rows; daily figures computed here, never stored). A turbine has
+// no weather of its own: it uses its current farm's.
 
-/** A farm's weather over a required [from, to) range (ISO instants, at most 31 days). */
+/** The time zone of the daily buckets when none is given. */
+export const DEFAULT_WEATHER_TIME_ZONE = 'UTC';
+
+/** A farm's (or turbine's) weather over a required [from, to) range (ISO instants, ≤ 31 days). */
 export interface FarmWeatherQuery extends TimeRange {
   interval: WeatherInterval;
+  /**
+   * IANA zone of the daily buckets (local calendar days, 23 or 25 hours across a DST change);
+   * default UTC. 30-minute points are UTC instants, so it only echoes there (but is still checked).
+   */
+  timeZone?: string;
+}
+
+/** What a zone name may look like before Postgres is asked: "UTC", "America/Chicago", "Etc/GMT+6". */
+const TIME_ZONE_SHAPE = /^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+){0,2}$/;
+/** Zone names Postgres knows (checked once per process; the zone database doesn't change at runtime). */
+const knownTimeZones = new Set<string>([DEFAULT_WEATHER_TIME_ZONE]);
+
+const timeZoneError = () =>
+  new QueryInputError(
+    'timeZone must be an IANA time zone name, e.g. "America/Chicago" (default "UTC")',
+  );
+
+/**
+ * Checks a zone name against Postgres' `pg_timezone_names` (exact name), so only IANA names reach
+ * `AT TIME ZONE`: Postgres also accepts POSIX specs such as "UTC+6" there, with the sign inverted.
+ */
+export async function checkTimeZone(
+  db: ReadClient,
+  timeZone: string,
+): Promise<string> {
+  if (knownTimeZones.has(timeZone)) return timeZone;
+  if (timeZone.length > 64 || !TIME_ZONE_SHAPE.test(timeZone)) {
+    throw timeZoneError();
+  }
+  const [row] = await db.$queryRaw<{ known: boolean }[]>`
+    SELECT EXISTS (SELECT 1 FROM pg_timezone_names WHERE name = ${timeZone}) AS known`;
+  if (!row?.known) throw timeZoneError();
+  knownTimeZones.add(timeZone);
+  return timeZone;
 }
 
 /**
- * A farm's weather in [from, to) on the hour's start time, oldest first: the stored hours, or one
- * row per UTC day aggregated in Postgres (means/maxima, vector-mean 100 m direction, precipitation
- * sum, the number of hours covered, `forecast` if any hour of the day is a forecast).
+ * A farm's weather in [from, to) on the bucket's start time, oldest first: the stored 30-minute
+ * buckets, or one row per local day in `timeZone` (default UTC) aggregated in Postgres
+ * (means/maxima, vector-mean 80 m direction, precipitation sum, the number of buckets covered).
  */
 export async function farmWeather(
   db: ReadClient,
   farmId: string,
-  { from, to, interval }: FarmWeatherQuery,
+  query: FarmWeatherQuery,
 ): Promise<FarmWeatherResponse> {
   const farm = await db.farm.findUnique({
     where: { id: farmId },
     select: { id: true },
   });
   if (!farm) throw new QueryNotFoundError(`Farm ${farmId} not found`);
+  return weatherOfFarm(db, farmId, query);
+}
+
+/**
+ * A turbine's weather: its current farm's (`farmWeather`), with the turbine's id. A turbine moved
+ * to another farm gets the new farm's weather for the whole range.
+ */
+export async function turbineWeather(
+  db: ReadClient,
+  turbineId: string,
+  query: FarmWeatherQuery,
+): Promise<TurbineWeatherResponse> {
+  const turbine = await db.turbine.findUnique({
+    where: { turbineId },
+    select: { farmId: true },
+  });
+  if (!turbine) throw turbineNotFound(turbineId);
+  // The FK keeps the farm, so no second existence check.
+  const { farmId, ...weather } = await weatherOfFarm(db, turbine.farmId, query);
+  return { farmId, turbineId, ...weather };
+}
+
+/** The weather of a farm known to exist. */
+async function weatherOfFarm(
+  db: ReadClient,
+  farmId: string,
+  {
+    from,
+    to,
+    interval,
+    timeZone = DEFAULT_WEATHER_TIME_ZONE,
+  }: FarmWeatherQuery,
+): Promise<FarmWeatherResponse> {
   const { start, end } = parseRange(from, to);
+  const zone = await checkTimeZone(db, timeZone);
   const range = { farmId, from: start.toISOString(), to: end.toISOString() };
 
-  if (interval === 'hourly') {
-    const rows = await db.farmWeatherHourly.findMany({
+  if (interval === '30min') {
+    const rows = await db.farmWeather.findMany({
       where: { farmId, time: { gte: start, lt: end } },
       orderBy: { time: 'asc' },
     });
-    return { ...range, interval, points: rows.map(toWeatherHourResponse) };
+    return {
+      ...range,
+      interval,
+      timeZone: zone,
+      points: rows.map(toWeatherHalfHourResponse),
+    };
   }
 
-  // date_trunc(…, 'UTC') keeps the day boundaries in UTC whatever the session time zone.
+  // The local calendar day of each bucket in the bound zone (never interpolated): the same days
+  // as date_trunc('day', w.time, zone), so a DST change gives a 46- or 50-bucket day. The session
+  // time zone plays no part.
   const rows = await db.$queryRaw<WeatherDayRow[]>`
     SELECT
-      date_trunc('day', w.time, 'UTC') AS day,
-      count(*)::int AS hours,
-      bool_or(w.source = 'forecast') AS has_forecast,
+      to_char(w.time AT TIME ZONE ${zone}::text, 'YYYY-MM-DD') AS day,
+      count(*)::int AS samples,
       avg(w.wind_speed_10m_ms) AS wind_speed_10m_mean,
       max(w.wind_speed_10m_ms) AS wind_speed_10m_max,
-      avg(w.wind_speed_100m_ms) AS wind_speed_100m_mean,
-      max(w.wind_speed_100m_ms) AS wind_speed_100m_max,
-      max(w.wind_gusts_10m_ms) AS wind_gusts_10m_max,
+      avg(w.wind_speed_80m_ms) AS wind_speed_80m_mean,
+      max(w.wind_speed_80m_ms) AS wind_speed_80m_max,
       mod(
         degrees(atan2(
-          avg(sin(radians(w.wind_direction_100m_deg))),
-          avg(cos(radians(w.wind_direction_100m_deg)))
+          avg(sin(radians(w.wind_direction_80m_deg))),
+          avg(cos(radians(w.wind_direction_80m_deg)))
         ))::numeric + 360,
         360
-      )::double precision AS wind_direction_100m,
+      )::double precision AS wind_direction_80m,
+      max(w.wind_gusts_10m_ms) AS wind_gusts_10m_max,
       min(w.temperature_2m_c) AS temperature_2m_min,
       max(w.temperature_2m_c) AS temperature_2m_max,
       avg(w.temperature_2m_c) AS temperature_2m_mean,
@@ -771,9 +850,14 @@ export async function farmWeather(
       avg(w.surface_pressure_hpa) AS surface_pressure_mean,
       sum(w.precipitation_mm) AS precipitation_sum,
       avg(w.cloud_cover_pct) AS cloud_cover_mean
-    FROM farm_weather_hourly w
+    FROM farm_weather w
     WHERE w.farm_id = ${farmId} AND w.time >= ${start} AND w.time < ${end}
     GROUP BY 1
     ORDER BY 1`;
-  return { ...range, interval, points: rows.map(toWeatherDayResponse) };
+  return {
+    ...range,
+    interval,
+    timeZone: zone,
+    points: rows.map(toWeatherDayResponse),
+  };
 }

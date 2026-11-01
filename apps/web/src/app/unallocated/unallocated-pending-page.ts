@@ -6,6 +6,8 @@ import { map } from 'rxjs';
 import { FleetStore } from '../fleet/fleet.store';
 import { StalenessBadge } from '../fleet/staleness-badge';
 import { stalenessOf } from '../fleet/staleness';
+import { AppTimePipe } from '../core/app-time.pipe';
+import { TimeZoneSettings } from '../core/time-zone';
 import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
 import { AssignDialog } from './assign-dialog';
@@ -15,13 +17,7 @@ import { UnallocatedActions } from './unallocated-actions';
 import { UnallocatedApi } from './unallocated-api.service';
 import { UnallocatedTabs } from './unallocated-tabs';
 import { UNALLOCATED_STATUS, UnallocatedStore } from './unallocated.store';
-import {
-  KIND_LABELS,
-  UnallocatedKind,
-  UnallocatedTurbine,
-  farmLabel,
-  utcTime,
-} from './unallocated.model';
+import { KIND_LABELS, UnallocatedKind, UnallocatedTurbine, farmLabel } from './unallocated.model';
 
 /** A table row: the entry and what the cells show. */
 interface PendingRow {
@@ -47,6 +43,7 @@ interface PendingRow {
     UnallocatedActions,
   ],
   imports: [
+    AppTimePipe,
     DecimalPipe,
     HeldReadings,
     MatButton,
@@ -67,7 +64,7 @@ export class UnallocatedPendingPage {
   private readonly viewContainerRef = inject(ViewContainerRef);
 
   protected readonly kindLabel = (kind: UnallocatedKind) => KIND_LABELS[kind];
-  protected readonly time = utcTime;
+  protected readonly tz = inject(TimeZoneSettings);
 
   protected readonly rows = computed<PendingRow[]>(() =>
     this.store.entries().map((entry) => ({

@@ -23,6 +23,7 @@ In production each part runs on Google Cloud Run, defined in `infra/terraform`.
 2. **Turbines**: the whole fleet in one table, with status pills when a turbine stops reporting (no data in 15/30/60 min).
 3. **Alerting**: define threshold rules (e.g. gearbox above 100 °C = error); every incoming reading is checked against them, and History shows what fired.
 4. **Reporting**: pick a farm or turbine and a date range, see charts and a table, download a CSV.
+5. **Settings**: show times in UTC (the default) or your browser's local time zone. The choice is saved in your browser and every page follows it.
 
 New readings appear live, with no page reload. Users sign in with one of three roles: **viewer** (read-only), **owner** (also edits rules, runs reports) and **admin**.
 
@@ -42,9 +43,19 @@ docker compose up -d --wait --build   # database, Pub/Sub, migrations, API, inge
 npm run db:seed:demo                  # demo users, 10 farms, 25 turbines, the last 72 h of data
 ```
 
-Open http://localhost:8082 and sign in as `admin@nextera.local`, `owner@nextera.local` or `viewer@nextera.local` with your `SEED_USER_PASSWORD`.
+Open http://localhost:8082 and sign in with one of the demo logins. Every account uses the password you set as `SEED_USER_PASSWORD` in `.env`.
+
+| Email | Role | Can |
+|---|---|---|
+| `viewer@nextera.local` | viewer | See farms, turbines, charts, alert history and rules (read-only) |
+| `owner@nextera.local` | owner | Everything a viewer can, plus add, edit and delete alert rules, run reports, and resolve unallocated turbines |
+| `admin@nextera.local` | admin | Everything |
+
+`npm run db:seed` and `npm run db:seed:demo` both create these accounts. To change the password, set a new `SEED_USER_PASSWORD` and run the seed again; it resets the password on every account.
 
 **Live data (optional).** Set `DEMO_FEED_ENABLED=true` in `.env`, then run `docker compose up -d demo-feed`: every turbine reports a new reading every 5 minutes and the app updates live. Set it back to `false` and run the same command to stop it. Run `db:seed:demo` before you turn it on.
+
+**Fresh demo in one command:** `npm run demo:reset -- --yes` clears all readings, alerts and weather from the local database, then seeds the last 7 days up to now, fetches the weather, and starts the live feed. Farms, turbines, users and rules are kept. It includes missing data, so the demo can show how gaps are handled: TURB011, TURB018 and TURB013 stay 20, 45 and 90+ minutes behind, which shows the yellow, orange and red "No data in 15/30/60 min" pills. It only runs against a local database.
 
 **Stop:** `docker compose down`. Add `-v` to also delete the database.
 

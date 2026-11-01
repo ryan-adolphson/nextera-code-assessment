@@ -1,5 +1,5 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
-import { Component, computed, inject, signal } from '@angular/core';
+import { DecimalPipe } from '@angular/common';
+import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormField, FormRoot, form, required, validate } from '@angular/forms/signals';
 import { MatAutocomplete, MatAutocompleteTrigger } from '@angular/material/autocomplete';
 import { MatButton } from '@angular/material/button';
@@ -16,17 +16,12 @@ import { MatInput } from '@angular/material/input';
 import { AlertsCell } from '../alerting/alerts-cell';
 import { AlertSeries } from '../charts/alert-series';
 import { ChartGroup } from '../charts/chart-group';
+import { ChartSkeleton, ChartSkeletonCard } from '../charts/chart-skeleton';
 import { TimeRange } from '../charts/line-chart';
+import { AppTimePipe } from '../core/app-time.pipe';
 import { NOW } from '../core/clock';
-import {
-  dayOf,
-  dayRange,
-  defaultDays,
-  lastUtcDay,
-  pickerDate,
-  rangeError,
-  utcDayOf,
-} from '../core/utc-days';
+import { dayOf, dayRange, defaultDays, lastDay, pickerDate, rangeError } from '../core/days';
+import { TimeZoneSettings } from '../core/time-zone';
 import { Telemetry } from '../fleet/fleet.model';
 import { FleetStore } from '../fleet/fleet.store';
 import { METRICS } from '../fleet/metrics';
@@ -56,7 +51,8 @@ interface ReportModel {
 }
 
 /**
- * /reporting (proof of concept): a telemetry report for a farm or a turbine over whole UTC days.
+ * /reporting (proof of concept): a telemetry report for a farm or a turbine over whole days in the
+ * zone shown (Settings: UTC or local; a zone change re-runs a shown report for the same days).
  * Pick the scope (Material autocomplete, Farms / Turbines) and the days (Material date range picker,
  * required, at most 31 days), then run it: one GET /api/reports/telemetry returns every reading
  * with its alerts. Shows a summary, one chart per metric (a farm: power summed, the rest averaged
@@ -66,9 +62,10 @@ interface ReportModel {
   selector: 'app-reporting-page',
   imports: [
     AlertsCell,
-    DatePipe,
+    AppTimePipe,
     DecimalPipe,
     ChartGroup,
+    ChartSkeleton,
     MatAutocomplete,
     MatAutocompleteTrigger,
     MatButton,
@@ -90,12 +87,14 @@ interface ReportModel {
     TABLE_IMPORTS,
   ],
   templateUrl: './reporting-page.html',
-  // The datepicker's DateAdapter: native Dates (local midnights, read as UTC days by utcDayOf).
+  // The datepicker's DateAdapter: native Dates (browser-local midnights; their calendar dates name
+  // days in the zone shown, see core/days.ts).
   providers: [provideNativeDateAdapter()],
 })
 export class ReportingPage {
   private readonly api = inject(ReportApi);
   private readonly fleet = inject(FleetStore);
+  protected readonly tz = inject(TimeZoneSettings);
 
   private readonly model = signal<ReportModel>({ scope: null, start: null, end: null });
   protected readonly reportForm = form(this.model, (report) => {
@@ -109,10 +108,11 @@ export class ReportingPage {
     required(report.end);
     // The days form a valid range (the API's checks); missing days are `required`'s job.
     validate(report, ({ value }) => {
-      const start = dayOf(value().start);
-      const end = dayOf(value().end);
+      const zone = this.tz.zone();
+      const start = dayOf(value().start, zone);
+      const end = dayOf(value().end, zone);
       if (start === null || end === null) return undefined;
-      const message = rangeError(start, end);
+      const message = rangeError(start, end, zone);
       return message ? { kind: 'range', message } : undefined;
     });
   });
@@ -122,8 +122,11 @@ export class ReportingPage {
     if (!state.touched() && !state.dirty()) return null;
     return state.errors().find((e) => e.kind === 'range')?.message ?? null;
   });
-  /** No future days to pick: the last selectable day is today (UTC). */
-  protected readonly maxDate = pickerDate(defaultDays(inject(NOW)()).end);
+  private readonly now = inject(NOW);
+  /** No future days to pick: the last selectable day is today (in the zone shown). */
+  protected readonly maxDate = computed(() =>
+    pickerDate(defaultDays(this.now(), this.tz.zone()).end, this.tz.zone()),
+  );
 
   private readonly options = computed(() =>
     scopeOptions(this.fleet.farms(), this.fleet.turbines()),
@@ -150,6 +153,8 @@ export class ReportingPage {
 
   // --- What the report shows ---------------------------------------------------------------
   protected readonly readings = computed(() => this.report()?.readings ?? []);
+  /** A report with readings is shown: its charts and table appear. */
+  protected readonly hasCharts = computed(() => this.readings().length > 0);
   private readonly series = computed(() => {
     const report = this.report();
     return report ? reportSeries(report) : null;
@@ -177,10 +182,24 @@ export class ReportingPage {
   /** The last day of the report ([from, to) covers whole days; to is the day after). */
   protected readonly lastDay = computed(() => {
     const report = this.report();
-    return report ? lastUtcDay(report.to) : null;
+    return report ? lastDay(report.to, this.tz.zone()) : null;
   });
 
   protected readonly paging = paginate(this.readings, 50, [25, 50, 100, 250]);
+
+  constructor() {
+    // A zone change (Settings) re-runs a report that was run, for the same calendar days in the
+    // new zone (the form keeps the picked dates); nothing is run before the first Run.
+    let zone = this.tz.zone();
+    effect(() => {
+      const current = this.tz.zone();
+      if (current === zone) return;
+      zone = current;
+      untracked(() => {
+        if (this.report() || this.loading()) this.run();
+      });
+    });
+  }
   protected readonly columns = computed(() => [
     'measured',
     ...(this.report()?.scope.kind === 'farm' ? ['turbine'] : []),
@@ -188,6 +207,11 @@ export class ReportingPage {
     'alerts',
   ]);
   protected readonly metrics = METRICS;
+  /** The report charts' size before their chunk has loaded: a line chart per metric + alerts. */
+  protected readonly chartSkeleton: ChartSkeletonCard[] = [
+    ...METRICS.map((metric) => ({ title: metric.title, lines: 0 })),
+    { title: 'Alert rules triggered', lines: 1 },
+  ];
   protected readonly trackById = (_: number, r: Telemetry) => r.id;
 
   /**
@@ -201,10 +225,11 @@ export class ReportingPage {
     }
     const { scope, start, end } = this.model();
     const option = scope as ScopeOption;
+    const zone = this.tz.zone();
     this.reportLoad.run({
       kind: option.kind,
       id: option.id,
-      ...dayRange(utcDayOf(start!), utcDayOf(end!)),
+      ...dayRange(dayOf(start, zone)!, dayOf(end, zone)!, zone),
     });
   }
 
@@ -214,6 +239,6 @@ export class ReportingPage {
 
   protected download(): void {
     const report = this.report();
-    if (report) downloadCsv(csvFileName(report), toCsv(report));
+    if (report) downloadCsv(csvFileName(report, this.tz.zone()), toCsv(report));
   }
 }

@@ -1,7 +1,7 @@
 # Daily weather sync (optional, var.weather_sync_enabled): Cloud Scheduler runs the Cloud Run Job
 # nextera-weather-sync once a day (var.weather_sync_schedule, UTC). The job (`node
-# dist/weather-sync/main.js` in the ingestion image) fetches the last 7 UTC days of hourly weather per
-# farm from Open-Meteo and upserts them into farm_weather_hourly (archive rows replace forecast rows).
+# dist/weather-sync/main.js` in the ingestion image) fetches the last 7 UTC days of 15-minute weather per
+# farm from Open-Meteo and upserts 30-minute buckets into farm_weather (the newer fetch wins).
 # It exits non-zero if any farm failed. Backfills: run `npm run weather:sync -- --from … --to …`
 # through the Cloud SQL Auth Proxy, or execute the job with other args (`gcloud run jobs execute
 # nextera-weather-sync --args=dist/weather-sync/main.js,--from,2026-01-01,--to,2026-01-31`).

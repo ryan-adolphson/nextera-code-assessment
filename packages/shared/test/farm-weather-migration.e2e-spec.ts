@@ -3,7 +3,7 @@ import { openMigrationDb, type MigrationDb } from './migration-db.js';
 const TARGET = '20261031120000_farm_weather';
 
 /**
- * Adds the `weather_source` enum and the `farm_weather_hourly` table. Expand-only, so prove it:
+ * Adds the `farm_weather` table (30-minute buckets). Expand-only, so prove it:
  * existing fleet data survives, the running revision's writes keep working, the new table has its
  * key, defaults and FK (deleting a farm deletes its weather), and there is no drift.
  */
@@ -43,7 +43,7 @@ describe(`migration ${TARGET} (e2e)`, () => {
       SELECT (SELECT count(*) FROM farms)::int AS farms,
              (SELECT count(*) FROM turbines)::int AS turbines,
              (SELECT count(*) FROM telemetry)::int AS telemetry,
-             (SELECT count(*) FROM farm_weather_hourly)::int AS weather`);
+             (SELECT count(*) FROM farm_weather)::int AS weather`);
     expect(rows[0]).toEqual({
       farms: 2,
       turbines: 1,
@@ -54,42 +54,42 @@ describe(`migration ${TARGET} (e2e)`, () => {
     await insertReading('2026-01-02T03:30:00Z');
   });
 
-  it('stores an hour with nullable metrics and fetched_at by default; one row per farm and hour', async () => {
+  it('stores a bucket with nullable metrics and fetched_at by default; one row per farm and bucket', async () => {
     const { rows } = await m.db.query(`
-      INSERT INTO farm_weather_hourly (farm_id, time, source, wind_speed_100m_ms)
-      VALUES ('FARM01', '2026-01-01T00:00:00Z', 'archive', 10.78)
-      RETURNING source::text, wind_speed_10m_ms, wind_speed_100m_ms, fetched_at`);
+      INSERT INTO farm_weather (farm_id, time, samples, wind_speed_80m_ms)
+      VALUES ('FARM01', '2026-01-01T00:30:00Z', 2, 10.78)
+      RETURNING samples, wind_speed_10m_ms, wind_speed_80m_ms, fetched_at`);
     expect(rows[0]).toMatchObject({
-      source: 'archive',
+      samples: 2,
       wind_speed_10m_ms: null,
-      wind_speed_100m_ms: 10.78,
+      wind_speed_80m_ms: 10.78,
     });
     expect(rows[0].fetched_at).toBeInstanceOf(Date);
 
     await expect(
       m.db.query(`
-        INSERT INTO farm_weather_hourly (farm_id, time, source)
-        VALUES ('FARM01', '2026-01-01T00:00:00Z', 'forecast')`),
-    ).rejects.toThrow(/farm_weather_hourly_pkey/);
+        INSERT INTO farm_weather (farm_id, time, samples)
+        VALUES ('FARM01', '2026-01-01T00:30:00Z', 1)`),
+    ).rejects.toThrow(/farm_weather_pkey/);
     await expect(
       m.db.query(`
-        INSERT INTO farm_weather_hourly (farm_id, time, source)
-        VALUES ('FARM99', '2026-01-01T00:00:00Z', 'archive')`),
-    ).rejects.toThrow(/farm_weather_hourly_farm_id_fkey/);
+        INSERT INTO farm_weather (farm_id, time, samples)
+        VALUES ('FARM99', '2026-01-01T00:00:00Z', 2)`),
+    ).rejects.toThrow(/farm_weather_farm_id_fkey/);
     await expect(
       m.db.query(`
-        INSERT INTO farm_weather_hourly (farm_id, time, source)
-        VALUES ('FARM01', '2026-01-01T01:00:00Z', 'model')`),
-    ).rejects.toThrow(/invalid input value for enum weather_source/);
+        INSERT INTO farm_weather (farm_id, time)
+        VALUES ('FARM01', '2026-01-01T01:00:00Z')`),
+    ).rejects.toThrow(/null value in column "samples"/);
   });
 
   it('deletes a farm’s weather with the farm', async () => {
     await m.db.query(`
-      INSERT INTO farm_weather_hourly (farm_id, time, source)
-      VALUES ('FARM02', '2026-01-01T00:00:00Z', 'forecast')`);
+      INSERT INTO farm_weather (farm_id, time, samples)
+      VALUES ('FARM02', '2026-01-01T00:00:00Z', 2)`);
     await m.db.query(`DELETE FROM farms WHERE id = 'FARM02'`);
     const { rows } = await m.db.query(
-      `SELECT count(*)::int AS n FROM farm_weather_hourly WHERE farm_id = 'FARM02'`,
+      `SELECT count(*)::int AS n FROM farm_weather WHERE farm_id = 'FARM02'`,
     );
     expect(rows[0].n).toBe(0);
   });

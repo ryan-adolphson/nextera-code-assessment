@@ -150,11 +150,11 @@
 
     <ng-container matColumnDef="time">
       <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-time">
-        Last reading (UTC)
+        Last reading ({{ tz.tag() }})
       </th>
       <td mat-cell *matCellDef="let t" class="tabular-nums">
         @if (t.latest; as r) {
-          {{ r.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}
+          {{ r.timestamp | appTime: 'MMM d, HH:mm' }}
         } @else {
           <span class="text-muted">No readings yet</span>
         }

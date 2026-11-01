@@ -13,6 +13,7 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
   let app: Awaited<ReturnType<typeof openFleet>>;
   beforeEach(async () => {
     app = await openFleet('/farms/FARM02', () => CLOCK, mixedFleetFixture());
+    await app.stable(); // the deferred map renders
   });
   afterEach(() => app.http.verify()); // no other requests (e.g. no alert rules)
 

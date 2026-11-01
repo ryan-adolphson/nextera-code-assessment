@@ -1,6 +1,4 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { utc } from '@date-fns/utc';
-import { format } from 'date-fns';
 
 /**
  * Mirrors of the /api/unallocated-turbines responses (packages/shared): turbines whose readings
@@ -150,9 +148,4 @@ export function isEntryGone(error: unknown): boolean {
   if (!(error instanceof HttpErrorResponse) || error.status !== 404) return false;
   const message: unknown = error.error?.message;
   return !(typeof message === 'string' && /^Farm\b/.test(message));
-}
-
-/** A UTC time as the tables show it: "Jan 2, 03:20" (the column headers say UTC). */
-export function utcTime(iso: string): string {
-  return format(Date.parse(iso), 'MMM d, HH:mm', { in: utc });
 }

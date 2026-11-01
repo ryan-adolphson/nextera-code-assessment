@@ -1,4 +1,4 @@
-import { candleTooltip } from './chart-tooltips';
+import { candleSpan, candleTooltip, tooltipContent } from './chart-tooltips';
 import { Candle } from './scales';
 
 const MIN = 60_000;
@@ -45,5 +45,17 @@ describe('candleTooltip', () => {
     const el = candleTooltip(c, () => '<img src=x onerror=alert(1)>', '');
     expect(el.querySelector('img')).toBeNull();
     expect(el.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+});
+
+describe('in local time', () => {
+  it('shows the candle span and the reading time in the zone, with its name', () => {
+    const c = candle(2);
+    expect(lines(candleTooltip(c, format(c), '°C', 'America/Chicago')).at(-1)).toBe(
+      'Jan 1, 21:00–21:30 CST · 2 readings',
+    );
+    expect(candleSpan(c, 'Asia/Kolkata')).toBe('Jan 2, 08:30–09:00 GMT+5:30');
+    const tip = tooltipContent('80.0 °C', start, ['Error: …'], 'America/Chicago');
+    expect(lines(tip)).toEqual(['80.0 °C', 'Jan 1, 21:00 CST', 'Error: …']);
   });
 });

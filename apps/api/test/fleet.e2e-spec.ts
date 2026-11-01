@@ -1,4 +1,8 @@
-import { seedFromCsv, upsertWeatherHours } from '@nextera/shared';
+import {
+  seedFromCsv,
+  upsertFarmWeather,
+  type WeatherBucketRow,
+} from '@nextera/shared';
 import { SEED_DATA_DIR } from '@nextera/testing/seed-data';
 import { createTestApp, type TestApp } from './helpers.js';
 
@@ -9,7 +13,7 @@ describe('Fleet API (e2e, CSV seed data)', () => {
   beforeAll(async () => {
     t = await createTestApp();
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farm_weather_hourly, farms`;
+      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farm_weather, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
   });
 
@@ -130,15 +134,16 @@ describe('Fleet API (e2e, CSV seed data)', () => {
     });
   });
 
-  describe('GET /api/farms/:farmId/weather', () => {
+  describe('weather: GET /api/farms/:farmId/weather and /api/turbines/:id/weather', () => {
     const DAYS = 'from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z';
-    const hour = (iso: string, source: 'archive' | 'forecast') => ({
-      time: new Date(iso),
-      source,
+    const HALF_HOUR_MS = 30 * 60 * 1000;
+    const bucket = (at: string | number, samples = 2): WeatherBucketRow => ({
+      time: new Date(at),
+      samples,
       windSpeed10mMs: 5,
-      windSpeed100mMs: 10,
+      windSpeed80mMs: 10,
       windDirection10mDeg: 180,
-      windDirection100mDeg: 180,
+      windDirection80mDeg: 180,
       windGusts10mMs: 12,
       temperature2mC: 2,
       relativeHumidity2mPct: 80,
@@ -146,39 +151,49 @@ describe('Fleet API (e2e, CSV seed data)', () => {
       precipitationMm: 0.5,
       cloudCoverPct: null,
     });
+    /** Every 30-minute bucket in [from, to). */
+    const buckets = (from: string, to: string) =>
+      Array.from(
+        { length: (Date.parse(to) - Date.parse(from)) / HALF_HOUR_MS },
+        (_, i) => bucket(Date.parse(from) + i * HALF_HOUR_MS),
+      );
 
     beforeAll(async () => {
-      await t.prisma.$executeRaw`TRUNCATE TABLE farm_weather_hourly`;
-      await upsertWeatherHours(t.prisma, 'FARM01', [
-        hour('2026-01-01T00:00:00Z', 'archive'),
-        hour('2026-01-01T01:00:00Z', 'archive'),
-        hour('2026-01-02T00:00:00Z', 'forecast'),
-        hour('2026-01-03T00:00:00Z', 'archive'), // outside [from, to)
+      await t.prisma.$executeRaw`TRUNCATE TABLE farm_weather`;
+      await upsertFarmWeather(t.prisma, 'FARM01', [
+        bucket('2026-01-01T00:00:00Z', 1),
+        bucket('2026-01-01T00:30:00Z'),
+        bucket('2026-01-02T00:00:00Z'),
+        bucket('2026-01-03T00:00:00Z'), // outside [from, to)
+        // America/Chicago falls back on 2026-11-01 (a 25-hour local day).
+        ...buckets('2026-10-31T00:00:00Z', '2026-11-03T00:00:00Z'),
       ]);
     });
 
-    it('returns hourly points by default (viewer)', async () => {
+    it('returns 30-minute points by default (viewer)', async () => {
       const res = await get(`/farms/FARM01/weather?${DAYS}`);
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body).toMatchObject({
         farmId: 'FARM01',
-        interval: 'hourly',
+        interval: '30min',
+        timeZone: 'UTC',
         from: '2026-01-01T00:00:00.000Z',
         to: '2026-01-03T00:00:00.000Z',
       });
+      expect(body).not.toHaveProperty('turbineId');
       expect(body.points.map((p: { time: string }) => p.time)).toEqual([
         '2026-01-01T00:00:00.000Z',
-        '2026-01-01T01:00:00.000Z',
+        '2026-01-01T00:30:00.000Z',
         '2026-01-02T00:00:00.000Z',
       ]);
       expect(body.points[0]).toEqual({
         time: '2026-01-01T00:00:00.000Z',
-        source: 'archive',
+        samples: 1,
         windSpeed10mMs: 5,
-        windSpeed100mMs: 10,
+        windSpeed80mMs: 10,
         windDirection10mDeg: 180,
-        windDirection100mDeg: 180,
+        windDirection80mDeg: 180,
         windGusts10mMs: 12,
         temperature2mC: 2,
         relativeHumidity2mPct: 80,
@@ -192,26 +207,169 @@ describe('Fleet API (e2e, CSV seed data)', () => {
       const res = await get(`/farms/FARM01/weather?${DAYS}&interval=daily`);
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.interval).toBe('daily');
+      expect(body).toMatchObject({ interval: 'daily', timeZone: 'UTC' });
       expect(body.points).toEqual([
-        expect.objectContaining({
+        {
           date: '2026-01-01',
-          hours: 2,
-          source: 'archive',
-          windSpeed100mMeanMs: 10,
-          windDirection100mDeg: 180,
+          samples: 2,
+          windSpeed10mMeanMs: 5,
+          windSpeed10mMaxMs: 5,
+          windSpeed80mMeanMs: 10,
+          windSpeed80mMaxMs: 10,
+          windDirection80mDeg: 180,
+          windGusts10mMaxMs: 12,
+          temperature2mMinC: 2,
+          temperature2mMaxC: 2,
+          temperature2mMeanC: 2,
+          relativeHumidity2mMeanPct: 80,
+          surfacePressureMeanHpa: 990,
           precipitationSumMm: 1,
           cloudCoverMeanPct: null,
-        }),
-        expect.objectContaining({
-          date: '2026-01-02',
-          hours: 1,
-          source: 'forecast',
-        }),
+        },
+        expect.objectContaining({ date: '2026-01-02', samples: 1 }),
       ]);
     });
 
+    describe('GET /api/turbines/:id/weather', () => {
+      it("returns its farm's 30-minute points with the turbine id", async () => {
+        const res = await get(`/turbines/TURB001/weather?${DAYS}`);
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(Object.keys(body)).toEqual([
+          'farmId',
+          'turbineId',
+          'from',
+          'to',
+          'interval',
+          'timeZone',
+          'points',
+        ]);
+        expect(body).toMatchObject({
+          farmId: 'FARM01',
+          turbineId: 'TURB001',
+          interval: '30min',
+          timeZone: 'UTC',
+        });
+        expect(body.points).toHaveLength(3);
+      });
+
+      it('returns daily points', async () => {
+        const res = await get(
+          `/turbines/TURB001/weather?${DAYS}&interval=daily`,
+        );
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body).toMatchObject({ turbineId: 'TURB001', interval: 'daily' });
+        expect(
+          body.points.map((p: { date: string; samples: number }) => [
+            p.date,
+            p.samples,
+          ]),
+        ).toEqual([
+          ['2026-01-01', 2],
+          ['2026-01-02', 1],
+        ]);
+      });
+
+      it('returns no points for a turbine whose farm has no weather', async () => {
+        const body = await (
+          await get(`/turbines/TURB002/weather?${DAYS}`)
+        ).json();
+        expect(body).toMatchObject({ farmId: 'FARM02', points: [] });
+      });
+
+      it('returns 404 for an unknown turbine', async () => {
+        const res = await get(`/turbines/TURB999/weather?${DAYS}`);
+        expect(res.status).toBe(404);
+        expect(await res.json()).toMatchObject({
+          message: 'Turbine TURB999 not found',
+        });
+      });
+
+      it('returns 401 without a token', async () => {
+        const res = await fetch(
+          `${t.url}/api/turbines/TURB001/weather?${DAYS}`,
+        );
+        expect(res.status).toBe(401);
+      });
+    });
+
+    describe('timeZone', () => {
+      const days = async (path: string) => {
+        const res = await get(path);
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        return {
+          timeZone: body.timeZone,
+          days: body.points.map((p: { date: string; samples: number }) => [
+            p.date,
+            p.samples,
+          ]),
+        };
+      };
+      // Local midnight 2026-10-31 (CDT, −5) to local midnight 2026-11-02 (CST, −6).
+      const LOCAL = 'from=2026-10-31T05:00:00Z&to=2026-11-02T06:00:00Z';
+
+      it('buckets daily points by local day, 50 buckets on the fall-back day', async () => {
+        expect(
+          await days(
+            `/turbines/TURB001/weather?${LOCAL}&interval=daily&timeZone=America/Chicago`,
+          ),
+        ).toEqual({
+          timeZone: 'America/Chicago',
+          days: [
+            ['2026-10-31', 48],
+            ['2026-11-01', 50],
+          ],
+        });
+      });
+
+      it('gives UTC days for the same range without it', async () => {
+        expect(
+          await days(`/farms/FARM01/weather?${LOCAL}&interval=daily`),
+        ).toEqual({
+          timeZone: 'UTC',
+          days: [
+            ['2026-10-31', 38],
+            ['2026-11-01', 48],
+            ['2026-11-02', 12],
+          ],
+        });
+      });
+
+      it('leaves 30-minute times as UTC instants and echoes the zone', async () => {
+        const body = await (
+          await get(
+            '/farms/FARM01/weather?from=2026-11-01T06:00:00Z&to=2026-11-01T07:00:00Z&timeZone=America/Chicago',
+          )
+        ).json();
+        expect(body.timeZone).toBe('America/Chicago');
+        expect(body.points.map((p: { time: string }) => p.time)).toEqual([
+          '2026-11-01T06:00:00.000Z',
+          '2026-11-01T06:30:00.000Z',
+        ]);
+      });
+
+      it.each([
+        ['an unknown zone', 'Mars/Olympus'],
+        ['a POSIX spec', 'UTC%2B6'],
+        ['an empty zone', ''],
+        ['an injection attempt', "UTC'%3B%20DROP%20TABLE%20farms%3B--"],
+      ])('rejects %s with 400 on both endpoints', async (_case, zone) => {
+        for (const path of ['/farms/FARM01', '/turbines/TURB001']) {
+          const res = await get(
+            `${path}/weather?${DAYS}&interval=daily&timeZone=${zone}`,
+          );
+          expect(res.status).toBe(400);
+          expect((await res.json()).message).toBe(
+            'timeZone must be an IANA time zone name, e.g. "America/Chicago" (default "UTC")',
+          );
+        }
+      });
+    });
+
     it.each([
+      ['the removed hourly interval', `${DAYS}&interval=hourly`],
       ['an unknown interval', `${DAYS}&interval=weekly`],
       ['a missing from', 'to=2026-01-03T00:00:00Z'],
       [
@@ -224,9 +382,12 @@ describe('Fleet API (e2e, CSV seed data)', () => {
         'from=2026-01-01T00:00:00Z&to=2026-03-01T00:00:00Z',
       ],
       ['an unknown parameter', `${DAYS}&limit=5`],
-    ])('rejects %s with 400', async (_case, query) => {
-      const res = await get(`/farms/FARM01/weather?${query}`);
-      expect(res.status).toBe(400);
+      ['a repeated timeZone', `${DAYS}&timeZone=UTC&timeZone=UTC`],
+    ])('rejects %s with 400 (farm and turbine)', async (_case, query) => {
+      for (const path of ['/farms/FARM01', '/turbines/TURB001']) {
+        const res = await get(`${path}/weather?${query}`);
+        expect(res.status).toBe(400);
+      }
     });
 
     it('returns 404 for an unknown farm', async () => {
