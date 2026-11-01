@@ -19,7 +19,7 @@ In production each part runs on Google Cloud Run, defined in `infra/terraform`.
 
 ## How it's used
 
-1. **Farms**: a map and table of every farm → a farm's turbines → one turbine's charts (one per metric, zoomable) and readings.
+1. **Farms**: a map and table of every farm → a farm's turbines and current weather, with a Weather history tab (charts for up to 31 days) → one turbine's charts (one per metric, zoomable) and readings.
 2. **Turbines**: the whole fleet in one table, with status pills when a turbine stops reporting (no data in 15/30/60 min).
 3. **Alerting**: define threshold rules (e.g. gearbox above 100 °C = error); every incoming reading is checked against them, and History shows what fired.
 4. **Reporting**: pick a farm or turbine and a date range, see charts and a table, download a CSV.

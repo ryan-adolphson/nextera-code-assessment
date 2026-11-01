@@ -6,8 +6,6 @@ export type MarkerLevel = 'error' | 'warn' | 'info';
 /** Theme colours, read from the app's CSS variables (re-read when light/dark mode changes). */
 export interface ChartTheme {
   series: string;
-  /** A reference line over the readings (`--series-2`). */
-  overlay: string;
   grid: string;
   text: string;
   muted: string;
@@ -22,7 +20,6 @@ export function readTheme(): ChartTheme {
   const get = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
   return {
     series: get('--series-1', '#2a78d6'),
-    overlay: get('--series-2', '#9c36b5'),
     grid: get('--border', '#e3e3e8'),
     text: get('--text', '#1a1a1a'),
     muted: get('--muted', '#6b6b6b'),

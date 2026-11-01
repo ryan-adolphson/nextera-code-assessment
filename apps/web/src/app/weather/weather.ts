@@ -7,21 +7,17 @@ import {
   startOfDay,
   subDays,
 } from 'date-fns';
-import { ChartSeries } from '../charts/chart-group';
-import { ChartOverlay } from '../charts/line-chart';
-import { ChartPoint } from '../charts/scales';
+import type { ChartSeries } from '../charts/chart-group';
+import type { ChartPoint } from '../charts/scales';
 import { dayRange, zoneDayOf } from '../core/days';
 import { zoneContext } from '../core/time-zone';
-import { WeatherDay, WeatherSlot } from './weather.model';
+import { WeatherSlot } from './weather.model';
 
 /** Open-Meteo data comes in 30-minute buckets (UTC, starting :00 and :30). */
 export const WEATHER_STEP_MINUTES = 30;
 export const WEATHER_STEP_MS = minutesToMilliseconds(WEATHER_STEP_MINUTES);
 /** Days in the farm page's daily view: the last 7, ending today (in the zone shown). */
 export const WEATHER_DAYS = 7;
-
-/** The modelled wind on the turbine page's wind chart (a turbine shows its farm's weather). */
-export const WIND_OVERLAY_LABEL = 'Open-Meteo 80 m (farm)';
 
 /** The start of the 30-minute UTC bucket containing `t` (epoch ms). */
 export function slotStart(t: number): number {
@@ -44,11 +40,20 @@ export function slotRange(from: number, to: number): { from: string; to: string 
   };
 }
 
-/** The last `WEATHER_DAYS` days ending today, in `zone`, as the API's [from, to). */
-export function recentDays(now: number, zone: string): { from: string; to: string } {
+/**
+ * The last `WEATHER_DAYS` days ending today, in `zone`: their first and last day (midnights in
+ * `zone`, epoch ms). The Weather history tab's default range.
+ */
+export function weatherDays(now: number, zone: string): { start: number; end: number } {
   const ctx = zoneContext(zone);
   const today = startOfDay(now, { in: ctx });
-  return dayRange(+subDays(today, WEATHER_DAYS - 1, { in: ctx }), +today, zone);
+  return { start: +subDays(today, WEATHER_DAYS - 1, { in: ctx }), end: +today };
+}
+
+/** The last `WEATHER_DAYS` days ending today, in `zone`, as the API's [from, to). */
+export function recentDays(now: number, zone: string): { from: string; to: string } {
+  const { start, end } = weatherDays(now, zone);
+  return dayRange(start, end, zone);
 }
 
 /** 30-minute buckets in a calendar day ("2026-03-08") in `zone`: 48, or 46/50 on a DST day. */
@@ -69,12 +74,8 @@ export function latestSlot(slots: readonly WeatherSlot[], now: number): WeatherS
   return latest;
 }
 
-/** The day `date` from the daily points, or null. */
-export function dayOfWeather(days: readonly WeatherDay[], date: string): WeatherDay | null {
-  return days.find((d) => d.date === date) ?? null;
-}
-
-type SlotMetric = keyof Omit<WeatherSlot, 'time' | 'samples'>;
+/** A metric of a 30-minute bucket. */
+export type SlotMetric = keyof Omit<WeatherSlot, 'time' | 'samples'>;
 
 /** One metric as chart points, ascending; missing values are left out (the line breaks there). */
 export function slotPoints(slots: readonly WeatherSlot[], key: SlotMetric): ChartPoint[] {
@@ -86,31 +87,64 @@ export function slotPoints(slots: readonly WeatherSlot[], key: SlotMetric): Char
     .sort((a, b) => a.t - b.t);
 }
 
-/** The 80 m wind as an overlay of the measured wind chart, or null without any value. */
-export function windOverlay(slots: readonly WeatherSlot[]): ChartOverlay | null {
-  const points = slotPoints(slots, 'windSpeed80mMs');
-  return points.length ? { label: WIND_OVERLAY_LABEL, points, stepMs: WEATHER_STEP_MS } : null;
-}
-
-/** The weather charts under the turbine's telemetry: temperature, gusts and precipitation. */
-export function weatherCharts(slots: readonly WeatherSlot[]): ChartSeries[] {
-  const chart = (key: string, title: string, unit: string, metric: SlotMetric): ChartSeries => ({
-    key,
-    title,
-    unit,
+/** The Weather history tab's charts, in order: one metric each. */
+export const WEATHER_HISTORY_CHARTS: readonly {
+  key: string;
+  title: string;
+  unit: string;
+  decimals: number;
+  metric: SlotMetric;
+}[] = [
+  {
+    key: 'wind-80m',
+    title: 'Wind speed, 80 m (mean)',
+    unit: 'm/s',
     decimals: 1,
+    metric: 'windSpeed80mMs',
+  },
+  {
+    key: 'wind-10m',
+    title: 'Wind speed, 10 m',
+    unit: 'm/s',
+    decimals: 1,
+    metric: 'windSpeed10mMs',
+  },
+  { key: 'gusts', title: 'Wind gusts, 10 m', unit: 'm/s', decimals: 1, metric: 'windGusts10mMs' },
+  {
+    key: 'temperature',
+    title: 'Temperature, 2 m',
+    unit: '°C',
+    decimals: 1,
+    metric: 'temperature2mC',
+  },
+  {
+    key: 'precipitation',
+    title: 'Precipitation per 30 min',
+    unit: 'mm',
+    decimals: 1,
+    metric: 'precipitationMm',
+  },
+  {
+    key: 'humidity',
+    title: 'Relative humidity, 2 m',
+    unit: '%',
+    decimals: 0,
+    metric: 'relativeHumidity2mPct',
+  },
+  {
+    key: 'pressure',
+    title: 'Surface pressure',
+    unit: 'hPa',
+    decimals: 0,
+    metric: 'surfacePressureHpa',
+  },
+  { key: 'cloud-cover', title: 'Cloud cover', unit: '%', decimals: 0, metric: 'cloudCoverPct' },
+];
+
+/** The Weather history charts for `slots` (a chart's points are empty when it has no values). */
+export function weatherHistoryCharts(slots: readonly WeatherSlot[]): ChartSeries[] {
+  return WEATHER_HISTORY_CHARTS.map(({ metric, ...chart }) => ({
+    ...chart,
     points: slotPoints(slots, metric),
-    kind: 'line',
-    gapMs: WEATHER_STEP_MS * 1.5,
-  });
-  return [
-    chart('weather-temperature', 'Temperature, 2 m (Open-Meteo)', '°C', 'temperature2mC'),
-    chart('weather-gusts', 'Wind gusts, 10 m (Open-Meteo)', 'm/s', 'windGusts10mMs'),
-    chart(
-      'weather-precipitation',
-      'Precipitation per 30 min (Open-Meteo)',
-      'mm',
-      'precipitationMm',
-    ),
-  ];
+  }));
 }

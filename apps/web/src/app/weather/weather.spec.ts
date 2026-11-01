@@ -1,14 +1,13 @@
 import { weatherSlot } from '../fleet/testing';
 import {
-  WEATHER_STEP_MS,
   expectedSamples,
   latestSlot,
   recentDays,
   slotPoints,
   slotRange,
   slotStart,
-  weatherCharts,
-  windOverlay,
+  weatherDays,
+  weatherHistoryCharts,
 } from './weather';
 
 describe('weather helpers', () => {
@@ -56,34 +55,41 @@ describe('weather helpers', () => {
     expect(latestSlot([], t('2026-01-03T00:00:00Z'))).toBeNull();
   });
 
-  it('slotPoints: ascending, without missing values', () => {
-    const slots = [
-      weatherSlot({ time: '2026-01-02T23:30:00.000Z', windSpeed80mMs: 9 }),
-      weatherSlot({ time: '2026-01-02T23:00:00.000Z', windSpeed80mMs: null }),
-      weatherSlot({ time: '2026-01-02T22:30:00.000Z', windSpeed80mMs: 8 }),
-    ];
-    expect(slotPoints(slots, 'windSpeed80mMs')).toEqual([
-      { t: t('2026-01-02T22:30:00Z'), v: 8 },
-      { t: t('2026-01-02T23:30:00Z'), v: 9 },
-    ]);
-  });
-
-  it('windOverlay: the 80 m wind, or null without a value', () => {
-    expect(windOverlay([weatherSlot({ windSpeed80mMs: null })])).toBeNull();
-    expect(windOverlay([weatherSlot()])).toEqual({
-      label: 'Open-Meteo 80 m (farm)',
-      points: [{ t: t('2026-01-02T23:30:00Z'), v: 9.4 }],
-      stepMs: WEATHER_STEP_MS,
+  it('weatherDays: the first and last of the last 7 days (midnights in the zone)', () => {
+    const now = t('2026-01-03T03:00:00Z'); // Jan 2, 21:00 in Chicago
+    expect(weatherDays(now, 'UTC')).toEqual({
+      start: t('2025-12-28T00:00:00Z'),
+      end: t('2026-01-03T00:00:00Z'),
+    });
+    expect(weatherDays(now, 'America/Chicago')).toEqual({
+      start: t('2025-12-27T06:00:00Z'),
+      end: t('2026-01-02T06:00:00Z'),
     });
   });
 
-  it('weatherCharts: temperature, gusts and precipitation as lines on 30-minute steps', () => {
-    const charts = weatherCharts([weatherSlot()]);
-    expect(charts.map((c) => [c.key, c.unit, c.kind, c.points[0].v])).toEqual([
-      ['weather-temperature', '°C', 'line', -1.5],
-      ['weather-gusts', 'm/s', 'line', 12.5],
-      ['weather-precipitation', 'mm', 'line', 0.2],
+  it('slotPoints: one metric, ascending, without missing values', () => {
+    const slots = [
+      weatherSlot({ time: '2026-01-02T01:00:00.000Z', temperature2mC: 2 }),
+      weatherSlot({ time: '2026-01-02T00:00:00.000Z', temperature2mC: 1 }),
+      weatherSlot({ time: '2026-01-02T00:30:00.000Z', temperature2mC: null }),
+    ];
+    expect(slotPoints(slots, 'temperature2mC')).toEqual([
+      { t: t('2026-01-02T00:00:00Z'), v: 1 },
+      { t: t('2026-01-02T01:00:00Z'), v: 2 },
     ]);
-    expect(charts[0].gapMs).toBe(WEATHER_STEP_MS * 1.5);
+  });
+
+  it('weatherHistoryCharts: a line chart per metric, in order', () => {
+    const charts = weatherHistoryCharts([weatherSlot({ time: '2026-01-02T00:00:00.000Z' })]);
+    expect(charts.map((c) => [c.key, c.unit, c.decimals, c.points.map((p) => p.v)])).toEqual([
+      ['wind-80m', 'm/s', 1, [9.4]],
+      ['wind-10m', 'm/s', 1, [6]],
+      ['gusts', 'm/s', 1, [12.5]],
+      ['temperature', '°C', 1, [-1.5]],
+      ['precipitation', 'mm', 1, [0.2]],
+      ['humidity', '%', 0, [80]],
+      ['pressure', 'hPa', 0, [990]],
+      ['cloud-cover', '%', 0, [75]],
+    ]);
   });
 });

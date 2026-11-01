@@ -37,14 +37,13 @@ export function candleSpan(c: Candle, zone: string = UTC_ZONE): string {
 
 /**
  * Candle tooltip: start/end (the open/close: first and last reading of the period), low and high (text ink, aligned figures) with the unit, then the time
- * span and the number of readings, then any extra `lines`. Text only, never HTML.
+ * span and the number of readings. Text only, never HTML.
  */
 export function candleTooltip(
   c: Candle,
   format: (key: 'open' | 'close' | 'low' | 'high') => string,
   unit: string,
   zone: string = UTC_ZONE,
-  lines: readonly string[] = [],
 ): HTMLElement {
   const root = document.createElement('div');
   root.className = 'text-xs leading-5';
@@ -68,11 +67,5 @@ export function candleTooltip(
   time.className = 'block text-muted';
   time.textContent = `${candleSpan(c, zone)} · ${c.count} ${c.count === 1 ? 'reading' : 'readings'}`;
   root.append(time);
-  for (const line of lines) {
-    const item = document.createElement('span');
-    item.className = 'block text-ink';
-    item.textContent = line;
-    root.append(item);
-  }
   return root;
 }

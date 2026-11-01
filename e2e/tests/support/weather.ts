@@ -1,8 +1,8 @@
 import type { Page, Request, Route } from '@playwright/test';
 
 /**
- * Weather mocks for the browser tests: response bodies in the API's shape (GET /api/farms/:id/weather
- * and GET /api/turbines/:id/weather, see apps/web/src/app/weather/weather.model.ts) and route
+ * Weather mocks for the browser tests: response bodies in the API's shape (GET /api/farms/:id/weather,
+ * see apps/web/src/app/weather/weather.model.ts; the farm Overview and its Weather history tab) and route
  * helpers. The db:seed fixture has no weather (the sync only covers recent days), so populated
  * views are tested with these deterministic bodies, built from the request's own from/to/timeZone.
  */
@@ -124,32 +124,35 @@ export function weatherQuery(request: Request) {
 }
 
 const FARM_WEATHER = /\/api\/farms\/([^/]+)\/weather$/;
-const TURBINE_WEATHER = /\/api\/turbines\/([^/]+)\/weather$/;
 
 export const isFarmWeather = (url: URL) => FARM_WEATHER.test(url.pathname);
-export const isTurbineWeather = (url: URL) => TURBINE_WEATHER.test(url.pathname);
 
-/** True for a weather request (farm or turbine) of `interval`. */
+/** True for a farm weather request of `interval`. */
 export function isWeatherRequest(request: Request, interval?: Interval): boolean {
   const url = new URL(request.url());
-  if (!isFarmWeather(url) && !isTurbineWeather(url)) return false;
+  if (!isFarmWeather(url)) return false;
   return !interval || weatherQuery(request).interval === interval;
 }
 
+/** Options for the mocked bodies (all optional; the defaults answer every bucket/day asked for). */
+export interface WeatherMockOptions {
+  /** Daily: the samples of the last day (a partial today), else 48. */
+  partialLastDay?: number | null;
+  /** 30-minute: answer only the buckets that have started by this time (epoch ms), as the API would. */
+  until?: number;
+  /** 30-minute: bucket start times (ISO) left out of the answer (a missing bucket). */
+  missing?: readonly string[];
+}
+
 /** A 200 in the API's shape for the request: 30-minute buckets or days, with the echoed query. */
-export async function fulfillWeather(
-  route: Route,
-  options: { partialLastDay?: number | null } = {},
-): Promise<void> {
+export async function fulfillWeather(route: Route, options: WeatherMockOptions = {}): Promise<void> {
   const request = route.request();
   const url = new URL(request.url());
   const { from, to, interval, timeZone } = weatherQuery(request);
   const zone = timeZone ?? 'UTC';
   const farm = FARM_WEATHER.exec(url.pathname);
-  const turbine = TURBINE_WEATHER.exec(url.pathname);
   const body = {
     farmId: farm ? decodeURIComponent(farm[1]) : 'FARM01',
-    ...(turbine ? { turbineId: decodeURIComponent(turbine[1]) } : {}),
     from,
     to,
     interval,
@@ -157,7 +160,11 @@ export async function fulfillWeather(
     points:
       interval === 'daily'
         ? daysBetween(from, to, zone, options.partialLastDay ?? null)
-        : slotsBetween(from, to),
+        : slotsBetween(from, to).filter(
+            (slot) =>
+              (options.until === undefined || Date.parse(slot.time) <= options.until) &&
+              !options.missing?.includes(slot.time),
+          ),
   };
   await route.fulfill({ status: 200, json: body });
 }
@@ -171,20 +178,20 @@ export async function failWeather(route: Route): Promise<void> {
 }
 
 /**
- * Routes every farm and turbine weather request: `fail()` decides per request whether to answer
+ * Routes every farm weather request: `fail()` decides per request whether to answer
  * 500 (so a test can switch the API back to healthy before Retry). Resolves the requests seen.
  */
 export async function mockWeather(
   page: Page,
-  options: { fail?: () => boolean; partialLastDay?: number | null } = {},
+  options: WeatherMockOptions & { fail?: () => boolean } = {},
 ): Promise<Request[]> {
   const seen: Request[] = [];
   await page.route(
-    (url) => isFarmWeather(url) || isTurbineWeather(url),
+    (url) => isFarmWeather(url),
     async (route) => {
       seen.push(route.request());
       if (options.fail?.()) await failWeather(route);
-      else await fulfillWeather(route, { partialLastDay: options.partialLastDay });
+      else await fulfillWeather(route, options);
     },
   );
   return seen;

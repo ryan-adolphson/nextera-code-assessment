@@ -4,7 +4,7 @@ import { Observable } from 'rxjs';
 import { API_BASE_URL } from '../core/api-base-url';
 import { WeatherInterval, WeatherQuery, WeatherResponse } from './weather.model';
 
-/** Open-Meteo weather stored per farm (viewer role). 404: unknown farm/turbine; 400: bad range/zone. */
+/** Open-Meteo weather stored per farm (viewer role). 404: unknown farm; 400: bad range/zone. */
 @Injectable({ providedIn: 'root' })
 export class WeatherApi {
   private readonly http = inject(HttpClient);
@@ -17,17 +17,6 @@ export class WeatherApi {
   ): Observable<WeatherResponse<I>> {
     return this.http.get<WeatherResponse<I>>(
       `${this.baseUrl}/farms/${encodeURIComponent(farmId)}/weather`,
-      { params: queryParams(query) },
-    );
-  }
-
-  /** GET /api/turbines/:id/weather: the turbine's farm's weather (the body adds `turbineId`). */
-  turbine<I extends WeatherInterval>(
-    turbineId: string,
-    query: WeatherQuery<I>,
-  ): Observable<WeatherResponse<I>> {
-    return this.http.get<WeatherResponse<I>>(
-      `${this.baseUrl}/turbines/${encodeURIComponent(turbineId)}/weather`,
       { params: queryParams(query) },
     );
   }

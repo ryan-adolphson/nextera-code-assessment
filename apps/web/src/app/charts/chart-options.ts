@@ -19,8 +19,7 @@ export interface OptionHooks {
 
 /**
  * The static ECharts option: axes, dataZoom (inside + slider), the driven axis tooltip and the
- * series in a fixed order (0 readings, a line or candlesticks; 1 hover dot; 2 marker scatter;
- * 3 the optional overlay line).
+ * series in a fixed order (0 readings, a line or candlesticks; 1 hover dot; 2 marker scatter).
  * Data, colours and ticks are set later (render, `themeOption`, updateTicks).
  */
 export function baseOption(kind: ChartKind, hooks: OptionHooks) {
@@ -149,18 +148,6 @@ export function baseOption(kind: ChartKind, hooks: OptionHooks) {
         z: 4,
         tooltip: { show: false },
       },
-      {
-        id: 'overlay', // a reference line over the readings (e.g. modelled wind); never hovered
-        type: 'line',
-        data: [],
-        connectNulls: false,
-        showSymbol: false,
-        lineStyle: { width: 1.5 },
-        emphasis: { disabled: true },
-        silent: true,
-        z: 2,
-        tooltip: { show: false },
-      },
     ],
   };
 }
@@ -231,7 +218,6 @@ export function themeOption(theme: ChartTheme, kind: ChartKind) {
         itemStyle: { color: theme.series, borderColor: theme.surface, borderWidth: 2 },
       },
       { id: 'markers', itemStyle: { borderColor: theme.surface } },
-      { id: 'overlay', lineStyle: { color: theme.overlay }, itemStyle: { color: theme.overlay } },
     ],
   };
 }

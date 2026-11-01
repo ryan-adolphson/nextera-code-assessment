@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request, type Response } from '@playwright/test';
+import { expect, test, type Page, type Request } from '@playwright/test';
 import { fixBrowserDate } from '../support/clock.js';
 import { SEED_NOW, logIn, signIn } from '../support/session.js';
 import { boundTelemetryAt } from '../support/telemetry.js';
@@ -12,18 +12,17 @@ import {
   type WeatherSlot,
 } from '../support/weather.js';
 
-// Plan 13: Open-Meteo weather on the farm page and the turbine page. Read-only.
+// Plan 13: Open-Meteo weather on the farm page (FarmWeather, the only place the web app shows
+// weather), and a guard that the turbine page shows none and sends no weather request. Read-only.
 //
 // The db:seed fixture has no weather (the sync only fetches recent days), so the populated views
 // use page.route mocks in the API's shape (support/weather.ts), built from each request's own
-// from/to/timeZone. One test per page goes to the real API: at the fixture's date it shows the
-// empty state (or the data, if this DB happens to have weather for those days).
+// from/to/timeZone. One test goes to the real API: at the fixture's date it shows the empty state
+// (or the data, if this DB happens to have weather for those days).
 //
-// The clock is fixed at SEED_NOW (2026-01-03T00:00Z): the turbine page's default 24 h window is
-// Jan 2, the farm's 7 days end on Jan 3 (UTC). The live stream is cut (abort) so no reading from
-// the demo feed or another test changes the page mid-test, and the turbine's history requests are
-// bounded at SEED_NOW (boundTelemetryAt) so a DB that also holds later demo readings still shows
-// the fixture's Jan 2 (TURB001: 288 readings).
+// The clock is fixed at SEED_NOW (2026-01-03T00:00Z): the farm's 7 days end on Jan 3 (UTC). The
+// live stream is cut (abort) so no reading from the demo feed or another test changes the page
+// mid-test.
 
 const FARM = 'FARM01';
 const FARM_NAME = 'Prairie Ridge';
@@ -31,13 +30,8 @@ const TURBINE = 'TURB001';
 const TURBINE_URL = `/farms/${FARM}/turbines/${TURBINE}`;
 const FARM_URL = `/farms/${FARM}`;
 const NOW_MS = SEED_NOW.getTime();
-const OVERLAY = 'Open-Meteo 80 m (farm)';
-const WEATHER_METRICS = ['weather-temperature', 'weather-gusts', 'weather-precipitation'] as const;
 
-const chart = (page: Page, metric: string) => page.locator(`app-line-chart[data-metric="${metric}"]`);
-const weather = (page: Page) => page.getByTestId('weather');
 const farmWeather = (page: Page) => page.getByTestId('farm-weather');
-const readingRows = (page: Page) => page.getByTestId('history').getByRole('row');
 
 /** The next weather request of `interval` (sent by the page). */
 const weatherRequest = (page: Page, interval: '30min' | 'daily') =>
@@ -48,160 +42,38 @@ const weatherResponse = (page: Page, interval: '30min' | 'daily') =>
 /** A UTC browser at SEED_NOW, no live stream, signed in as admin. */
 async function open(page: Page): Promise<void> {
   await page.route('**/api/events**', (route) => route.abort());
-  await boundTelemetryAt(page, SEED_NOW);
   await signIn(page, 'admin');
 }
 
-/** Opens TURBINE's page and waits until its telemetry is drawn (the readings table has rows). */
-async function openTurbine(page: Page): Promise<void> {
-  await page.goto(TURBINE_URL);
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(TURBINE);
-  await expect(readingRows(page).nth(1)).toBeVisible();
-}
-
-test.describe('Weather on the turbine page', () => {
-  test('draws the farm 80 m wind over the wind chart and adds temperature, gusts and precipitation charts', async ({
-    page,
-  }) => {
+test.describe('No weather on the turbine page', () => {
+  test('the turbine page shows no weather and sends no weather request', async ({ page }) => {
     await open(page);
-    const seen = await mockWeather(page);
-    const request = weatherRequest(page, '30min');
-    await openTurbine(page);
-
-    // One request for the 24 h window in whole 30-minute buckets; no time zone for 30min.
-    const query = weatherQuery(await request);
-    expect(query).toEqual({
-      from: '2026-01-02T00:00:00.000Z',
-      to: '2026-01-03T00:30:00.000Z',
-      interval: '30min',
-      timeZone: null,
+    // History bounded at SEED_NOW so a DB with later demo readings still draws the fixture's Jan 2.
+    await boundTelemetryAt(page, SEED_NOW);
+    // Any weather request (the API still has GET /api/turbines/:id/weather; the page must not call it).
+    const weatherCalls: string[] = [];
+    page.on('request', (r) => {
+      if (new URL(r.url()).pathname.endsWith('/weather')) weatherCalls.push(r.url());
     });
-    expect(new URL((await request).url()).pathname).toMatch(
-      new RegExp(`/api/turbines/${TURBINE}/weather$`),
+    const history = page.waitForResponse((r) =>
+      new RegExp(`/api/turbines/${TURBINE}/telemetry$`).test(new URL(r.url()).pathname),
     );
-
-    await expect(weather(page)).toHaveAttribute('data-state', 'ok');
-    await expect(page.getByTestId('weather-heading')).toHaveText(`Weather at ${FARM_NAME}`);
-    await expect(page.getByTestId('weather-note')).toContainText(
-      "The wind chart compares it at 80 m with the turbine's measured wind.",
+    const stats = page.waitForResponse((r) =>
+      new RegExp(`/api/turbines/${TURBINE}/telemetry/stats$`).test(new URL(r.url()).pathname),
     );
-    await expect(page.getByTestId('weather-loading')).toHaveCount(0);
-    await expect(page.getByTestId('weather-empty')).toHaveCount(0);
-    await expect(page.getByTestId('weather-error')).toHaveCount(0);
+    await page.goto(TURBINE_URL);
+    await expect(page.getByRole('heading', { level: 1 })).toContainText(TURBINE);
+    // The page's own loads have answered (the weather used to be asked for alongside them).
+    expect((await history).status()).toBe(200);
+    expect((await stats).status()).toBe(200);
+    // The wind chart is drawn (it used to carry the farm's 80 m overlay).
+    const wind = page.locator('app-line-chart[data-metric="windSpeedMs"]');
+    await expect(wind.getByTestId('latest')).toBeVisible();
 
-    // The measured wind chart names both lines and summarises the overlay's latest value.
-    const wind = chart(page, 'windSpeedMs');
-    await expect(wind.getByTestId('series-legend')).toContainText('Turbine (measured)');
-    await expect(wind.getByTestId('overlay-legend')).toHaveText(OVERLAY);
-    const latest = slotAt(NOW_MS); // the bucket starting at the window's end (00:00) is the last
-    // The chart's text alternative (role img) names the overlay's latest value.
-    await expect(
-      wind.getByRole('img', {
-        name: `${OVERLAY}: latest ${oneDecimal(latest.windSpeed80mMs!)} m/s at`,
-      }),
-    ).toBeVisible();
-    // Only the wind chart has the overlay.
-    await expect(chart(page, 'powerOutputKw').getByTestId('overlay-legend')).toHaveCount(0);
-
-    // The three weather charts, drawn (SVG) with the window's latest bucket as their label.
-    const expected: Record<(typeof WEATHER_METRICS)[number], [string, string]> = {
-      'weather-temperature': ['Temperature, 2 m (Open-Meteo)', `${oneDecimal(latest.temperature2mC!)} °C`],
-      'weather-gusts': ['Wind gusts, 10 m (Open-Meteo)', `${oneDecimal(latest.windGusts10mMs!)} m/s`],
-      'weather-precipitation': [
-        'Precipitation per 30 min (Open-Meteo)',
-        `${oneDecimal(latest.precipitationMm!)} mm`,
-      ],
-    };
-    for (const metric of WEATHER_METRICS) {
-      const [title, value] = expected[metric];
-      const c = chart(page, metric);
-      await expect(c.getByTestId('chart-title')).toHaveText(title);
-      await expect(c.getByTestId('latest')).toHaveText(value);
-      await expect(c.locator('svg').first()).toBeVisible();
-      // 49 buckets in the window (Jan 2 00:00 … Jan 3 00:00 inclusive).
-      await expect(c.getByRole('img', { name: `${title}: latest` })).toHaveAccessibleName(
-        /49 readings\./,
-      );
-    }
-
-    // The weather was asked for once (never per live reading or re-render).
-    expect(seen.filter((r) => isWeatherRequest(r))).toHaveLength(1);
-  });
-
-  test('a failing weather request shows the error and Retry, keeps the telemetry, and Retry recovers', async ({
-    page,
-  }) => {
-    await open(page);
-    let failing = true;
-    const seen = await mockWeather(page, { fail: () => failing });
-    await openTurbine(page);
-
-    await expect(weather(page)).toHaveAttribute('data-state', 'error');
-    await expect(page.getByTestId('weather-error')).toContainText(
-      'Weather is unavailable right now; the telemetry is not affected.',
-    );
-    const retry = page.getByTestId('weather-retry');
-    await expect(retry).toBeVisible();
-    await expect(retry).toHaveText('Retry');
-
-    // The telemetry is intact: every metric chart drawn, the readings listed, no weather drawn.
-    for (const metric of ['powerOutputKw', 'windSpeedMs', 'rotorRpm', 'bladePitchDeg', 'gearboxTempC']) {
-      await expect(chart(page, metric).getByTestId('latest')).toBeVisible();
-    }
-    await expect(chart(page, 'alerts')).toBeVisible();
-    const rows = await readingRows(page).count();
-    expect(rows).toBeGreaterThan(1);
-    await expect(chart(page, 'windSpeedMs').getByTestId('overlay-legend')).toHaveCount(0);
-    for (const metric of WEATHER_METRICS) await expect(chart(page, metric)).toHaveCount(0);
-
-    // The API is healthy again: Retry sends the same request once more and draws the weather.
-    failing = false;
-    const again = weatherRequest(page, '30min');
-    await retry.click();
-    expect(weatherQuery(await again)).toEqual(weatherQuery(seen[0]));
-    await expect(weather(page)).toHaveAttribute('data-state', 'ok');
-    await expect(page.getByTestId('weather-error')).toHaveCount(0);
-    await expect(chart(page, 'windSpeedMs').getByTestId('overlay-legend')).toHaveText(OVERLAY);
-    for (const metric of WEATHER_METRICS) await expect(chart(page, metric)).toBeVisible();
-    await expect(readingRows(page)).toHaveCount(rows);
-  });
-
-  test('the real API: no weather synced for the fixture days shows the empty state (or the synced data)', async ({
-    page,
-  }) => {
-    await open(page);
-    const response = weatherResponse(page, '30min');
-    await openTurbine(page);
-
-    const res: Response = await response;
-    expect(res.status()).toBe(200);
-    const body = (await res.json()) as {
-      farmId: string;
-      turbineId: string;
-      interval: string;
-      timeZone: string;
-      points: WeatherSlot[];
-    };
-    // The response the web model expects (weather.model.ts): no timeZone sent → "UTC".
-    expect(body).toMatchObject({ farmId: FARM, turbineId: TURBINE, interval: '30min', timeZone: 'UTC' });
-    const windowFrom = NOW_MS - 24 * 60 * 60_000;
-    const inWindow = body.points.some((p) => {
-      const t = Date.parse(p.time);
-      return t + 30 * 60_000 > windowFrom && t <= NOW_MS;
-    });
-
-    if (inWindow) {
-      // This DB has weather for Jan 2026: the populated view instead.
-      await expect(weather(page)).toHaveAttribute('data-state', 'ok');
-      await expect(chart(page, 'weather-temperature')).toBeVisible();
-    } else {
-      await expect(weather(page)).toHaveAttribute('data-state', 'empty');
-      await expect(page.getByTestId('weather-empty')).toHaveText('No weather synced for this period.');
-      await expect(chart(page, 'windSpeedMs').getByTestId('overlay-legend')).toHaveCount(0);
-      for (const metric of WEATHER_METRICS) await expect(chart(page, metric)).toHaveCount(0);
-    }
-    // The telemetry charts are there either way.
-    await expect(chart(page, 'powerOutputKw').getByTestId('latest')).toBeVisible();
+    await expect(page.getByTestId('weather')).toHaveCount(0);
+    await expect(page.getByTestId('weather-heading')).toHaveCount(0);
+    await expect(page.getByTestId('overlay-legend')).toHaveCount(0);
+    expect(weatherCalls).toEqual([]);
   });
 });
 

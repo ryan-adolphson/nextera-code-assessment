@@ -35,11 +35,11 @@ describe('WeatherApi', () => {
     expect(body).toMatchObject({ farmId: 'FARM 01', interval: 'daily', points: [] });
   });
 
-  it('GET /turbines/:id/weather without a time zone when none is given', () => {
-    api.turbine('TURB001', { ...range, interval: '30min' }).subscribe();
-    const req = http.expectOne((r) => r.url === 'http://api.test/api/turbines/TURB001/weather');
+  it('GET /farms/:farmId/weather without a time zone when none is given', () => {
+    api.farm('FARM01', { ...range, interval: '30min' }).subscribe();
+    const req = http.expectOne((r) => r.url === 'http://api.test/api/farms/FARM01/weather');
     expect(req.request.params.keys()).toEqual(['from', 'to', 'interval']);
     expect(req.request.params.get('interval')).toBe('30min');
-    req.flush(weatherResponse('FARM01', { ...range, interval: '30min' }, [], 'TURB001'));
+    req.flush(weatherResponse('FARM01', { ...range, interval: '30min' }));
   });
 });

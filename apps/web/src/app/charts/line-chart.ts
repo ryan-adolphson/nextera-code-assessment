@@ -118,21 +118,6 @@ export interface ChartMarker {
 }
 
 /**
- * A second, reference line drawn over the readings in the same unit (e.g. modelled wind against
- * the measured wind), in its own colour with a legend entry, its value in the tooltip and the
- * aria-label. Only the readings are hovered and zoomed; the overlay just follows the time axis.
- */
-export interface ChartOverlay {
-  /** Its name in the legend, tooltip and aria-label, e.g. "Open-Meteo 80 m (farm)". */
-  label: string;
-  /** Ascending by t. */
-  points: ChartPoint[];
-  /** The spacing of the points: the line breaks where one is missing, and the tooltip shows the
-   *  point within half a step of the hovered time. */
-  stepMs: number;
-}
-
-/**
  * Single-series line chart (Apache ECharts, SVG renderer) for one metric over time; small
  * multiples share `domain`.
  * - 2px line that breaks at gaps (missing readings are shown, not interpolated); isolated
@@ -184,8 +169,6 @@ export class LineChart {
   readonly markers = input<ChartMarker[]>([]);
   /** Line or candlestick (fixed for the chart's lifetime: read when ECharts is created). */
   readonly kind = input<ChartKind>('line');
-  /** A reference line over the readings (same unit), or null. */
-  readonly overlay = input<ChartOverlay | null>(null);
 
   private readonly plot = viewChild.required<ElementRef<HTMLElement>>('plot');
   private readonly destroyRef = inject(DestroyRef);
@@ -231,21 +214,6 @@ export class LineChart {
     const { from, to } = this.domain();
     return this.markers().filter((m) => m.t >= from && m.t <= to);
   });
-  /** The overlay's points inside the domain. */
-  private readonly overlayVisible = computed(() => {
-    const overlay = this.overlay();
-    if (!overlay) return [];
-    const { from, to } = this.domain();
-    return overlay.points.filter((p) => p.t >= from && p.t <= to);
-  });
-  private readonly overlayData = computed(() => {
-    const overlay = this.overlay();
-    return overlay ? withGapBreaks(this.overlayVisible(), overlay.stepMs * 1.5) : [];
-  });
-  /** The legend of a chart with an overlay: the readings, then the overlay. */
-  protected readonly overlayLabel = computed(() =>
-    this.overlay() && this.overlayVisible().length ? this.overlay()!.label : null,
-  );
   private readonly markerAt = computed(() => new Map(this.visibleMarkers().map((m) => [m.t, m])));
   /** The marker levels shown, worst first, with their counts (the legend). */
   protected readonly markerLegend = computed(() =>
@@ -276,7 +244,6 @@ export class LineChart {
     const values = this.visible().map((p) => p.v);
     if (!values.length) return null;
     values.push(...this.statLines().map((line) => line.value));
-    values.push(...this.overlayVisible().map((p) => p.v));
     return paddedRange(Math.min(...values), Math.max(...values));
   });
   protected readonly last = computed(() => this.visible().at(-1) ?? null);
@@ -301,22 +268,15 @@ export class LineChart {
       this.kind() === 'candlestick'
         ? `${this.visible().length} readings in ${this.candles().length} ${this.candleLabel()} candles.`
         : `${this.visible().length} readings.`;
-    const overlayLast = this.overlayVisible().at(-1);
-    const overlay =
-      overlayLast && this.overlayLabel()
-        ? ` ${this.overlayLabel()}: latest ${this.withUnit(overlayLast.v)} at ${formatTimestamp(overlayLast.t, this.zone())}.`
-        : '';
     const summary = last
-      ? `${this.title()}: latest ${this.format(last.v)} ${this.unit()} at ${formatTimestamp(last.t, this.zone())}. ${count}${stats}${flagged}${overlay}`
+      ? `${this.title()}: latest ${this.format(last.v)} ${this.unit()} at ${formatTimestamp(last.t, this.zone())}. ${count}${stats}${flagged}`
       : `${this.title()}: no readings in this range.`;
     if (!hovered) return summary;
-    const extra = this.extraLines(hovered.t);
-    const details = extra.length ? ` ${extra.join('. ')}.` : '';
     const candle = this.candleAt().get(hovered.t);
-    if (candle) return `${summary} Selected: ${this.describeCandle(candle)}.${details}`;
+    if (candle) return `${summary} Selected: ${this.describeCandle(candle)}.`;
     const marker = this.markerAt().get(hovered.t);
-    const flaggedLines = marker?.lines.length ? ` ${marker.lines.join('. ')}.` : '';
-    return `${summary} Selected: ${this.format(hovered.v)} ${this.unit()} at ${formatTimestamp(hovered.t, this.zone())}.${flaggedLines}${details}`;
+    const details = marker?.lines.length ? ` ${marker.lines.join('. ')}.` : '';
+    return `${summary} Selected: ${this.format(hovered.v)} ${this.unit()} at ${formatTimestamp(hovered.t, this.zone())}.${details}`;
   });
 
   constructor() {
@@ -334,7 +294,6 @@ export class LineChart {
       this.domain();
       this.statLines();
       this.visibleMarkers();
-      this.overlayData();
       this.decimals();
       this.unit();
       untracked(() => this.render());
@@ -353,25 +312,6 @@ export class LineChart {
     });
 
     this.destroyRef.onDestroy(() => this.chart?.dispose());
-  }
-
-  /** "9.4 m/s": a value with the chart's decimals and unit. */
-  private withUnit(v: number): string {
-    return `${this.format(v)} ${this.unit()}`.trim();
-  }
-
-  /**
-   * The tooltip line of the overlay at time t: its point within half a step
-   * ("Open-Meteo 80 m (farm): 9.4 m/s"), or none.
-   */
-  private extraLines(t: number): string[] {
-    const overlay = this.overlay();
-    const points = this.overlayVisible();
-    if (!overlay || !points.length) return [];
-    const nearest = points[nearestIndex(points, t)];
-    return Math.abs(nearest.t - t) <= overlay.stepMs / 2
-      ? [`${overlay.label}: ${this.withUnit(nearest.v)}`]
-      : [];
   }
 
   protected format(v: number): string {
@@ -505,7 +445,6 @@ export class LineChart {
             itemStyle: { color: this.theme.levels[m.level] },
           })),
         },
-        { id: 'overlay', data: this.overlayData().map((d) => [d.x, d.y]) },
       ],
     });
     this.applyView();
@@ -648,19 +587,13 @@ export class LineChart {
     const [t, v] = first?.value ?? [];
     const candle = t == null ? undefined : this.candleAt().get(t);
     if (candle)
-      return candleTooltip(
-        candle,
-        (key) => this.format(candle[key]),
-        this.unit(),
-        this.zone(),
-        this.extraLines(t!),
-      );
+      return candleTooltip(candle, (key) => this.format(candle[key]), this.unit(), this.zone());
     return t == null || v == null
       ? ''
       : tooltipContent(
           `${this.format(v)} ${this.unit()}`,
           t,
-          [...(this.markerAt().get(t)?.lines ?? []), ...this.extraLines(t)],
+          this.markerAt().get(t)?.lines ?? [],
           this.zone(),
         );
   }

@@ -283,10 +283,8 @@ export const weatherResponse = <I extends WeatherInterval>(
   farmId: string,
   query: WeatherQuery<I>,
   points: WeatherResponse<I>['points'] = [],
-  turbineId?: string,
 ): WeatherResponse<I> => ({
   farmId,
-  ...(turbineId && { turbineId }),
   from: query.from,
   to: query.to,
   interval: query.interval,
@@ -340,10 +338,6 @@ export function fakes(farms: FarmOverview[] = farmsFixture()) {
     farm: vi.fn(
       <I extends WeatherInterval>(farmId: string, query: WeatherQuery<I>) =>
         of(weatherResponse(farmId, query)) as Observable<WeatherResponse<I>>,
-    ),
-    turbine: vi.fn(
-      <I extends WeatherInterval>(turbineId: string, query: WeatherQuery<I>) =>
-        of(weatherResponse('FARM01', query, [], turbineId)) as Observable<WeatherResponse<I>>,
     ),
   };
   return { api, sse, weather };

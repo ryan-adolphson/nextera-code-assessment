@@ -18,14 +18,10 @@ const points = (...values: number[]) => values.map((v, i) => ({ t: t0 + i * 5 * 
       [alerts]="alerts()"
       [domain]="domain"
       [resetKey]="resetKey()"
-      [extraCharts]="extra()"
-    >
-      <p data-testid="projected">Weather</p>
-    </app-chart-group>
+    />
   `,
 })
 class Host {
-  readonly extra = signal<ChartSeries[]>([]);
   readonly charts: ChartSeries[] = [
     { key: 'power', title: 'Power output', unit: 'kW', decimals: 0, points: points(1, 2, 3) },
     {
@@ -65,43 +61,6 @@ describe('ChartGroup', () => {
     ]);
     expect(charts()[2].markers()).toHaveLength(1);
     expect(el.querySelector('[data-testid=group]')!.getAttribute('aria-label')).toBe('Test charts');
-  });
-
-  it('adds the extra charts after the alerts chart and the projected content, with their overrides', async () => {
-    fixture.componentInstance.extra.set([
-      {
-        key: 'weather-temperature',
-        title: 'Temperature',
-        unit: '°C',
-        decimals: 1,
-        points: points(2, 3),
-        kind: 'line',
-        gapMs: 45 * MIN,
-        overlay: { label: 'Model', points: points(1), stepMs: 30 * MIN },
-      },
-    ]);
-    await fixture.whenStable();
-    expect(charts().map((c) => c.title())).toEqual([
-      'Power output',
-      'Gearbox temperature',
-      'Alert rules triggered',
-      'Temperature',
-    ]);
-    const [, , , weather] = charts();
-    expect([weather.kind(), weather.gapMs(), weather.overlay()?.label]).toEqual([
-      'line',
-      45 * MIN,
-      'Model',
-    ]);
-    const section = el.querySelector('[data-testid=group]')!;
-    const order = [...section.children].map(
-      (c) => c.getAttribute('data-metric') ?? c.getAttribute('data-testid'),
-    );
-    expect(order).toEqual(['power', 'gearbox', 'alerts', 'projected', 'weather-temperature']);
-    // The shared crosshair reaches them too.
-    charts()[0].hoverAt(t0 + 6 * MIN);
-    await fixture.whenStable();
-    expect(weather.hoverT()).toBe(t0 + 5 * MIN);
   });
 
   it('leaves the alerts chart out when there are no alerts series', async () => {

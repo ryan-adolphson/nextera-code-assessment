@@ -29,8 +29,6 @@
   --danger-bg: #fff5f5;
   /* Chart series colour (validated: lightness band, chroma, >=3:1 on the surface). */
   --series-1: #2a78d6;
-  /* A reference line over a series (modelled weather): purple, 5.8:1 on --bg, 5.2:1 on --surface. */
-  --series-2: #9c36b5;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -52,7 +50,6 @@
     --on-danger: #141417;
     --danger-bg: #3b1d1d;
     --series-1: #3987e5; /* dark step of the same hue, validated against #141417 */
-    --series-2: #cc5de8; /* 5.5:1 on --bg, 4.7:1 on --surface */
   }
 }
 
@@ -78,7 +75,6 @@
   --color-on-danger: var(--on-danger);
   --color-danger-bg: var(--danger-bg);
   --color-series: var(--series-1);
-  --color-series-2: var(--series-2);
 }
 
 @theme {

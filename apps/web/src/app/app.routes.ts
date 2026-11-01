@@ -30,6 +30,14 @@ export const routes: Routes = [
         loadComponent: () => import('./fleet/farm-page').then((m) => m.FarmPage),
       },
       {
+        // The farm's Weather history tab (Overview is /farms/:farmId). The page renames the farm
+        // in the title once its name is known.
+        path: 'farms/:farmId/weather',
+        title: (route) => `${route.paramMap.get('farmId')} · Weather history · Nextera`,
+        loadComponent: () =>
+          import('./weather/farm-weather-history-page').then((m) => m.FarmWeatherHistoryPage),
+      },
+      {
         path: 'farms/:farmId/turbines/:turbineId',
         title: 'Turbine · Nextera',
         loadComponent: () => import('./fleet/turbine-page').then((m) => m.TurbinePage),

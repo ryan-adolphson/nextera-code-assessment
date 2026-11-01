@@ -139,7 +139,6 @@ describe('Deferred views (@defer)', () => {
         'gearboxTempC',
         'alerts',
       ]);
-      expect(app.text(q('weather-heading'))).toBe('Weather at Prairie Ridge');
     });
 
     it('announces the loading state, and the error state keeps the readings', async () => {

@@ -105,48 +105,7 @@
           [gapMs]="gapMs"
           [refreshing]="store.historyLoading()"
           [resetKey]="chartResetKey()"
-          [extraCharts]="weatherCharts()"
-        >
-          <!-- The farm's weather heading and status, under the telemetry charts. -->
-          <div class="mt-3" data-testid="weather" [attr.data-state]="weatherState()">
-            <h2 class="text-lg font-semibold" data-testid="weather-heading">
-              Weather at {{ turbine.farmName }}
-            </h2>
-            <p class="text-sm text-muted" data-testid="weather-note">
-              Open-Meteo model data for the farm location, per 30 minutes. The wind chart compares
-              it at 80 m with the turbine's measured wind.
-            </p>
-            @switch (weatherState()) {
-              @case ('loading') {
-                <p class="mt-1 text-sm text-muted" role="status" data-testid="weather-loading">
-                  Loading weather…
-                </p>
-              }
-              @case ('error') {
-                <p
-                  class="mt-1 flex flex-wrap items-center gap-3 text-sm"
-                  role="status"
-                  data-testid="weather-error"
-                >
-                  Weather is unavailable right now; the telemetry is not affected.
-                  <button
-                    matButton="outlined"
-                    type="button"
-                    data-testid="weather-retry"
-                    (click)="retryWeather()"
-                  >
-                    Retry
-                  </button>
-                </p>
-              }
-              @case ('empty') {
-                <p class="mt-1 text-sm text-muted" role="status" data-testid="weather-empty">
-                  No weather synced for this period.
-                </p>
-              }
-            }
-          </div>
-        </app-chart-group>
+        />
       }
     }
   } @placeholder {

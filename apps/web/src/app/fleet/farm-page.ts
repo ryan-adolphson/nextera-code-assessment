@@ -8,18 +8,28 @@ import { MapView } from '../map/map-view';
 import type { MapMarker } from '../map/map-view';
 import { StatTile } from '../ui/stat-tile';
 import { FarmWeather } from '../weather/farm-weather';
+import { FarmHeader } from './farm-header';
 import { TURBINE_LEGEND, turbineMarkers } from './fleet-markers';
 import { FleetStore } from './fleet.store';
 import { TurbineSortKey, TurbineTable } from './turbine-table';
 
 /**
- * /farms/:farmId: one farm's totals, its Open-Meteo weather (`FarmWeather`), a map of its turbines
+ * /farms/:farmId (the farm's Overview tab; Weather history is /farms/:farmId/weather): one farm's totals, its Open-Meteo weather (`FarmWeather`), a map of its turbines
  * and the shared turbines table (as on /turbines, scoped to this farm, without the Farm column); a
  * marker or a turbine id opens the turbine page.
  */
 @Component({
   selector: 'app-farm-page',
-  imports: [DecimalPipe, RouterLink, FarmWeather, MapPlaceholder, MapView, StatTile, TurbineTable],
+  imports: [
+    DecimalPipe,
+    FarmHeader,
+    RouterLink,
+    FarmWeather,
+    MapPlaceholder,
+    MapView,
+    StatTile,
+    TurbineTable,
+  ],
   templateUrl: './farm-page.html',
 })
 export class FarmPage {

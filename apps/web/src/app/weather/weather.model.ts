@@ -1,7 +1,6 @@
 /**
- * Open-Meteo weather of a farm, as GET /api/farms/:farmId/weather and GET /api/turbines/:id/weather
- * return it (a turbine shows its farm's weather). Mirrors the API's weather responses by hand: the
- * web app doesn't import `@nextera/shared`.
+ * Open-Meteo weather of a farm, as GET /api/farms/:farmId/weather returns it. Mirrors the API's
+ * weather responses by hand: the web app doesn't import `@nextera/shared`.
  */
 
 /** `30min`: half-hour buckets (UTC); `daily`: calendar days in the request's `timeZone`. */
@@ -60,10 +59,9 @@ export interface WeatherQuery<I extends WeatherInterval = WeatherInterval> {
   timeZone?: string;
 }
 
-/** The response body (the turbine endpoint adds `turbineId`). */
+/** The response body. */
 export interface WeatherResponse<I extends WeatherInterval = WeatherInterval> {
   farmId: string;
-  turbineId?: string;
   from: string;
   to: string;
   interval: I;

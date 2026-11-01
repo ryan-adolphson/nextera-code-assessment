@@ -1012,40 +1012,26 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
   - DST days (23/25 h local days, the 30-day limit across a fall-back change) and a +5:30 zone (`days.spec.ts`, `scales.spec.ts`); the fixture's January has no DST change.
   - Storage errors and unknown stored values (`time-zone.spec.ts`).
 
-### 13. 13. Weather (Open-Meteo, farm page and turbine page)
+### 13. 13. Weather (Open-Meteo: the farm Overview and its Weather history tab)
 
 **Seed:** none (own setup in `tests/weather/weather.spec.ts`: `signIn(page, 'admin')` at SEED_NOW in a UTC browser; the Chicago test uses `fixBrowserDate` + `logIn` like section 12)
 
-The turbine page asks `GET /api/turbines/:id/weather?interval=30min` for its window in whole 30-minute UTC buckets (no `timeZone`); the farm page asks `GET /api/farms/:id/weather` twice: `interval=30min` for the last 24 h (latest tiles) and `interval=daily&timeZone=<zone shown>` for the last 7 days ending today. The db:seed fixture has no weather (the sync only fetches recent days), so populated views are `page.route` mocks in the API's shape (`tests/support/weather.ts`: bodies built from each request's own from/to/timeZone, values in 0.5 steps so the one-decimal UI text is exact). One test per page uses the real API. Read-only.
+The farm Overview (`FarmWeather`) and its Weather history tab (`FarmWeatherHistoryPage`, /farms/:farmId/weather, 13.8–13.13) are the only places the web app shows weather. The Overview asks `GET /api/farms/:id/weather` twice: `interval=30min` for the last 24 h (latest tiles, no `timeZone`) and `interval=daily&timeZone=<zone shown>` for the last 7 days ending today. The turbine page shows no weather; the API's `GET /api/turbines/:id/weather` still exists but the web app no longer calls it. The db:seed fixture has no weather (the sync only fetches recent days), so populated views are `page.route` mocks in the API's shape (`tests/support/weather.ts`: bodies built from each request's own from/to/timeZone, values in 0.5 steps so the one-decimal UI text is exact). One farm test uses the real API. Read-only.
 
-**Isolation:** the live stream is aborted (as in section 12). The turbine's history and stats requests are bounded at SEED_NOW (`boundTelemetryAt`, `tests/support/telemetry.ts`, adds `to`): the app sends `from` + `limit` without `to`, so a DB that also holds later readings (db:seed:demo, the demo feed) would otherwise fill the limit and hide the fixture's Jan 2. A no-op on the db:seed fixture alone (CI).
+**Isolation:** the live stream is aborted (as in section 12). The turbine-page guard (13.1) bounds the turbine's history and stats requests at SEED_NOW (`boundTelemetryAt`, `tests/support/telemetry.ts`, adds `to`) so a DB that also holds later readings (db:seed:demo, the demo feed) still draws the fixture's Jan 2; a no-op on the db:seed fixture alone (CI).
 
-#### 13.1. Turbine page: farm 80 m wind overlay and weather charts (mocked)
+#### 13.1. Turbine page: no weather (guard)
 
 **File:** `tests/weather/weather.spec.ts`
 
 **Steps:**
-  1. Admin opens /farms/FARM01/turbines/TURB001 (24 h window, Jan 2).
-    - expect: one weather request, from=2026-01-02T00:00:00.000Z to=2026-01-03T00:30:00.000Z interval=30min, no timeZone
-    - expect: `weather` data-state 'ok'; heading 'Weather at Prairie Ridge'; note mentions the 80 m comparison; no loading/empty/error
-    - expect: the wind chart's `series-legend` 'Turbine (measured)' and `overlay-legend` 'Open-Meteo 80 m (farm)'; its text alternative names the overlay's latest value (the 00:00 bucket); no overlay on the power chart
-    - expect: charts `weather-temperature`, `weather-gusts`, `weather-precipitation` with their titles, latest values from the 00:00 bucket, SVG drawn, 49 buckets in the window
+  1. Admin opens /farms/FARM01/turbines/TURB001 (24 h window, Jan 2) and waits for its telemetry and stats responses and the wind chart.
+    - expect: no `weather` or `weather-heading` testid, no `overlay-legend`
+    - expect: no request to any `…/weather` path (farm or turbine)
 
-#### 13.2. Turbine page: weather 500 keeps the telemetry; Retry recovers (mocked)
+#### 13.2. (removed: the turbine page's weather 500 / Retry; the turbine page has no weather)
 
-**Steps:**
-  1. Weather answers 500.
-    - expect: data-state 'error'; 'Weather is unavailable right now; the telemetry is not affected.' with Retry
-    - expect: every metric chart and the alerts chart drawn, readings listed, no overlay legend, no weather charts
-  2. Weather healthy again, click Retry.
-    - expect: the same request sent again; data-state 'ok', overlay legend and the three weather charts; the readings row count unchanged
-
-#### 13.3. Turbine page: real API at the fixture date
-
-**Steps:**
-  1. Open TURB001 unmocked.
-    - expect: 200 `{ farmId: 'FARM01', turbineId: 'TURB001', interval: '30min', timeZone: 'UTC' }` (no timeZone sent → UTC)
-    - expect: no buckets in the window → data-state 'empty', 'No weather synced for this period.', no overlay, no weather charts (if the DB has Jan 2026 weather: data-state 'ok' instead); the telemetry charts drawn either way
+#### 13.3. (removed: the turbine page's real-API weather; the farm page's is 13.6)
 
 #### 13.4. Farm page: latest tiles and 7 daily rows, today partial (mocked)
 
@@ -1080,7 +1066,71 @@ The turbine page asks `GET /api/turbines/:id/weather?interval=30min` for its win
     - expect: daily request from=2025-12-27T06:00:00.000Z to=2026-01-03T06:00:00.000Z timeZone=America/Chicago (Dec 27 … Jan 2 from 00:00 CST); the 30min request still has no timeZone
     - expect: header 'Day (local)'; 7 rows Dec 27 … Jan 2, last 'Fri, Jan 2 (today)' '37 / 48' partial; 'Latest 30 minutes from Jan 2, 18:00 CST'
 
-#### 13.8. Not yet automated in the browser (covered by the Angular unit specs)
+#### 13.8. Farm tabs (Overview / Weather history)
 
-  - Missing values ('–'), a zone change reloading only the daily view in place, no refetch on live readings, refetch when the window enters a new bucket, the turbine page without readings showing no weather and sending no weather request, and DST days' expected buckets (`weather/farm-weather.spec.ts`, `fleet/turbine-weather.spec.ts`, `weather/weather.spec.ts`).
+**File:** `tests/weather/weather-history.spec.ts` (13.8–13.13; weather mocked with `mockWeather(page, { until: SEED_NOW, missing: ['2026-01-01T12:00Z'] })`: only buckets started by SEED_NOW, one left out)
+
+**Steps:**
+  1. Admin opens /farms/FARM01.
+    - expect: `farm-tabs` links 'Overview', 'Weather history'; `farm-tab-overview` has `aria-current="page"`, `farm-tab-weather` none; no `weather-history-range`
+  2. Click Weather history.
+    - expect: URL /farms/FARM01/weather; the weather tab current, Overview not; title 'Prairie Ridge · Weather history · Nextera'; the range shown, no `farm-power`
+  3. Click Overview.
+    - expect: back on /farms/FARM01, Overview current, `farm-power` visible
+  4. Deep link /farms/FARM01/weather.
+    - expect: h1 'Prairie Ridge FARM01', the weather tab current; `back-to-farms` → /farms with the farms table
+  5. Deep link /farms/NOPE/weather.
+    - expect: `farm-not-found` 'Farm NOPE was not found.', no tabs, no weather request
+  6. On Overview, click TURB001 in the turbines table.
+    - expect: /farms/FARM01/turbines/TURB001, h1 contains TURB001, no `farm-tabs`
+
+#### 13.9. Weather history: default range, eight charts (mocked)
+
+**Steps:**
+  1. Deep link /farms/FARM01/weather.
+    - expect: label 'Dates (UTC)'; Start '12/28/2025', End '1/3/2026'
+    - expect: exactly one request from=2025-12-28T00:00Z to=2026-01-04T00:00Z interval=30min, no timeZone
+    - expect: status '288 of 336 half-hours synced' (289 started buckets, one missing)
+    - expect: `weather-history-charts` with 8 `app-line-chart`s in order wind-80m, wind-10m, gusts, temperature, precipitation, humidity, pressure, cloud-cover; each with its title and the 00:00 Jan 3 bucket as latest value (e.g. '6.0 m/s', '1,013 hPa'), and SVG output
+    - expect: no empty, error, `charts-load-error` or `weather-history-reset-zoom` (not zoomed)
+
+#### 13.10. Weather history: changing the range (mocked)
+
+**Steps:**
+  1. Type Start '12/30/2025' and leave the field.
+    - expect: exactly one new request 2025-12-30T00:00Z – 2026-01-04T00:00Z; '192 of 240 half-hours synced'
+  2. Type End '1/1/2026'.
+    - expect: exactly one new request 2025-12-30T00:00Z – 2026-01-02T00:00Z; '143 of 144 half-hours synced'; the wind-80m latest is the 23:30 Jan 1 bucket
+  3. (Fresh page) Start '12/1/2025' (34 days with End Jan 3).
+    - expect: `weather-history-range-error` 'Choose at most 31 days.' in the status; no request
+  4. End '12/31/2025' (exactly 31 days).
+    - expect: the error gone; one request 2025-12-01T00:00Z – 2026-01-01T00:00Z (the second in total); '1488 of 1488 half-hours synced'
+
+#### 13.11. Weather history: 500 and Retry (mocked)
+
+**Steps:**
+  1. The request answers 500.
+    - expect: `weather-history-error` 'The weather could not be loaded.'; no charts, no empty state
+  2. Healthy again, `weather-history-retry`.
+    - expect: one more request with the same query; the error gone; the status and 8 charts
+
+#### 13.12. Weather history: real API at the fixture date
+
+**Steps:**
+  1. Deep link unmocked.
+    - expect: 200, from=2025-12-28T00:00Z to=2026-01-04T00:00Z, `farmId` FARM01, `interval` 30min
+    - expect: status '<n> of 336 half-hours synced' (n = buckets with any value); n = 0: `weather-history-empty` 'No weather synced for these days.' and no charts; otherwise 8 charts
+
+#### 13.13. Weather history: Local days (browser in America/Chicago, mocked)
+
+**Steps:**
+  1. `fixBrowserDate` + `logIn`; deep link the tab (UTC).
+    - expect: 'Dates (UTC)', request 2025-12-28T00:00Z – 2026-01-04T00:00Z
+  2. Settings → Local, deep link the tab again.
+    - expect: 'Dates (local)'; Start '12/27/2025', End '1/2/2026'; request from=2025-12-27T06:00:00.000Z to=2026-01-03T06:00:00.000Z interval=30min, no timeZone; '324 of 336 half-hours synced'
+
+#### 13.14. Not yet automated in the browser (covered by the Angular unit specs)
+
+  - Missing values ('–'), a zone change reloading only the daily view in place, no refetch on live readings, Retry of only the failed request, and DST days' expected buckets (`weather/farm-weather.spec.ts`, `weather/weather.spec.ts`).
+  - Weather history: a zone change while the tab is open (same calendar dates re-queried in place), brush/slider zoom and Reset zoom, the gap drawn for a missing bucket, the earlier range dimmed while the next loads, the `@defer` loading/error blocks (`weather/farm-weather-history-page.spec.ts`, `charts/chart-group.spec.ts`).
   - Real synced weather in the browser: the fixture's January has none; it would need seeded `farm_weather` rows for Jan 2026 or a clock inside the synced days.
