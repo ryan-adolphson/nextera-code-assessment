@@ -35,3 +35,20 @@ export async function fixBrowserDate(page: Page, at: Date): Promise<void> {
     globalThis.Date = FixedDate;
   }, at.getTime());
 }
+
+/**
+ * `iso` as the app's "MMM d, HH:mm" (date-fns, en-US) in `zone`, e.g. "Jan 2, 17:55": an
+ * independent oracle (Node's Intl) for times the app formats in UTC or the browser's zone.
+ */
+export function shortTimeIn(iso: string, zone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(iso));
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)!.value;
+  return `${part('month')} ${part('day')}, ${part('hour')}:${part('minute')}`;
+}

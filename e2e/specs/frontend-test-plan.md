@@ -6,6 +6,36 @@
 
 E2E plan for the Nextera Angular app at http://localhost:8082 (production web image, API on :8080, ingestion on :8081). Conventions: every scenario starts from tests/seed.spec.ts (browser clock fixed at 2026-01-03T00:00:00Z, signed in as admin@nextera.local, on /farms) unless it says otherwise. Intended seed data: 10 farms, TURB001/TURB002, readings every 5 min 2026-01-01T00:00Z to 2026-01-02T23:55Z, with anomalies TURB001 Jan 1 13:40-13:50 (0 kW at 15.8 m/s), TURB002 Jan 1 18:10 (44 deg pitch spike) and TURB002 Jan 2 03:20-03:30 (gearbox stuck at 126.5 C). Passwords come from the SEED_USER_PASSWORD env var and must never be written into specs. Viewer and owner scenarios sign in as viewer@nextera.local / owner@nextera.local via /login (they were planned from code, not explored live). Tests are tagged [DATA] when they change data (rule CRUD, CSV upload) and must run serially (single worker, one describe.serial) with cleanup (delete created rules, re-enable disabled rules). Prefer data-testid, roles and labels. TEST DATA: load the fixture with `npm run db:seed` (compose postgres; it is idempotent): 10 farms, 2 turbines (TURB001 on FARM01, TURB002 on FARM02, both not commissioned), readings every 5 min 2026-01-01T00:00Z to 2026-01-02T23:55Z, the three users, and NO alert rules or flagged readings (the seed does not evaluate rules, and readings stored before a rule exists are never flagged). Scenarios that need flagged readings create their rules and then upload readings through the ingestion service's CSV endpoint (http://localhost:8081/ingest/telemetry, multipart field `file`; the compose `ingestion` service must be running) at timestamps the fixture doesn't use (e.g. 2026-01-02T12:02:00Z), as [DATA] tests. Live-update scenarios need `ingestion` running too. Verify preconditions in a beforeAll.
 
+## Automation status
+
+108 tests in 20 files (read-only project 90, data project 18; `npx playwright test --list`). Every scenario below has a **Status** line. Wall time for both projects locally: about 38 s.
+
+| Area | Files |
+|---|---|
+| 1 Authentication | `tests/auth/login.spec.ts`, `tests/auth/session.spec.ts` |
+| 2 Roles, 10 Navigation | `tests/roles/roles.spec.ts` |
+| 3 Farms and turbine page | `tests/farms/overview.spec.ts`, `tests/farms/turbine-page.spec.ts` |
+| 4 Turbines table | `tests/turbines/turbine-table.spec.ts` |
+| 5 Staleness | `tests/staleness/staleness.spec.ts` (+ overview and Turbines) |
+| 6 Alerting history | `tests/alerting/history.spec.ts`, `tests/data/live.spec.ts` |
+| 7 Alert rules | `tests/alerting/rules.spec.ts`, `tests/data/rules.spec.ts`, `tests/data/live.spec.ts` |
+| 8 Reporting | `tests/reporting/reporting.spec.ts`, `tests/data/live.spec.ts` |
+| 9 Live updates | `tests/live/status.spec.ts`, `tests/data/live.spec.ts`, `tests/data/rules.spec.ts` |
+| 11 Unallocated | `tests/unallocated/access.spec.ts`, `tests/data/unallocated.spec.ts`, `tests/data/unallocated-time-zone.spec.ts` |
+| 12 Time zone | `tests/settings/time-zone.spec.ts`, `tests/data/unallocated-time-zone.spec.ts` |
+| 13 Weather | `tests/weather/weather.spec.ts`, `tests/weather/weather-history.spec.ts` |
+
+Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `clock.ts` (`fixBrowserDate`, `shortTimeIn`), `fleet.ts` (GET /api/farms from the page's own response, `mainNav`, `createTurbine`: held upload + assign), `rules.ts` (`ensureRule` / `removeRules`), `telemetry.ts`, `unallocated.ts`, `weather.ts`.
+
+**Robust to a shared DB** (db:seed fixture plus db:seed:demo, the demo feed and earlier runs): expectations come from the responses the page rendered; turbine history/stats are bounded at the browser clock (`boundTelemetryAt`); the SSE stream is aborted in read-only tests that must not change mid-test; [DATA] tests use per-run turbine ids and clean up rules and unallocated entries (turbines and readings can't be deleted through the API: each run leaves `E2E-<run>-LV` on FARM04 with 4 Jan 2 readings and the disabled rule "Rotor speed above 50 rpm → Warning", besides what section 11 leaves). `page.route` mocks only where real data can't reach the state: Turbines paging (60 turbines), History paging/chips in read-only (30 flagged turbines), an empty farm when every farm has turbines, error/Retry and login 429/unreachable, the SSE transport, and weather (section 13).
+
+### Not automated (and why)
+
+- 1.3 the transient 'Signing in…' label; 3.10/8.10 page-size changes on the readings tables; 4.7 the remaining sort headers; 7.6 edit-into-duplicate (same 409 path as 7.4); 7.11 rules paging; 10.1 the skip link; 10.4 phone layouts beyond /turbines.
+- 7.7 enable/disable a rule: the UI has no control for it (a rule that readings triggered can only be disabled through the API).
+- 12.6 and 13.14 below (DST days and +5:30 zones, storage errors, chart tick labels in local time, weather gaps and loading blocks).
+- A zone change while a page is open: unreachable through the UI (Settings is its own route and the setting isn't synced across tabs), so the in-place re-query is covered by the unit specs only.
+
 ## Test Scenarios
 
 ### 1. 1. Authentication
@@ -14,7 +44,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 1.1. Login page renders empty form
 
-**File:** `tests/auth/login-render.spec.ts`
+**File:** `tests/auth/login.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Start signed out (fresh context without storage). Go to /login.
@@ -23,7 +55,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 1.2. Required-field validation
 
-**File:** `tests/auth/login-validation.spec.ts`
+**File:** `tests/auth/login.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Signed out, on /login. Click 'Sign in' with both fields empty.
@@ -34,7 +68,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 1.3. Wrong password shows generic error
 
-**File:** `tests/auth/login-wrong-password.spec.ts`
+**File:** `tests/auth/login.spec.ts`
+
+**Status:** Automated (the brief 'Signing in…' state is not asserted: too short to observe reliably).
 
 **Steps:**
   1. Signed out. Enter admin@nextera.local and a wrong password. Click 'Sign in'.
@@ -46,7 +82,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 1.4. Successful login lands on /farms and shows user
 
-**File:** `tests/auth/login-success.spec.ts`
+**File:** `tests/auth/login.spec.ts`
+
+**Status:** Automated (together with 1.5).
 
 **Steps:**
   1. Signed out. Login as admin@nextera.local with SEED_USER_PASSWORD (env).
@@ -58,7 +96,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 1.5. Email is case/whitespace tolerant
 
-**File:** `tests/auth/login-email-normalised.spec.ts`
+**File:** `tests/auth/login.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Signed out. Login with '  ADMIN@Nextera.Local ' and the correct password.
@@ -66,7 +106,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 1.6. Sign out
 
-**File:** `tests/auth/sign-out.spec.ts`
+**File:** `tests/auth/session.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Signed in. Click 'Sign out' (sign-out testid).
@@ -76,7 +118,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 1.7. Signed-out access to guarded URLs redirects to /login
 
-**File:** `tests/auth/guarded-urls.spec.ts`
+**File:** `tests/auth/session.spec.ts`
+
+**Status:** Automated (also /unallocated/pending and /settings; asserts `?returnUrl=` and that signing in returns to the deep link).
 
 **Steps:**
   1. Signed out. Visit each of /farms, /farms/FARM01, /turbines, /alerting/history, /alerting/rules, /reporting.
@@ -85,7 +129,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 1.8. Signed-in user visiting /login is redirected
 
-**File:** `tests/auth/login-when-signed-in.spec.ts`
+**File:** `tests/auth/session.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Signed in (seed). Navigate to /login.
@@ -93,7 +139,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 1.9. Expired or invalid token signs the user out
 
-**File:** `tests/auth/invalid-token.spec.ts`
+**File:** `tests/auth/session.spec.ts`
+
+**Status:** Automated (garbage token → real API 401 → /login; plus the 24 h session end with `page.clock`).
 
 **Steps:**
   1. Signed in. Overwrite the stored access token in localStorage with garbage (or route /api/** to 401) and navigate to /turbines.
@@ -101,7 +149,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 1.10. API unreachable on login
 
-**File:** `tests/auth/login-api-down.spec.ts`
+**File:** `tests/auth/login.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Signed out. Abort /api/auth/login via page.route and submit valid-looking credentials.
@@ -115,7 +165,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 2.1. Viewer sees no Reporting nav item
 
-**File:** `tests/roles/viewer-nav.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Automated (exact nav items per role; also 11.1 for Unallocated).
 
 **Steps:**
   1. Sign out, login as viewer@nextera.local (password from env).
@@ -124,7 +176,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 2.2. Viewer is blocked from /reporting
 
-**File:** `tests/roles/viewer-reporting-blocked.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. As viewer navigate directly to /reporting.
@@ -132,7 +186,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 2.3. Viewer has read-only Rules page
 
-**File:** `tests/roles/viewer-rules-readonly.spec.ts`
+**File:** `tests/roles/roles.spec.ts`, `tests/data/rules.spec.ts`
+
+**Status:** Automated (read-only: the fixture has no rules, so the viewer empty-state wording; [DATA]: a viewer on a real rule has no buttons).
 
 **Steps:**
   1. As viewer open /alerting/rules.
@@ -141,7 +197,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 2.4. Viewer can use read-only areas
 
-**File:** `tests/roles/viewer-read-access.spec.ts`
+**File:** `tests/farms/overview.spec.ts`, `tests/turbines/turbine-table.spec.ts`, `tests/alerting/history.spec.ts`, `tests/live/status.spec.ts`
+
+**Status:** Automated (these sign in as viewer; Live with a viewer token).
 
 **Steps:**
   1. As viewer open /farms, /turbines, a turbine page and /alerting/history.
@@ -149,7 +207,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 2.5. Owner sees Reporting and rule write controls
 
-**File:** `tests/roles/owner-access.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Login as owner@nextera.local.
@@ -158,7 +218,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 2.6. Admin sees everything
 
-**File:** `tests/roles/admin-access.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Seed session (admin). Open nav, /reporting and /alerting/rules.
@@ -166,7 +228,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 2.7. Viewer write attempt is rejected by API [DATA-safe]
 
-**File:** `tests/roles/viewer-api-forbidden.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Automated (through the API request context, not an in-page fetch).
 
 **Steps:**
   1. As viewer, in-page fetch POST /api/alert-configs with the stored bearer token (valid body).
@@ -180,6 +244,8 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 **File:** `tests/farms/overview.spec.ts`
 
+**Status:** Automated (tiles, table and map markers derived from the GET /api/farms response; 'Loading fleet…' and the 'Data as of' tile are not asserted).
+
 **Steps:**
   1. Open /farms.
     - expect: 'Loading fleet…' then heading 'Fleet overview'
@@ -189,7 +255,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 3.2. Click a farm row navigates to farm page
 
-**File:** `tests/farms/farm-navigation.spec.ts`
+**File:** `tests/farms/overview.spec.ts`
+
+**Status:** Automated (row click, a map marker click, All farms).
 
 **Steps:**
   1. On /farms click the 'Prairie Ridge' row.
@@ -200,7 +268,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 3.3. Farm page lists scoped turbines without Farm column
 
-**File:** `tests/farms/farm-page.spec.ts`
+**File:** `tests/farms/overview.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Open /farms/FARM02.
@@ -210,7 +280,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 3.4. Farm with no turbines
 
-**File:** `tests/farms/farm-empty.spec.ts`
+**File:** `tests/farms/overview.spec.ts`
+
+**Status:** Automated (with db:seed:demo every farm has turbines: the real response is then passed on with one farm emptied).
 
 **Steps:**
   1. Open /farms/FARM03 (no turbines in current DB; in the seed use any farm without turbines).
@@ -218,7 +290,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 3.5. Unknown farm and unknown turbine
 
-**File:** `tests/farms/not-found.spec.ts`
+**File:** `tests/farms/turbine-page.spec.ts`
+
+**Status:** Automated: a turbine on another farm says 'Turbine TURB001 was not found on FARM02.'.
 
 **Steps:**
   1. Open /farms/NOPE.
@@ -230,7 +304,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 3.6. [SEED] Turbine page: candlestick charts per metric
 
-**File:** `tests/farms/turbine-charts.spec.ts`
+**File:** `tests/farms/turbine-page.spec.ts`
+
+**Status:** Automated (each range button: the telemetry and stats requests carry from = now − range and limit = min(range/5 min + 1, 2016); candle sizes 15 min / 30 min / 1 h / 4 h; the chart summaries count the returned readings).
 
 **Steps:**
   1. Open /farms/FARM01/turbines/TURB001 with fixed clock.
@@ -243,7 +319,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 3.7. [SEED] Anomaly visible in stats and table
 
-**File:** `tests/farms/turbine-anomalies.spec.ts`
+**File:** `tests/farms/turbine-page.spec.ts`
+
+**Status:** Automated (48h at SEED_NOW: TURB002 pitch high 44.0°, gearbox high 126.5 °C; TURB001 power low 0 kW, wind high 15.8 m/s; the readings-table rows of the anomalies are not asserted).
 
 **Steps:**
   1. Open TURB002 page with 7d range (covers Jan 1 18:10 spike and Jan 2 03:20-03:30 stuck gearbox).
@@ -254,7 +332,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 3.8. [SEED] Brush zoom and Reset zoom
 
-**File:** `tests/farms/turbine-zoom.spec.ts`
+**File:** `tests/farms/turbine-page.spec.ts`, `tests/weather/weather-history.spec.ts`
+
+**Status:** Automated (brush on one chart → every chart shows the same zoomed x axis, Reset zoom restores it; a range change clears the zoom; the shared crosshair selects the same candle on every chart. Slider drag is covered on the Weather history charts).
 
 **Steps:**
   1. On a turbine page with 48h, drag horizontally across a chart (brush).
@@ -266,7 +346,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 3.9. [SEED] Median/high/low reference lines
 
-**File:** `tests/farms/turbine-stats-lines.spec.ts`
+**File:** `tests/farms/turbine-page.spec.ts`
+
+**Status:** Automated (median/high/low equal GET …/telemetry/stats, which covers exactly the listed rows).
 
 **Steps:**
   1. Open a turbine page and read the stats of a chart; change range.
@@ -274,7 +356,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 3.10. [SEED] Readings table with Alerts pills and pagination
 
-**File:** `tests/farms/turbine-readings-table.spec.ts`
+**File:** `tests/farms/turbine-page.spec.ts`, `tests/data/live.spec.ts`
+
+**Status:** Automated (columns, newest first, paging; the 'Warning: 1' pill and its tooltip on a real flagged reading in [DATA]; the page-size change is not).
 
 **Steps:**
   1. On TURB002 (7d) inspect the history table.
@@ -283,7 +367,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 3.11. Empty window message
 
-**File:** `tests/farms/turbine-empty-window.spec.ts`
+**File:** `tests/farms/turbine-page.spec.ts`
+
+**Status:** Automated (clock Jan 4: 24 h empty, Show the last 48 hours brings the charts back).
 
 **Steps:**
   1. Open /farms/FARM02/turbines/TURB002 in the current DB (latest reading is months before clock) or any turbine whose last reading is older than the window.
@@ -293,7 +379,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 3.12. Turbine not commissioned badge
 
-**File:** `tests/farms/turbine-not-commissioned.spec.ts`
+**File:** `tests/farms/turbine-page.spec.ts`
+
+**Status:** Automated (TURB001 is not commissioned in both seeds; the absence for a commissioned turbine is not asserted).
 
 **Steps:**
   1. Open a turbine with commissioned=false (TURB001 in the current DB).
@@ -305,7 +393,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 4.1. Table renders columns and default page
 
-**File:** `tests/turbines/table.spec.ts`
+**File:** `tests/turbines/turbine-table.spec.ts`
+
+**Status:** Automated (sorted by id; turbines without readings are not moved last on the id sort, only on value columns).
 
 **Steps:**
   1. Open /turbines.
@@ -316,7 +406,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 4.2. Row click opens turbine page
 
-**File:** `tests/turbines/row-navigation.spec.ts`
+**File:** `tests/turbines/turbine-table.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Click the TURB002 row.
@@ -324,7 +416,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 4.3. Text filter and clear button
 
-**File:** `tests/turbines/text-filter.spec.ts`
+**File:** `tests/turbines/turbine-table.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Type 'TURB002' in turbine-filter.
@@ -336,7 +430,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 4.4. No matches state
 
-**File:** `tests/turbines/no-matches.spec.ts`
+**File:** `tests/turbines/turbine-table.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Type 'zzzz' in the filter.
@@ -346,7 +442,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 4.5. Status filter
 
-**File:** `tests/turbines/status-filter.spec.ts`
+**File:** `tests/turbines/turbine-table.spec.ts`
+
+**Status:** Automated (Reporting, No data in 60 min, No readings yet; counts from the response).
 
 **Steps:**
   1. Select each of Reporting, No data in 15/30/60 min, No readings yet in status-filter.
@@ -354,7 +452,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 4.6. Commissioned filter
 
-**File:** `tests/turbines/commissioned-filter.spec.ts`
+**File:** `tests/turbines/turbine-table.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Select 'Not commissioned', then 'Commissioned', then 'Any'.
@@ -364,7 +464,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 4.7. Sorting
 
-**File:** `tests/turbines/sorting.spec.ts`
+**File:** `tests/turbines/turbine-table.spec.ts`
+
+**Status:** Automated (Turbine twice, Farm, Power twice; Status/Commissioned/Last reading headers are not clicked).
 
 **Steps:**
   1. Click sort-id, sort-farm, sort-status, sort-commissioned, sort-time headers, each twice.
@@ -372,7 +474,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 4.8. Pagination
 
-**File:** `tests/turbines/pagination.spec.ts`
+**File:** `tests/turbines/turbine-table.spec.ts`
+
+**Status:** Automated (60 generated turbines; a page-size change keeps the first visible row in view, as Material does: page 26–50 at size 10 shows 21–30; a filter returns to page 1).
 
 **Steps:**
   1. The fixture has only 2 turbines, so mock GET /api/farms with page.route to return 50 turbines. Click Next page, change items per page to 10 and 50.
@@ -384,7 +488,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 5.1. [SEED] All turbines reporting at seed clock
 
-**File:** `tests/staleness/reporting.spec.ts`
+**File:** `tests/farms/overview.spec.ts`
+
+**Status:** Automated (reporting count derived per turbine at the fixed clock).
 
 **Steps:**
   1. Fixed clock 2026-01-03T00:00Z. Open /turbines.
@@ -392,7 +498,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 5.2. [SEED] Stale pills at 15/30/60 minute boundaries
 
-**File:** `tests/staleness/thresholds.spec.ts`
+**File:** `tests/staleness/staleness.spec.ts`
+
+**Status:** Automated (`page.clock.install`, clock set relative to TURB001’s latest reading in the response: exactly 15:00 is still Reporting, 16/31/61 min flip to 15/30/60; the status filter finds it).
 
 **Steps:**
   1. Use page.clock to set the time to 2026-01-03T00:10Z (15 min after 23:55 is the boundary; check just before and after), 00:25, 00:55 and 01:55 (via fastForward, FleetStore ticks every minute).
@@ -401,7 +509,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 5.3. Turbine page status pill follows staleness
 
-**File:** `tests/staleness/turbine-pill.spec.ts`
+**File:** `tests/staleness/staleness.spec.ts`
+
+**Status:** Automated (and the overview reporting count drops).
 
 **Steps:**
   1. Open TURB001 page with clock advanced 40 minutes.
@@ -409,7 +519,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 5.4. Turbine with no readings
 
-**File:** `tests/staleness/no-readings.spec.ts`
+**File:** `tests/turbines/turbine-table.spec.ts`
+
+**Status:** Partly: the 'No readings yet' status filter is checked against the response (no such turbine in the fixture, so CI sees the no-matches state).
 
 **Steps:**
   1. Find a turbine without telemetry (if any).
@@ -421,7 +533,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 6.1. /alerting redirects to History; tabs navigate
 
-**File:** `tests/alerting/tabs.spec.ts`
+**File:** `tests/alerting/history.spec.ts`, `tests/roles/roles.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Click Alerting in the nav.
@@ -431,7 +545,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 6.2. Default date range is whole UTC days
 
-**File:** `tests/alerting/history-default-range.spec.ts`
+**File:** `tests/alerting/history.spec.ts`
+
+**Status:** Automated (at SEED_NOW, Jan 3 00:00 UTC, the default is Jan 2–3: from=2026-01-02T00:00Z to=2026-01-04T00:00Z, inputs '1/2/2026' / '1/3/2026'; the earlier '1/1–1/2' note was wrong).
 
 **Steps:**
   1. Open /alerting/history.
@@ -440,7 +556,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 6.3. Empty state
 
-**File:** `tests/alerting/history-empty.spec.ts`
+**File:** `tests/alerting/history.spec.ts`
+
+**Status:** Automated (count text derived from the response; with the fixture it is the empty state).
 
 **Steps:**
   1. Open history in the current DB (no readings were flagged) or pick a range with no alerts.
@@ -448,7 +566,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 6.4. [SEED] [DATA] Flagged readings grouped by turbine
 
-**File:** `tests/alerting/history-rows.spec.ts`
+**File:** `tests/data/live.spec.ts`, `tests/alerting/history.spec.ts`
+
+**Status:** Automated ([DATA]: a real reading flagged by a rule, its Warning pill and chip; read-only: served readings for 30 turbines with two levels, expand/collapse, two rows open, chips after the @defer).
 
 **Steps:**
   1. Setup: as owner, create two rules (e.g. Gearbox above 120 °C error, Blade pitch above 30° info), then upload a CSV with a TURB002 reading at 2026-01-02T12:02:00Z (gearbox 126.5) and one at 2026-01-01T18:12:00Z (pitch 44). Cleanup: delete the readings is not possible through the API, so disable (PATCH enabled false) the rules afterwards. Open history for 1/1/2026–1/2/2026.
@@ -459,7 +579,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 6.5. Change date range with picker
 
-**File:** `tests/alerting/history-picker.spec.ts`
+**File:** `tests/alerting/history.spec.ts`
+
+**Status:** Automated (real calendar overlay: Previous month, Dec 30 → Dec 31; Jan 4 disabled. Picking the start day alone already sends a request with the previous end day).
 
 **Steps:**
   1. Open the calendar toggle, choose a start and end day.
@@ -467,7 +589,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 6.6. Range validation errors
 
-**File:** `tests/alerting/history-range-errors.spec.ts`
+**File:** `tests/alerting/history.spec.ts`
+
+**Status:** Automated (typed end before start, 32 days, then exactly 31 days requested).
 
 **Steps:**
   1. Type an end date earlier than start.
@@ -481,7 +605,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 6.7. History load failure and retry
 
-**File:** `tests/alerting/history-error.spec.ts`
+**File:** `tests/alerting/history.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Route GET /api/alerts to 500, open history.
@@ -491,7 +617,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 6.8. [SEED] History pagination (25 turbines per page)
 
-**File:** `tests/alerting/history-paging.spec.ts`
+**File:** `tests/alerting/history.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Neither seed has more than 25 turbines (fixture 2, demo 25), and only seeds create turbines, so mock GET /api/alerts with page.route to return readings for 30 turbines, then view history.
@@ -503,7 +631,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 7.1. Rules list renders
 
-**File:** `tests/alerting/rules-list.spec.ts`
+**File:** `tests/roles/roles.spec.ts`, `tests/data/rules.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Open /alerting/rules as admin.
@@ -512,7 +642,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 7.2. [DATA] Create a rule
 
-**File:** `tests/alerting/rules-create.spec.ts`
+**File:** `tests/data/rules.spec.ts`
+
+**Status:** Automated (Wind speed above 45 m/s, Info; deleted afterwards).
 
 **Steps:**
   1. Click Add rule.
@@ -524,7 +656,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 7.3. Create validation: empty and invalid threshold
 
-**File:** `tests/alerting/rules-validation.spec.ts`
+**File:** `tests/alerting/rules.spec.ts`
+
+**Status:** Automated (empty threshold 'Enter a threshold value.', unit follows the metric, Cancel sends nothing; API 400 messages for odd values are not automated).
 
 **Steps:**
   1. Open Add rule, clear threshold, press Add rule.
@@ -536,7 +670,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 7.4. [DATA] Duplicate rule gives 409 message
 
-**File:** `tests/alerting/rules-duplicate.spec.ts`
+**File:** `tests/data/rules.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Add rule: Gearbox temperature above 99 Warning twice (second attempt).
@@ -546,7 +682,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 7.5. [DATA] Edit a rule
 
-**File:** `tests/alerting/rules-edit.spec.ts`
+**File:** `tests/data/rules.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Create temp rule 'Rotor speed above 25 Info', click its Edit button.
@@ -558,7 +696,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 7.6. [DATA] Edit collides with an existing rule
 
-**File:** `tests/alerting/rules-edit-conflict.spec.ts`
+**File:** —
+
+**Status:** Not automated (same 409 path as 7.4, through PATCH).
 
 **Steps:**
   1. Create two rules same metric/condition with different levels; edit one to the other's level.
@@ -568,7 +708,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 7.7. [DATA] Disable and re-enable a rule
 
-**File:** `tests/alerting/rules-toggle.spec.ts`
+**File:** —
+
+**Status:** Not automated: the Rules page has no enable/disable control (the editor has Metric, Condition, Threshold, Level only). Reported as a product gap.
 
 **Steps:**
   1. Locate the enable/disable control for a temp rule (inspect the row/Edit dialog; the current UI exposes enabled only if present) and disable it.
@@ -578,7 +720,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 7.8. [DATA] Delete an unused rule
 
-**File:** `tests/alerting/rules-delete.spec.ts`
+**File:** `tests/data/rules.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Create temp rule; click Delete rule on it.
@@ -590,7 +734,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 7.9. [DATA][SEED] Delete a rule triggered by readings returns 409
 
-**File:** `tests/alerting/rules-delete-conflict.spec.ts`
+**File:** `tests/data/live.spec.ts`
+
+**Status:** Automated (the dialog shows the API's message: 'Alert config <uuid> has triggered alerts … disable it instead (enabled: false).' — reported: raw id and API wording, and the UI offers no way to disable).
 
 **Steps:**
   1. Precondition: a rule that readings have triggered (e.g. Gearbox above 55 C after TURB002 anomalies ingested). Click Delete and confirm.
@@ -600,7 +746,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 7.10. Rules API failure
 
-**File:** `tests/alerting/rules-errors.spec.ts`
+**File:** `tests/alerting/rules.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Route GET /api/alert-configs to 500 and open the Rules page.
@@ -610,7 +758,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 7.11. Empty rules list and rules pagination
 
-**File:** `tests/alerting/rules-empty-paging.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Partly: the empty state with the fixture (no rules); rules paging (30 rules) is not automated.
 
 **Steps:**
   1. Mock GET /api/alert-configs to [] and then to 30 rules.
@@ -622,7 +772,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 8.1. Report form renders
 
-**File:** `tests/reporting/form.spec.ts`
+**File:** `tests/reporting/reporting.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Open /reporting as admin (or owner).
@@ -630,7 +782,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 8.2. Required-field validation
 
-**File:** `tests/reporting/validation.spec.ts`
+**File:** `tests/reporting/reporting.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Click Run report with empty form.
@@ -640,7 +794,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 8.3. Autocomplete groups Farms and Turbines
 
-**File:** `tests/reporting/autocomplete.spec.ts`
+**File:** `tests/reporting/reporting.spec.ts`
+
+**Status:** Automated (options are 'Prairie Ridge (FARM01)' and 'TURB001 · Prairie Ridge', so 'Prairie' also lists that farm's turbines; 'farm01' lists only the farm).
 
 **Steps:**
   1. Focus scope input.
@@ -654,7 +810,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 8.4. [SEED] Turbine report for 2 days
 
-**File:** `tests/reporting/turbine-report.spec.ts`
+**File:** `tests/reporting/reporting.spec.ts`
+
+**Status:** Automated (counts from the response; charts with SVG; first row Jan 1, 00:00).
 
 **Steps:**
   1. Pick TURB001, dates 1/1/2026 - 1/2/2026, Run report.
@@ -665,7 +823,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 8.5. [SEED] Farm report aggregates
 
-**File:** `tests/reporting/farm-report.spec.ts`
+**File:** `tests/reporting/reporting.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Pick farm Prairie Ridge, range Jan 1-2, Run.
@@ -673,7 +833,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 8.6. Range rules (31 day max, order)
 
-**File:** `tests/reporting/range.spec.ts`
+**File:** `tests/reporting/reporting.spec.ts`
+
+**Status:** Automated (32 days refused without a request; exactly 31 days is covered on History, 6.6).
 
 **Steps:**
   1. Choose 32 days.
@@ -685,7 +847,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 8.7. Empty report
 
-**File:** `tests/reporting/empty.spec.ts`
+**File:** `tests/reporting/reporting.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Run a report for a farm/turbine and dates with no readings (e.g. 12/1/2025 - 12/2/2025).
@@ -693,7 +857,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 8.8. [SEED] CSV download
 
-**File:** `tests/reporting/csv.spec.ts`
+**File:** `tests/reporting/reporting.spec.ts`, `tests/data/live.spec.ts`
+
+**Status:** Automated (file name, header, CRLF, one row per reading, the first row's fields; [DATA]: the alerts column 'warn:rotor_rpm above 50').
 
 **Steps:**
   1. Run turbine report, click Download CSV with waitForEvent('download').
@@ -701,7 +867,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 8.9. Report error and retry
 
-**File:** `tests/reporting/error.spec.ts`
+**File:** `tests/reporting/reporting.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Route /api/reports/telemetry to 500, run report.
@@ -711,7 +879,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 8.10. Report table pagination
 
-**File:** `tests/reporting/paging.spec.ts`
+**File:** —
+
+**Status:** Not automated (the shared paginator is covered on Turbines and History).
 
 **Steps:**
   1. After a 2-day report, use report-paginator Next and change page size.
@@ -725,6 +895,8 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 **File:** `tests/live/status.spec.ts`
 
+**Status:** Automated (held stream: 'Connecting…' → 'Live', access_token in the URL; 503 → 'Reconnecting…', new EventSources, recovery → 'Live' and one more GET /api/farms (resync)).
+
 **Steps:**
   1. Open /farms.
     - expect: live-status first 'Connecting…' then 'Live'
@@ -733,7 +905,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 9.2. [DATA] CSV upload updates tables without reload
 
-**File:** `tests/live/upload-updates.spec.ts`
+**File:** `tests/data/live.spec.ts`
+
+**Status:** Automated (a per-run turbine; the Turbines row and the turbine page update without reload).
 
 **Steps:**
   1. Open /turbines and note TURB001's Last reading. In the test, POST a one-row telemetry.csv (multipart field 'file', new timestamp, e.g. 2026-01-03T00:05:00Z) to http://localhost:8081/ingest/telemetry using request context.
@@ -746,7 +920,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 9.3. [DATA] Uploaded anomaly flags alerts live
 
-**File:** `tests/live/upload-alert.spec.ts`
+**File:** `tests/data/live.spec.ts`
+
+**Status:** Automated (rule Rotor speed above 50 rpm → Warning; pill, tooltip, alerts chart legend, History chip, report CSV).
 
 **Steps:**
   1. With rules Gearbox above 55 C present, upload a reading with gearbox 126.5 for TURB002.
@@ -754,7 +930,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 9.4. [DATA] Stale turbine recovers on new reading
 
-**File:** `tests/live/staleness-recovery.spec.ts`
+**File:** `tests/data/live.spec.ts`
+
+**Status:** Automated (the turbine's latest is 65 min old at the fixed clock: 'No data in 60 min' → 'Reporting' on upload).
 
 **Steps:**
   1. Advance the clock 40 min so TURB001 reads 'No data in 30 min', then upload a reading with a current timestamp.
@@ -762,7 +940,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 9.5. [DATA] Rule change event refreshes rules
 
-**File:** `tests/live/rule-changed.spec.ts`
+**File:** `tests/data/rules.spec.ts`
+
+**Status:** Automated (a viewer's open page follows an owner's PATCH).
 
 **Steps:**
   1. Open /alerting/rules in page A, create a rule via API or page B, cleanup after.
@@ -770,7 +950,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 9.6. Invalid CSV upload is rejected and UI unchanged
 
-**File:** `tests/live/upload-invalid.spec.ts`
+**File:** `tests/data/live.spec.ts`
+
+**Status:** Automated (API-level: 400 with line 3; the valid row is not stored either).
 
 **Steps:**
   1. POST a CSV with an invalid row to the ingestion endpoint.
@@ -782,7 +964,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 10.1. Desktop side nav
 
-**File:** `tests/nav/desktop.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Automated (nav links, titles, aria-current; the skip link is not).
 
 **Steps:**
   1. Viewport 1280x800, open /farms.
@@ -793,7 +977,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 10.2. Nav highlights parent section on deep routes
 
-**File:** `tests/nav/active-state.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Open a turbine page /farms/FARM01/turbines/TURB001 and /alerting/rules.
@@ -801,7 +987,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 10.3. Phone top bar with menu toggle
 
-**File:** `tests/nav/phone.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Viewport 375x700, open /farms.
@@ -815,7 +1003,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 10.4. Phone tables and charts remain usable
 
-**File:** `tests/nav/phone-content.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Partly: no page-level horizontal overflow on /turbines at 375 px; the turbine page and History on a phone are not automated.
 
 **Steps:**
   1. At 375px open /turbines, a turbine page and /alerting/history.
@@ -823,7 +1013,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 10.5. Unknown URLs redirect to /farms
 
-**File:** `tests/nav/unknown-url.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Signed in, open /nope/xyz and /.
@@ -831,7 +1023,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 10.6. Browser back/forward and deep links
 
-**File:** `tests/nav/history.spec.ts`
+**File:** `tests/roles/roles.spec.ts`
+
+**Status:** Automated (farm → turbine, back twice, forward; same document).
 
 **Steps:**
   1. Navigate farms -> farm -> turbine, use back twice, forward once.
@@ -839,7 +1033,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 #### 10.7. Page titles
 
-**File:** `tests/nav/titles.spec.ts`
+**File:** `tests/roles/roles.spec.ts`, `tests/farms/turbine-page.spec.ts`
+
+**Status:** Automated.
 
 **Steps:**
   1. Visit each page.
@@ -1006,11 +1202,17 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
   5. Choose UTC on Settings.
     - expect: 'Now: Jan 3, 00:00 UTC'; Turbines header 'Last reading (UTC)', row in UTC
 
-#### 12.6. Not yet automated in the browser (covered by the Angular unit specs)
+#### 12.6. Unallocated times in the chosen zone, and what is still not automated
 
-  - Unallocated (`last-seen`, `first-seen`, `blocked-at`) and turbine-page chart ticks/candles/tooltips in local time (`unallocated-pages.spec.ts`, `scales.spec.ts`, `line-chart.spec.ts`, `chart-tooltips.spec.ts`): the fixture has no unallocated entries, and chart labels are canvas/SVG text best checked visually.
+**File:** `tests/data/unallocated-time-zone.spec.ts` ([DATA], browser in America/Chicago, `fixBrowserDate`)
+
+**Status:** Automated: a held entry per run; under Local then UTC, Pending's 'Seen (local|UTC)' header, `last-seen`/`first-seen` (server times from the API entry, formatted with Node's Intl) and the held readings ('Jan 2, 17:55' for 23:55Z); after a block (API), Blocked's 'Blocked (local)' and `blocked-at` in Chicago time.
+
+Still not automated in the browser (covered by the Angular unit specs):
+  - Turbine-page chart ticks/candles/tooltips in local time (`scales.spec.ts`, `line-chart.spec.ts`, `chart-tooltips.spec.ts`): SVG text, best checked visually.
   - DST days (23/25 h local days, the 30-day limit across a fall-back change) and a +5:30 zone (`days.spec.ts`, `scales.spec.ts`); the fixture's January has no DST change.
   - Storage errors and unknown stored values (`time-zone.spec.ts`).
+  - A zone change while a page stays open: not reachable through the UI (Settings is a separate route; no cross-tab sync).
 
 ### 13. 13. Weather (Open-Meteo: the farm Overview and its Weather history tab)
 
@@ -1129,8 +1331,13 @@ The farm Overview (`FarmWeather`) and its Weather history tab (`FarmWeatherHisto
   2. Settings → Local, deep link the tab again.
     - expect: 'Dates (local)'; Start '12/27/2025', End '1/2/2026'; request from=2025-12-27T06:00:00.000Z to=2026-01-03T06:00:00.000Z interval=30min, no timeZone; '324 of 336 half-hours synced'
 
-#### 13.14. Not yet automated in the browser (covered by the Angular unit specs)
+#### 13.14. Weather history zoom, and what is still not automated
 
+**File:** `tests/weather/weather-history.spec.ts` (describe 'Weather history zoom (mocked API)')
+
+**Status:** Automated: a plain wheel over a chart scrolls the page and doesn't zoom; Ctrl+wheel zooms every chart to the same x axis (no 'Dec 28' tick), `weather-history-reset-zoom` appears and restores the 7-day ticks; dragging the slider's left handle (found from the rendered SVG) zooms every chart too.
+
+Still not automated in the browser (covered by the Angular unit specs):
   - Missing values ('–'), a zone change reloading only the daily view in place, no refetch on live readings, Retry of only the failed request, and DST days' expected buckets (`weather/farm-weather.spec.ts`, `weather/weather.spec.ts`).
-  - Weather history: a zone change while the tab is open (same calendar dates re-queried in place), brush/slider zoom and Reset zoom, the gap drawn for a missing bucket, the earlier range dimmed while the next loads, the `@defer` loading/error blocks (`weather/farm-weather-history-page.spec.ts`, `charts/chart-group.spec.ts`).
+  - Weather history: a zone change while the tab is open (not reachable through the UI, see 12.6), the gap drawn for a missing bucket, the earlier range dimmed while the next loads, the `@defer` loading/error blocks (`weather/farm-weather-history-page.spec.ts`, `charts/chart-group.spec.ts`).
   - Real synced weather in the browser: the fixture's January has none; it would need seeded `farm_weather` rows for Jan 2026 or a clock inside the synced days.

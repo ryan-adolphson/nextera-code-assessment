@@ -336,3 +336,90 @@ test.describe('Weather history days follow the time-zone setting (browser in Ame
     });
   });
 });
+
+// §13.14 (was not automated): zoom needs a real layout (ECharts hit-tests the plot), so it is
+// checked here. The weather charts are line charts: Ctrl+wheel (or a pinch) and the slider zoom;
+// a plain wheel scrolls the page. Every chart of the group follows; Reset zoom restores the range.
+test.describe('Weather history zoom (mocked API)', () => {
+  /** The x-axis labels each chart draws (day or time ticks; not y values). */
+  const xTicks = (page: Page) =>
+    page
+      .getByTestId('weather-history-charts')
+      .locator('app-line-chart')
+      .evaluateAll((els) =>
+        els.map((el) =>
+          [...el.querySelectorAll('svg text')]
+            .map((t) => t.textContent ?? '')
+            .filter((t) => /^(\d\d:\d\d|[A-Z][a-z]{2} \d+)$/.test(t))
+            .join('|'),
+        ),
+      );
+  const plot = (page: Page, key: string) => chart(page, key).locator('div[role="img"]');
+  const reset = (page: Page) => page.getByTestId('weather-history-reset-zoom');
+
+  test('Ctrl+wheel zooms every chart to the same window; Reset zoom restores the 7 days', async ({
+    page,
+  }) => {
+    await open(page);
+    await page.goto(WEATHER_URL);
+    await expect(status(page)).toHaveText('288 of 336 half-hours synced');
+    await expect(page.getByTestId('weather-history-charts').locator('app-line-chart')).toHaveCount(8);
+    await expect.poll(() => xTicks(page)).toEqual(Array(8).fill(expect.stringContaining('Dec 28')));
+    const before = await xTicks(page);
+
+    await plot(page, 'temperature').scrollIntoViewIfNeeded();
+    let box = (await plot(page, 'temperature').boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 3);
+    // A plain wheel is left to the page (it scrolls) and doesn't zoom.
+    const scrolled = await page.evaluate(() => document.querySelector('main')!.scrollTop + window.scrollY);
+    await page.mouse.wheel(0, 120);
+    await expect
+      .poll(() => page.evaluate(() => document.querySelector('main')!.scrollTop + window.scrollY))
+      .toBeGreaterThan(scrolled);
+    await expect(reset(page)).toHaveCount(0);
+
+    box = (await plot(page, 'temperature').boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 3);
+    await page.keyboard.down('Control');
+    await page.mouse.wheel(0, -600);
+    await page.keyboard.up('Control');
+    await expect(reset(page)).toBeVisible();
+    await expect.poll(async () => new Set(await xTicks(page)).size, { message: 'one shared axis' }).toBe(1);
+    const zoomed = await xTicks(page);
+    expect(zoomed[0]).not.toEqual(before[0]);
+    expect(zoomed[0]).not.toContain('Dec 28');
+
+    await reset(page).click();
+    await expect(reset(page)).toHaveCount(0);
+    await expect.poll(() => xTicks(page)).toEqual(before);
+  });
+
+  test('dragging the slider handle zooms every chart too', async ({ page }) => {
+    await open(page);
+    await page.goto(WEATHER_URL);
+    await expect(page.getByTestId('weather-history-charts').locator('app-line-chart')).toHaveCount(8);
+    await expect.poll(() => xTicks(page)).toEqual(Array(8).fill(expect.stringContaining('Dec 28')));
+
+    // The slider runs along the bottom of the plot; its handles are the small, tall shapes there.
+    // Drag the left one to the middle.
+    await plot(page, 'wind-80m').scrollIntoViewIfNeeded();
+    const box = (await plot(page, 'wind-80m').boundingBox())!;
+    const handle = await plot(page, 'wind-80m').evaluate((el, bottom) => {
+      const shapes = [...el.querySelectorAll('svg path')]
+        .map((p) => p.getBoundingClientRect())
+        .filter((r) => r.top > bottom - 50 && r.height >= 10 && r.width <= 12)
+        .sort((a, b) => a.left - b.left);
+      const r = shapes[0];
+      return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+    }, box.y + box.height);
+    expect(handle, 'the slider handle is drawn').not.toBeNull();
+    await page.mouse.move(handle!.x, handle!.y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, handle!.y, { steps: 12 });
+    await page.mouse.up();
+
+    await expect(reset(page)).toBeVisible();
+    await expect.poll(async () => new Set(await xTicks(page)).size).toBe(1);
+    expect((await xTicks(page))[0]).not.toContain('Dec 28');
+  });
+});
