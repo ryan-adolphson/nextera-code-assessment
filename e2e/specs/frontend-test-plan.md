@@ -8,7 +8,7 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 ## Automation status
 
-144 tests in 23 files (read-only project 116, data project 28; `npx playwright test --list`). Every scenario below has a **Status** line. Wall time for both projects locally: about 55 s.
+151 tests in 23 files (read-only project 116, data project 35; `npx playwright test --list`). Every scenario below has a **Status** line. Wall time for both projects locally: about 60 s.
 
 | Area | Files |
 |---|---|
@@ -1070,7 +1070,7 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **Seed:** `tests/seed.spec.ts` (sign-in and clock via `tests/support/session.ts` `signIn(page, role)`)
 
-Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turbines reporting another farm than their own (`farm_mismatch`) are held by ingestion (CSV and Pub/Sub) instead of rejected, listed under /unallocated/pending (owner and admin), and imported on assign/keep/move; blocking a (turbine id, reported farm) pair drops its readings until unblocked. The CSV upload answers `held` and `blocked` counts. Ingestion checks timestamps against the real server clock (not in the future, from 2000-01-01) while the browser clock is fixed at SEED_NOW, so pick past timestamps and reason about what the fixed clock shows (Jan 2 23:55 reads as 'Reporting'). The browser runs in the UTC zone (`timezoneId` in playwright.config.ts): under `page.clock` the app's date-fns `UTCDate` formatting falls back to the local zone. Cleanup: unknown ids are unique per run (`E2E-<run>-…`), entries are removed through the API (block, then unblock) in afterAll; there is no turbine/telemetry delete API, so each run leaves two turbines (`E2E-<run>-NEW` on FARM01 and `E2E-<run>-MOV` on FARM03, 2 readings each on Jan 2 23:50–23:55) and one TURB001 reading at a unique 2020 timestamp (outside every window the app shows).
+Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turbines reporting another farm than their own (`farm_mismatch`) are held by ingestion (CSV and Pub/Sub) instead of rejected, listed under /unallocated/pending (owner and admin), and imported on assign/keep/move; blocking a (turbine id, reported farm) pair drops its readings until unblocked. The CSV upload answers `held` and `blocked` counts. Ingestion checks timestamps against the real server clock (not in the future, from 2000-01-01) while the browser clock is fixed at SEED_NOW, so pick past timestamps and reason about what the fixed clock shows (Jan 2 23:55 reads as 'Reporting'). The browser runs in the UTC zone (`timezoneId` in playwright.config.ts): under `page.clock` the app's date-fns `UTCDate` formatting falls back to the local zone. **Row actions:** each Pending row has one primary button by kind ('Assign <id> to farm…' for an unknown turbine, 'Keep <id> in <farm>' for a farm mismatch) and a 'More actions for <id>' menu trigger (`data-testid="more-actions"`, `aria-haspopup="menu"`, `aria-expanded`). Move ('Move <id> to <farm>…', mismatches only) and Block ('Block <id> from <farm>…') are `menuitem`s of a `mat-menu`: they render in `.cdk-overlay-container` only while that row's menu is open, so locate them with `page.getByRole('menuitem', …)` after clicking the trigger. When a Move/Block dialog closes, focus returns to the trigger. Cleanup: unknown ids are unique per run (`E2E-<run>-…`), entries (including TURB002's FARM01/FARM99 mismatches of 11.7, which are never imported) are removed through the API (block, then unblock) in afterAll; there is no turbine/telemetry delete API, so each run leaves two turbines (`E2E-<run>-NEW` on FARM01 and `E2E-<run>-MOV` on FARM03, 2 readings each on Jan 2 23:50–23:55) and one TURB001 reading at a unique 2020 timestamp (outside every window the app shows).
 
 #### 11.1. Access by role
 
@@ -1093,9 +1093,9 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
 **Steps:**
   1. Owner on /unallocated/pending, list loaded and live-status 'Live'. POST a 3-row CSV for `E2E-<run>-LIVE` / FARM01 (Jan 2 23:45, 23:50, 23:55) to ingestion :8081.
     - expect: upload `{ rows: 3, inserted: 0, held: 3, blocked: 0 }`
-    - expect: without reload (SSE `unallocated-turbine.changed`), the row appears: 'Unknown turbine', 'Prairie Ridge (FARM01)', current farm '–', held 3, latest '1,520 kW · 8.2 m/s · 71.5 °C', staleness 'Reporting', 'Assign … to farm…' button
+    - expect: without reload (SSE `unallocated-turbine.changed`), the row appears: 'Unknown turbine', 'Prairie Ridge (FARM01)', current farm 'Not in the fleet', held 3, staleness 'Reporting', 'Assign … to farm…' button (the row has no latest values: the newest held reading carries them)
   2. Click 'Show held readings for <id>'.
-    - expect: aria-expanded true; '3 held readings, newest first.'; 3 rows newest first (Jan 2, 23:55 … Jan 2, 23:45)
+    - expect: aria-expanded true; '3 held readings, newest first.'; 3 rows newest first (Jan 2, 23:55 … Jan 2, 23:45); the first holds the latest values (1,520 kW, 8.2 m/s, 71.5 °C)
 
 #### 11.3. [DATA] Assign an unknown turbine to FARM01
 
@@ -1118,7 +1118,8 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
 
 **Steps:**
   1. Upload one TURB001 reading reporting FARM02 at a unique 2020 timestamp; open Pending.
-    - expect: upload held 1; row 'Farm mismatch', reported 'High Plains (FARM02)', current 'Prairie Ridge (FARM01)', 'Move TURB001 to FARM02…' enabled
+    - expect: upload held 1; row 'Farm mismatch', reported 'High Plains (FARM02)', current 'Prairie Ridge (FARM01)'
+    - expect: 'More actions for TURB001' opens a menu with menuitem 'Move TURB001 to FARM02…' enabled; Escape closes it and focuses the trigger
   2. Click 'Keep TURB001 in FARM01'.
     - expect: notice 'TURB001 kept in Prairie Ridge (FARM01): 1 reading imported.'; row gone
     - expect: GET /api/turbines/TURB001/telemetry for that second returns the reading with farmId FARM01
@@ -1128,15 +1129,17 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
 **File:** `tests/data/unallocated.spec.ts`
 
 **Steps:**
-  1. Upload one reading for `E2E-<run>-BLK` / FARM05; open Pending; click 'Block <id> from FARM05…'.
+  1. Upload one reading for `E2E-<run>-BLK` / FARM05; open Pending; 'More actions for <id>' → menuitem 'Block <id> from FARM05…'; Cancel.
+    - expect: dialog closed, menu closed, focus on the trigger (aria-expanded false)
+  2. Menu → 'Block <id> from FARM05…' again.
     - expect: dialog 'Block <id> from FARM05?' explaining readings will be dropped until unblocked
-  2. Click 'Block'.
+  3. Click 'Block'.
     - expect: notice 'Readings for <id> from FARM05 are now blocked.'; row gone
-  3. Upload another reading for the same pair.
+  4. Upload another reading for the same pair.
     - expect: `{ rows: 1, inserted: 0, held: 0, blocked: 1 }`
-  4. Blocked tab.
+  5. Blocked tab.
     - expect: row 'Blue Sky (FARM05)', 'Unknown turbine', blocked by 'owner@nextera.local', a blocked time
-  5. Click 'Unblock <id> from FARM05'.
+  6. Click 'Unblock <id> from FARM05'.
     - expect: notice '<id> from FARM05 unblocked: its next reading will show under Pending.'; row gone; the API lists the id under neither status
 
 #### 11.6. [DATA] Farm mismatch: Move to the reported farm with its history
@@ -1146,16 +1149,45 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
 **Steps:**
   1. Setup through the API: upload `E2E-<run>-MOV` / FARM01 (Jan 2 23:50) and assign it to FARM01; then upload it reporting FARM03 (Jan 2 23:55). Open Pending.
     - expect: row 'Farm mismatch', current 'Prairie Ridge (FARM01)'
-  2. Click 'Move <id> to FARM03…'.
+  2. 'More actions for <id>' → menuitem 'Move <id> to FARM03…'.
     - expect: dialog 'Move <id> to FARM03?': '<id> and all its readings will move to Red Canyon (FARM03)…'
   3. Click 'Move turbine'.
     - expect: notice '<id> moved to Red Canyon (FARM03): 1 reading imported.'; row gone
     - expect: GET telemetry: both readings (23:55 and the earlier 23:50) now have farmId FARM03
     - expect: without reload, Turbines (filtered) shows it on Red Canyon, last reading Jan 2, 23:55
 
-#### 11.7. Not yet automated (covered by the Angular unit specs, `unallocated-pages.spec.ts`)
+#### 11.7. [DATA] Row actions in a real browser: layout, keyboard menu, disabled Move
 
-  - Move disabled with a reason when the reported farm doesn't exist; Assign with coordinates, and picking a farm from the autocomplete when the reported farm doesn't exist; a 409/404 when the entry was resolved in another browser; load errors and Retry.
+**File:** `tests/data/unallocated.spec.ts` (describe 'row actions in a real browser')
+
+**Status:** Automated (jsdom has no layout or real key handling, so these live only here).
+
+Setup (beforeEach, idempotent): hold `E2E-<run>-ROW` / FARM01 (Jan 2 23:40), and TURB002 reporting FARM01 and FARM99 at a unique 2020 time (held only; afterAll blocks and unblocks them).
+
+**Steps:**
+  1. Viewport 1280×800, owner on Pending.
+    - expect: for every row, the primary button and the menu trigger are vertically centred on the same line (±1 px), the primary label is one line box, the action cell doesn't overflow
+    - expect: every row has the same height (±0.5 px; 61 px on the fixture: two-line cells)
+  2. Focus 'More actions for TURB002' on the FARM99 row (`aria-haspopup="menu"`, `aria-expanded="false"`), press Enter.
+    - expect: menu visible, `aria-expanded="true"`, the first item 'Move TURB002 to FARM99…' focused (disabled but focusable)
+    - expect: ArrowDown → 'Block TURB002 from FARM99…'; ArrowUp → Move; ArrowUp again wraps to Block
+    - expect: Escape closes the menu, focus back on the trigger, `aria-expanded="false"`
+  3. Open the same menu with a click.
+    - expect: Move is `aria-disabled="true"` with the accessible description 'No farm FARM99 to move to: keep or block it.'; the reason (`move-disabled-reason`) is visible with that text
+    - expect: clicking Move opens no dialog; the row stays
+  4. Viewport 1280×800, then 1440×900, owner on Pending (rows as in the setup; `E2E-<run>-ROW` is the longest id).
+    - expect: the table's wrapper (its parent, `overflow-x-auto`) doesn't scroll: `scrollWidth <= clientWidth`
+    - expect: every row's action cell is wholly in the viewport (`toBeInViewport({ ratio: 1 })`, so not clipped by the wrapper)
+    - measured: frame 990 px at 1280, 1150 px at 1440 (the table fills it); the table's two-line minimum is about 940 px with these ids
+  5. Viewport 1000×800 (frame 710 px): the table scrolls (`scrollWidth` > `clientWidth`, about 940 > 710).
+    - expect: with the wrapper scrolled fully left, and fully right, the `E2E-<run>-ROW` action cell is wholly in the viewport (the `stickyEnd` actions column is pinned)
+    - expect: the pinned cell's computed background is opaque (alpha 255 when painted on a canvas; `rgb(242, 242, 244)` in the light scheme)
+  6. Block an `E2E-<run>-ROWBLK` / FARM05 entry through the API; viewport 1280×800; Blocked tab.
+    - expect: the Blocked table's wrapper doesn't scroll (990 px frame) and every Unblock cell is wholly in the viewport
+
+#### 11.8. Not yet automated (covered by the Angular unit specs, `unallocated-pages.spec.ts`)
+
+  - Assign with coordinates, and picking a farm from the autocomplete when the reported farm doesn't exist; a 409/404 when the entry was resolved in another browser; load errors and Retry.
 
 ### 12. 12. Settings: time zone
 

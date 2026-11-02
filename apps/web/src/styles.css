@@ -262,6 +262,17 @@
   --mat-form-field-outlined-hover-outline-color: var(--muted);
   --mat-form-field-outlined-label-text-color: var(--muted);
 
+  /*
+   * Menus (`mat-menu`, the Unallocated rows' "More actions"): a page-coloured card (--bg) with
+   * --text items (17.4:1 light, 15.6:1 dark; a disabled item's --muted text 5.3:1 / 6.6:1) and
+   * the app's corners; `.app-menu` adds a hairline, since the shadow barely shows on the dark
+   * page. Destructive items use `.danger-button`.
+   */
+  --mat-menu-container-color: var(--bg);
+  --mat-menu-container-shape: 8px;
+  --mat-menu-item-label-text-color: var(--text);
+  --mat-menu-item-icon-color: var(--muted);
+
   /* Tooltip (`matTooltip`): our surface card instead of Material's inverse chip. */
   --mat-tooltip-supporting-text-size: 0.875rem;
   --mat-tooltip-supporting-text-line-height: 1.4;
@@ -310,9 +321,19 @@ tr.mat-mdc-row.detail-row[hidden] {
   display: none;
 }
 
-/* Destructive Material buttons (Delete): danger text, or a solid danger fill for filled ones. */
+/* `mat-menu class="app-menu"`: a hairline around the panel (it sits on --surface table rows). */
+.app-menu {
+  @apply border border-line;
+}
+
+/*
+ * Destructive Material buttons and menu items (Delete, Block): danger text, or a solid danger fill
+ * for filled ones. Menu items: --danger on the --bg menu is 5.5:1 light, 7.9:1 dark.
+ */
 .danger-button {
   --mat-button-text-label-text-color: var(--danger);
+  --mat-menu-item-label-text-color: var(--danger);
+  --mat-menu-item-icon-color: var(--danger);
   --mat-button-filled-container-color: var(--danger);
   --mat-button-filled-label-text-color: var(--on-danger);
 }

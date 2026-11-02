@@ -15,6 +15,7 @@ describe('provideIcons', () => {
       'help',
       'map',
       'menu',
+      'more-vert',
       'notifications',
       'settings',
       'wind-power',

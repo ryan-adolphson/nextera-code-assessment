@@ -99,9 +99,37 @@ Repo pattern (`alerting/alerts-cell.ts`):
 - Tokens: `--mat-tooltip-container-color`, `-container-shape`, `-supporting-text-color/-font/-size/-weight/-line-height/-tracking`. The repo sets size and line height; colours come from `--mat-sys-inverse-surface`/`--mat-sys-inverse-on-surface`, mapped to `--surface`/`--text`.
 - Never put information only in a tooltip that a keyboard or touch user can't reach. Tooltips don't show on disabled buttons (`pointer-events: none`).
 
-## Menu (`@angular/material/menu`, not used yet)
+## Menu (`@angular/material/menu`)
 
 `mat-menu` (export `matMenu`; inputs `xPosition` `'before' | 'after'`, `yPosition` `'above' | 'below'`, `overlapTrigger`, `hasBackdrop`, `class`, `backdropClass`, `aria-label`/`-labelledby`/`-describedby`; outputs `closed`), `[mat-menu-item]` (`role` `'menuitem' | 'menuitemradio' | 'menuitemcheckbox'`, `disabled`, `disabledInteractive`; a leading `mat-icon`/`[matMenuItemIcon]`), trigger `[matMenuTriggerFor]` (`matMenuTriggerData`, `matMenuTriggerRestoreFocus`; outputs `menuOpened`, `menuClosed`), lazy content `ng-template[matMenuContent]`, and `[matContextMenuTriggerFor]` for right-click menus. Keyboard: arrows, Home/End, typeahead, Esc. Use a menu for a list of **actions**; for choosing a value use a native select or a button-toggle group. Tokens `--mat-menu-*`. Harnesses `MatMenuHarness`, `MatMenuItemHarness`, `MatContextMenuHarness`.
+
+**Repo pattern: row actions** (`unallocated/unallocated-pending-page.html`). A table row gets **one primary action** as an outlined `matButton` (`min-w-36!` so the buttons line up) and the rest in a per-row menu behind a `matIconButton`, all on one line (`flex items-center justify-end gap-1`, no `flex-wrap`):
+
+```html
+<button matIconButton type="button" data-testid="more-actions" #trigger="matMenuTrigger"
+        [attr.aria-label]="'More actions for ' + entry.turbineId" [matMenuTriggerFor]="more">
+  <mat-icon svgIcon="more-vert" />
+</button>
+<mat-menu #more="matMenu" class="app-menu" xPosition="before">
+  <ng-template matMenuContent>            <!-- lazy: items exist only while open -->
+    <button mat-menu-item type="button" data-testid="move" (click)="trigger.focus(); move(entry)">Move … </button>
+    <button mat-menu-item type="button" data-testid="no-move" class="opacity-100!"
+            [disabled]="true" [disabledInteractive]="true" [attr.aria-describedby]="'reason-' + entry.id">
+      <span class="block text-muted">Move …</span>
+      <span class="block text-xs text-muted" aria-hidden="true" [id]="'reason-' + entry.id">Why it isn't possible.</span>
+    </button>
+    <button mat-menu-item type="button" class="danger-button" (click)="trigger.focus(); block(entry)">Block …</button>
+  </ng-template>
+</mat-menu>
+```
+
+- **Name the trigger by its row** (`aria-label`); `MatMenuTrigger` adds `aria-haspopup="menu"`, `aria-expanded` and `aria-controls`. Item labels repeat the subject ("Move TURB001 to FARM02…"): the panel floats away from the row.
+- **Item that opens a dialog: `trigger.focus()` first.** The dialog remembers the focused element when it opens, which is the menu item, and that item is destroyed when the menu closes, so without it focus falls to `<body>` after the dialog. `MatMenuTrigger.focus()` is public; focusing the trigger doesn't close the menu.
+- **Disabled with a reason:** `disabled` + `disabledInteractive` keeps the item focusable (`aria-disabled="true"`, no `disabled` attribute; the key manager doesn't skip it), and the reason is inside the item, linked with `aria-describedby` and `aria-hidden` (so it is the item's description, not part of its name; `aria-describedby` still reads hidden content). Material dims a disabled item to `opacity: 0.38`, which would make the reason unreadable, so put `opacity-100!` on it and mute the text yourself (`text-muted`, 5.3:1 / 6.6:1 on the menu). Its `(click)` still fires (Material only stops propagation), so the handler must guard too.
+- **Destructive item:** `class="danger-button"` (also sets `--mat-menu-item-label-text-color`/`-icon-color` to `--danger`). Keep the confirmation dialog.
+- `xPosition="before"` for a menu in the last column, so it opens leftwards over the table. Clicks inside the panel don't bubble to the row (it's in the overlay container), but keep `(click)="$event.stopPropagation()"` on the actions cell for the buttons.
+- Keyboard (built in): Enter/Space on the trigger opens on the first item, Up/Down wrap, Home/End, typeahead, Tab or Esc closes and focus returns to the trigger.
+- Bundle: `MatMenu` adds ~27 kB raw / ~7 kB transfer to the lazy chunk that imports it.
 
 ## Snack-bar (`@angular/material/snack-bar`): deliberately not used
 

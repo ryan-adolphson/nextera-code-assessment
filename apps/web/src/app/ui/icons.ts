@@ -8,6 +8,7 @@ import close from '@material-symbols/svg-400/outlined/close.svg';
 import help from '@material-symbols/svg-400/outlined/help.svg';
 import map from '@material-symbols/svg-400/outlined/map.svg';
 import menu from '@material-symbols/svg-400/outlined/menu.svg';
+import moreVert from '@material-symbols/svg-400/outlined/more_vert.svg';
 import notifications from '@material-symbols/svg-400/outlined/notifications.svg';
 import settings from '@material-symbols/svg-400/outlined/settings.svg';
 import windPower from '@material-symbols/svg-400/outlined/wind_power.svg';
@@ -24,6 +25,7 @@ export const ICONS = {
   help,
   map,
   menu,
+  'more-vert': moreVert,
   notifications,
   settings,
   'wind-power': windPower,

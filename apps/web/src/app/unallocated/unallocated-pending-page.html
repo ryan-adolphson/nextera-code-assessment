@@ -88,18 +88,16 @@
           </td>
         </ng-container>
 
+        <!-- Two-line cells keep the table narrow enough to fit a desktop frame without scrolling;
+           the newest held reading's values are the first row of the expanded detail. -->
         <ng-container matColumnDef="turbine">
-          <th mat-header-cell *matHeaderCellDef>Turbine</th>
-          <td mat-cell *matCellDef="let row" class="font-semibold" data-testid="turbine-id">
-            {{ row.entry.turbineId }}
-          </td>
-        </ng-container>
-
-        <ng-container matColumnDef="kind">
-          <th mat-header-cell *matHeaderCellDef>Problem</th>
-          <td mat-cell *matCellDef="let row">
+          <th mat-header-cell *matHeaderCellDef>Turbine / problem</th>
+          <td mat-cell *matCellDef="let row" class="py-1.5!">
+            <span class="block font-semibold" data-testid="turbine-id">{{
+              row.entry.turbineId
+            }}</span>
             <span
-              class="inline-flex items-center rounded-full border border-line bg-surface px-2 py-0.5 text-xs font-medium whitespace-nowrap text-ink"
+              class="mt-0.5 inline-flex items-center rounded-full border border-line bg-surface px-2 py-0.5 text-xs font-medium text-ink"
               data-testid="kind"
               [attr.data-kind]="row.entry.kind"
               >{{ kindLabel(row.entry.kind) }}</span
@@ -107,40 +105,39 @@
           </td>
         </ng-container>
 
-        <ng-container matColumnDef="reported">
-          <th mat-header-cell *matHeaderCellDef>Reported farm</th>
-          <td
-            mat-cell
-            *matCellDef="let row"
-            data-testid="reported-farm"
-            [attr.data-exists]="row.entry.reportedFarm !== null"
-            [class.text-muted]="row.entry.reportedFarm === null"
-          >
-            {{ row.reported }}
-          </td>
-        </ng-container>
-
-        <ng-container matColumnDef="current">
-          <th mat-header-cell *matHeaderCellDef>Current farm</th>
-          <td mat-cell *matCellDef="let row" data-testid="current-farm">
-            @if (row.current; as current) {
-              {{ current }}
-            } @else {
-              <span class="text-muted" aria-label="None">–</span>
-            }
+        <ng-container matColumnDef="farms">
+          <th mat-header-cell *matHeaderCellDef>Reported / current farm</th>
+          <td mat-cell *matCellDef="let row" class="py-1.5!">
+            <span class="block">
+              <span class="sr-only">Reported: </span>
+              <span
+                data-testid="reported-farm"
+                [attr.data-exists]="row.entry.reportedFarm !== null"
+                [class.text-muted]="row.entry.reportedFarm === null"
+                >{{ row.reported }}</span
+              >
+            </span>
+            <span class="block">
+              @if (row.current; as current) {
+                <span class="sr-only">Current: </span>
+                <span class="text-muted" data-testid="current-farm">{{ current }}</span>
+              } @else {
+                <span class="text-muted" data-testid="current-farm">Not in the fleet</span>
+              }
+            </span>
           </td>
         </ng-container>
 
         <ng-container matColumnDef="seen">
           <th mat-header-cell *matHeaderCellDef>Seen ({{ tz.tag() }})</th>
-          <td mat-cell *matCellDef="let row" class="tabular-nums" data-testid="seen">
+          <td mat-cell *matCellDef="let row" class="py-1.5! tabular-nums" data-testid="seen">
             <span class="flex items-center gap-2">
               <span data-testid="last-seen"
                 >Last {{ row.entry.lastSeenAt | appTime: 'MMM d, HH:mm' }}</span
               >
               <app-staleness-badge [staleness]="row.staleness" />
             </span>
-            <span class="block text-xs text-muted" data-testid="first-seen"
+            <span class="block text-muted" data-testid="first-seen"
               >First {{ row.entry.firstSeenAt | appTime: 'MMM d, HH:mm' }}</span
             >
           </td>
@@ -153,28 +150,27 @@
           </td>
         </ng-container>
 
-        <ng-container matColumnDef="latest">
-          <th mat-header-cell *matHeaderCellDef>Latest reading</th>
-          <td mat-cell *matCellDef="let row" class="tabular-nums" data-testid="latest">
-            @if (row.entry.latest; as r) {
-              {{ r.powerOutputKw | number: '1.0-1' }} kW · {{ r.windSpeedMs | number: '1.0-1' }} m/s
-              · {{ r.gearboxTempC | number: '1.0-1' }} °C
-            } @else {
-              <span class="text-muted">–</span>
-            }
-          </td>
-        </ng-container>
-
-        <ng-container matColumnDef="actions">
-          <th mat-header-cell *matHeaderCellDef><span class="sr-only">Actions</span></th>
-          <!-- Buttons act; they never toggle the row. -->
-          <td mat-cell *matCellDef="let row" (click)="$event.stopPropagation()">
+        <!-- stickyEnd: when the table scrolls sideways (narrow windows), the actions stay pinned
+           to its right edge on the row's opaque background, with a hairline before them. -->
+        <ng-container matColumnDef="actions" stickyEnd>
+          <th mat-header-cell *matHeaderCellDef class="border-l border-line">
+            <span class="sr-only">Actions</span>
+          </th>
+          <!-- One primary action by kind (Assign an unknown turbine, Keep a farm mismatch), the
+             rest in a menu, all on one line. Buttons act; they never toggle the row. -->
+          <td
+            mat-cell
+            *matCellDef="let row"
+            class="border-l border-line"
+            (click)="$event.stopPropagation()"
+          >
             @let entry = row.entry;
-            <div class="flex flex-wrap items-center justify-end gap-1">
+            <div class="flex items-center justify-end gap-1">
               @if (entry.kind === 'unknown_turbine') {
                 <button
                   matButton="outlined"
                   type="button"
+                  class="min-w-36!"
                   data-testid="assign"
                   (click)="assign(entry)"
                 >
@@ -184,6 +180,7 @@
                 <button
                   matButton="outlined"
                   type="button"
+                  class="min-w-36!"
                   data-testid="keep"
                   [disabled]="actions.busyId() === entry.id"
                   (click)="keep(entry)"
@@ -192,42 +189,71 @@
                   }}<span class="sr-only"> {{ entry.turbineId }}</span> in
                   {{ entry.currentFarm?.id }}
                 </button>
-                <button
-                  matButton="outlined"
-                  type="button"
-                  data-testid="move"
-                  [disabled]="entry.reportedFarm === null"
-                  [disabledInteractive]="true"
-                  [attr.aria-describedby]="
-                    entry.reportedFarm === null ? 'move-reason-' + entry.id : null
-                  "
-                  (click)="move(entry)"
-                >
-                  Move<span class="sr-only"> {{ entry.turbineId }}</span> to
-                  {{ entry.reportedFarmId }}…
-                </button>
               }
               <button
-                matButton
+                matIconButton
                 type="button"
-                class="danger-button"
-                data-testid="block"
-                (click)="block(entry)"
+                data-testid="more-actions"
+                #trigger="matMenuTrigger"
+                [attr.aria-label]="'More actions for ' + entry.turbineId"
+                [matMenuTriggerFor]="more"
               >
-                Block<span class="sr-only">
-                  {{ entry.turbineId }} from {{ entry.reportedFarmId }}</span
-                >…
+                <mat-icon svgIcon="more-vert" />
               </button>
+              <mat-menu #more="matMenu" class="app-menu" xPosition="before">
+                <!-- Lazy: the items exist only while this row's menu is open. An item that opens a
+                   dialog focuses the trigger first, so the dialog returns focus there when it
+                   closes (the item itself is gone by then). -->
+                <ng-template matMenuContent>
+                  @if (entry.kind === 'farm_mismatch') {
+                    @if (entry.reportedFarm === null) {
+                      <!-- Focusable (disabledInteractive) so the reason is read, as its description
+                         (aria-hidden keeps it out of the name); full opacity so it can be read
+                         on screen too (the label is muted instead). -->
+                      <button
+                        mat-menu-item
+                        type="button"
+                        class="opacity-100!"
+                        data-testid="move"
+                        [disabled]="true"
+                        [disabledInteractive]="true"
+                        [attr.aria-describedby]="'move-reason-' + entry.id"
+                        (click)="move(entry)"
+                      >
+                        <span class="block text-muted"
+                          >Move {{ entry.turbineId }} to {{ entry.reportedFarmId }}…</span
+                        >
+                        <span
+                          class="block text-xs text-muted"
+                          aria-hidden="true"
+                          data-testid="move-disabled-reason"
+                          [id]="'move-reason-' + entry.id"
+                          >No farm {{ entry.reportedFarmId }} to move to: keep or block it.</span
+                        >
+                      </button>
+                    } @else {
+                      <button
+                        mat-menu-item
+                        type="button"
+                        data-testid="move"
+                        (click)="trigger.focus(); move(entry)"
+                      >
+                        Move {{ entry.turbineId }} to {{ entry.reportedFarmId }}…
+                      </button>
+                    }
+                  }
+                  <button
+                    mat-menu-item
+                    type="button"
+                    class="danger-button"
+                    data-testid="block"
+                    (click)="trigger.focus(); block(entry)"
+                  >
+                    Block {{ entry.turbineId }} from {{ entry.reportedFarmId }}…
+                  </button>
+                </ng-template>
+              </mat-menu>
             </div>
-            @if (entry.kind === 'farm_mismatch' && entry.reportedFarm === null) {
-              <p
-                class="m-0 mt-1 text-right text-xs text-muted"
-                data-testid="move-disabled-reason"
-                [id]="'move-reason-' + entry.id"
-              >
-                No farm {{ entry.reportedFarmId }} to move to: keep or block it.
-              </p>
-            }
           </td>
         </ng-container>
 

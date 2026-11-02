@@ -46,6 +46,7 @@ Everything in this skill was checked against the installed `.d.ts` files, the co
 | On/off setting | `mat-slide-toggle` (`role="switch"`) | form-fields |
 | One of 2–5 mutually exclusive views (range presets, UTC/local) | `mat-button-toggle-group` (radiogroup, `aria-checked`) | buttons-and-indicators |
 | Action | `matButton` variants; icon-only: `matIconButton` + `aria-label` | buttons-and-indicators |
+| More than one action per table row | one primary `matButton` + a `mat-menu` behind a `matIconButton` named by the row | overlays |
 | Read-only labels in a list (triggered rules) | `mat-chip-set` + `mat-chip` | buttons-and-indicators |
 | Status word or count pill | our own pill (`AlertLevelBadge`, `StalenessBadge`) | buttons-and-indicators |
 | Data grid with sort/paging | `mat-table` + `mat-sort-header` + `mat-paginator [appPaging]` | tables |

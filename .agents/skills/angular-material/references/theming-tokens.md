@@ -37,7 +37,7 @@ This repo has **no Sass** (Tailwind v4 via PostCSS, plain `styles.css`), so it s
    ```
 
 2. **Where it is defined and what system token it defaults to:** `material/<component>/_m3-<component>.scss`, function `get-tokens()`: keys under `base`, `color`, `typography`, `density` (e.g. `form-field-container-height`, `button-filled-container-color: map.get($system, primary)`). The CSS variable is `--mat-` + the key. Density lists show the values per density step.
-3. **Check every `--mat-*` the app sets is real** (bash/zsh; prints only unknown names, e.g. a typo like `--mat-form-feild-container-height`; 118 names, all real, at 22.2.2). Run it after adding tokens and after every Material upgrade:
+3. **Check every `--mat-*` the app sets is real** (bash/zsh; prints only unknown names, e.g. a typo like `--mat-form-feild-container-height`; 139 names, all real, at 22.2.2). Run it after adding tokens and after every Material upgrade:
 
    ```bash
    cd apps/web
@@ -88,13 +88,15 @@ Elevation: `level0` … `level4` (box-shadows).
 | Datepicker | in-range day `color-mix(in srgb, var(--accent) 16%, transparent)`, calendar container shape 12px, today outline `var(--muted)` |
 | Dialog | container `var(--bg)`, shape 12px, subhead and supporting text `var(--text)` |
 | Form field | `container-height: 40px`, `container-vertical-padding: 8px` (Material's density −4 values), outlined outline `var(--border)`, hover outline `var(--muted)`, label `var(--muted)` |
+| Menu | container `var(--bg)`, shape 8px, item label `var(--text)`, item icon `var(--muted)` |
 | Tooltip | supporting text size 0.875rem, line height 1.4 (colours via `inverse-surface`/`inverse-on-surface`) |
 
 ### Scoped overrides (classes in `styles.css`)
 
 | Selector | Tokens | Used by |
 |---|---|---|
-| `.danger-button` | `--mat-button-text-label-text-color: var(--danger)`, `--mat-button-filled-container-color: var(--danger)`, `--mat-button-filled-label-text-color: var(--on-danger)` | Delete buttons |
+| `.danger-button` | `--mat-button-text-label-text-color: var(--danger)`, `--mat-button-filled-container-color: var(--danger)`, `--mat-button-filled-label-text-color: var(--on-danger)`, `--mat-menu-item-label-text-color` / `--mat-menu-item-icon-color: var(--danger)` | Delete buttons, Block menu items |
+| `.app-menu` | Tailwind `@apply border border-line` (the panel has no border token; the shadow barely shows on the dark page) | `mat-menu class="app-menu"` (the `class` input goes on the panel) |
 | `.alert-chip`, `.alert-chip[data-level='warn'|'error']` | `--mat-chip-container-height`, `--mat-chip-elevated-container-color`, `--mat-chip-label-text-color`, `--mat-chip-outline-color` | History chips |
 | `.app-tooltip .mat-mdc-tooltip-surface` | Tailwind `@apply` (width, border, padding, `whitespace-pre-line`, shadow): the one place we style a Material internal class, because the tooltip panel has no tokens for these | `matTooltipClass="app-tooltip"` |
 | `.mat-mdc-table .mat-mdc-header-cell, .mat-mdc-cell` | `@apply px-3 whitespace-nowrap` | every table |

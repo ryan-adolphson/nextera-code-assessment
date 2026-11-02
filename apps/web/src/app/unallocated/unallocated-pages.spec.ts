@@ -3,6 +3,7 @@ import { TestRequest } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { TimeZoneSettings } from '../core/time-zone';
 import { MatAutocompleteHarness } from '@angular/material/autocomplete/testing';
+import { MatMenuHarness } from '@angular/material/menu/testing';
 import { Title } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { Subject } from 'rxjs';
@@ -170,9 +171,24 @@ describe('Unallocated turbines (/unallocated)', () => {
   const expectPost = (id: string, action: string): TestRequest =>
     app.http.expectOne({ method: 'POST', url: `${URL}/${id}/${action}` });
   const notice = () => app.text(q('unallocated-notice')) ?? '';
+  /** A row's "More actions" menu (its items render in the overlay container while open). */
+  const moreActions = (turbineId: string) =>
+    TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatMenuHarness.with({
+        selector: `[data-testid=more-actions][aria-label="More actions for ${turbineId}"]`,
+      }),
+    );
+  /** Opens a row's menu and chooses the item with this test id (Move, Block). */
+  async function chooseAction(turbineId: string, testId: 'move' | 'block') {
+    const menu = await moreActions(turbineId);
+    await menu.open();
+    const [item] = await menu.getItems({ selector: `[data-testid=${testId}]` });
+    await item.click();
+    await settle();
+  }
 
   describe('Pending', () => {
-    it('lists each held turbine: problem, farms, when seen, held readings and latest values', async () => {
+    it('lists each held turbine: problem, farms, when seen and held readings', async () => {
       await open('/unallocated', [unknownTurbine(), mismatch(), orphan()]);
 
       expect(TestBed.inject(Router).url).toBe('/unallocated/pending');
@@ -197,7 +213,7 @@ describe('Unallocated turbines (/unallocated)', () => {
       expect(cell(unknown, 'reported-farm')).toBe('Prairie Ridge (FARM01)');
       expect(cell(orph, 'reported-farm')).toBe('Unknown farm FARM99');
       expect(q('reported-farm', orph)!.dataset['exists']).toBe('false');
-      expect(cell(unknown, 'current-farm')).toBe('–');
+      expect(cell(unknown, 'current-farm')).toBe('Not in the fleet');
       expect(cell(mis, 'current-farm')).toBe('Prairie Ridge (FARM01)');
       expect(cell(unknown, 'last-seen')).toBe('Last Jan 2, 23:56');
       expect(cell(unknown, 'first-seen')).toBe('First Jan 2, 21:00');
@@ -208,16 +224,57 @@ describe('Unallocated turbines (/unallocated)', () => {
         'empty',
       ]);
       expect(cell(unknown, 'held')).toBe('30');
-      expect(cell(unknown, 'latest')).toBe('1,234.6 kW · 7.3 m/s · 81 °C');
-      expect(cell(orph, 'latest')).toBe('–');
+      expect(cell(unknown, 'turbine-id')).toBe('TURB990');
+      // Two-line cells under headers that name both lines; the latest values are in the detail
+      // (its first held reading), not in the row.
+      expect([...q('unallocated')!.querySelectorAll('th')].map((th) => app.text(th))).toEqual([
+        'Expand',
+        'Turbine / problem',
+        'Reported / current farm',
+        'Seen (UTC)',
+        'Held',
+        'Actions',
+      ]);
+      expect(q('latest', unknown)).toBeNull();
+      // The actions column is pinned to the right edge when the table scrolls sideways.
+      const actionsCell = q('more-actions', unknown)!.closest('td')!;
+      expect(actionsCell.style.right).toBe('0px');
+      // Screen readers hear which farm is which; sighted users read it from the header.
+      expect(app.text(q('reported-farm', mis)!.parentElement)).toBe(
+        'Reported: High Plains (FARM02)',
+      );
+      expect(app.text(q('current-farm', mis)!.parentElement)).toBe(
+        'Current: Prairie Ridge (FARM01)',
+      );
 
-      // Actions by kind, named with the turbine for screen readers.
+      // One primary action by kind, named with the turbine for screen readers; the rest are in
+      // the row's "More actions" menu.
       expect(app.text(q('assign', unknown))).toBe('Assign TURB990 to farm…');
       expect(q('keep', unknown)).toBeNull();
       expect(app.text(q('keep', mis))).toBe('Keep TURB001 in FARM01');
-      expect(app.text(q('move', mis))).toBe('Move TURB001 to FARM02…');
-      expect(app.text(q('block', unknown))).toBe('Block TURB990 from FARM01…');
       expect(q('assign', mis)).toBeNull();
+      for (const r of [unknown, mis, orph]) {
+        expect(q('more-actions', r)!.getAttribute('aria-haspopup')).toBe('menu');
+        expect(q('move', r)).toBeNull(); // not in the row
+        expect(q('block', r)).toBeNull();
+      }
+      const unknownMenu = await moreActions('TURB990');
+      await unknownMenu.open();
+      const unknownItems = await unknownMenu.getItems();
+      expect(await Promise.all(unknownItems.map((i) => i.getText()))).toEqual([
+        'Block TURB990 from FARM01…', // an unknown turbine has no farm to move from
+      ]);
+      await unknownMenu.close();
+      const misMenu = await moreActions('TURB001');
+      await misMenu.open();
+      expect(await Promise.all((await misMenu.getItems()).map((i) => i.getText()))).toEqual([
+        'Move TURB001 to FARM02…',
+        'Block TURB001 from FARM02…',
+      ]);
+      const [, block] = await misMenu.getItems();
+      expect(await (await block.host()).getAttribute('data-testid')).toBe('block');
+      expect(await (await block.host()).hasClass('danger-button')).toBe(true);
+      await misMenu.close();
       expect(
         app.text(q('unallocated-paginator')!.querySelector('.mat-mdc-paginator-range-label')),
       ).toBe('1 – 3 of 3');
@@ -541,7 +598,7 @@ describe('Unallocated turbines (/unallocated)', () => {
     describe('Move', () => {
       it('asks first; Esc cancels, confirming moves the turbine and its history', async () => {
         await open('/unallocated/pending', [mismatch()]);
-        await click('move', row('TURB001'));
+        await chooseAction('TURB001', 'move');
         expect(isOpen('confirm-dialog')).toBe(true);
         expect(q('confirm-dialog')!.dataset['action']).toBe('move');
         expect(app.text(q('confirm-dialog')!.querySelector('h2'))).toBe('Move TURB001 to FARM02?');
@@ -554,8 +611,10 @@ describe('Unallocated turbines (/unallocated)', () => {
         expect(isOpen('confirm-dialog')).toBe(false);
         app.http.expectNone(`${URL}/e-mismatch/move`);
         expect(notice()).toBe('');
+        // Focus is back on the row's menu button.
+        expect(document.activeElement).toBe(q('more-actions', row('TURB001')));
 
-        await click('move', row('TURB001'));
+        await chooseAction('TURB001', 'move');
         await click('confirm-action');
         expect(app.text(q('confirm-action'))).toBe('Moving…');
         expectPost('e-mismatch', 'move').flush(
@@ -573,25 +632,67 @@ describe('Unallocated turbines (/unallocated)', () => {
         await flushList('pending', []);
       });
 
-      it('is disabled, with the reason, when the reported farm does not exist', async () => {
+      it('is a disabled menu item, with the reason, when the reported farm does not exist', async () => {
         await open('/unallocated/pending', [orphan()]);
-        const move = q<HTMLButtonElement>('move', row('TURB002'))!;
+        expect(q('move-disabled-reason')).toBeNull(); // no helper text in the table
+        const menu = await moreActions('TURB002');
+        await menu.open();
+        const [moveItem, blockItem] = await menu.getItems();
+        expect(await moveItem.isDisabled()).toBe(true);
+        expect(await blockItem.isDisabled()).toBe(false);
+        const move = q<HTMLButtonElement>('move')!;
         expect(move.getAttribute('aria-disabled')).toBe('true'); // focusable, still disabled
-        const reason = q('move-disabled-reason', row('TURB002'))!;
+        expect(move.hasAttribute('disabled')).toBe(false);
+        const reason = q('move-disabled-reason', move)!;
         expect(app.text(reason)).toBe('No farm FARM99 to move to: keep or block it.');
-        expect(move.getAttribute('aria-describedby')).toContain(reason.id);
+        expect(move.getAttribute('aria-describedby')).toBe(reason.id); // its description
+        expect(reason.getAttribute('aria-hidden')).toBe('true'); // not part of its name
 
-        move.click();
+        // Clicking it does nothing, and the menu stays open.
+        await moveItem.click();
         await settle();
         expect(isOpen('confirm-dialog')).toBe(false);
-        // Keep still works.
+        expect(await menu.isOpen()).toBe(true);
+        await menu.close();
+        // Keep is the row's action.
         expect(app.text(q('keep', row('TURB002')))).toBe('Keep TURB002 in FARM02');
-        expect(q('move', row('TURB002'))!.getAttribute('aria-describedby')).not.toBeNull();
+      });
+
+      it('opens from the keyboard, moves with the arrow keys, and Esc returns focus', async () => {
+        await open('/unallocated/pending', [mismatch()]);
+        const trigger = q<HTMLButtonElement>('more-actions', row('TURB001'))!;
+        expect(trigger.getAttribute('aria-label')).toBe('More actions for TURB001');
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        const key = (target: Element, name: string, keyCode: number) => {
+          const event = new KeyboardEvent('keydown', { key: name, bubbles: true });
+          Object.defineProperty(event, 'keyCode', { get: () => keyCode });
+          target.dispatchEvent(event);
+        };
+
+        // Enter on the button (a browser clicks it): the menu opens on its first item.
+        trigger.focus();
+        key(trigger, 'Enter', 13);
+        trigger.click();
+        await settle();
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+        expect(document.activeElement).toBe(q('move'));
+        key(document.activeElement!, 'ArrowDown', 40);
+        await settle();
+        expect(document.activeElement).toBe(q('block'));
+        key(document.activeElement!, 'ArrowDown', 40); // wraps
+        await settle();
+        expect(document.activeElement).toBe(q('move'));
+
+        await pressEscape();
+        expect(q('move')).toBeNull();
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        expect(document.activeElement).toBe(trigger);
+        expect(row('TURB001').hasAttribute('data-expanded')).toBe(false); // never toggles the row
       });
 
       it('shows a conflict (409) in the dialog and reloads; another error just shows', async () => {
         await open('/unallocated/pending', [mismatch()]);
-        await click('move', row('TURB001'));
+        await chooseAction('TURB001', 'move');
         await click('confirm-action');
         const { body, opts } = conflict(
           'Farm FARM02 does not exist: keep TURB001 in FARM01 or block it',
@@ -617,7 +718,7 @@ describe('Unallocated turbines (/unallocated)', () => {
 
       it('closes and reloads when the entry is gone (404)', async () => {
         await open('/unallocated/pending', [mismatch()]);
-        await click('move', row('TURB001'));
+        await chooseAction('TURB001', 'move');
         await click('confirm-action');
         const { body, opts } = notFound('Unallocated turbine e-mismatch not found');
         expectPost('e-mismatch', 'move').flush(body, opts);
@@ -631,7 +732,7 @@ describe('Unallocated turbines (/unallocated)', () => {
     describe('Block', () => {
       it('explains what blocking drops, then blocks, announces and reloads', async () => {
         await open('/unallocated/pending', [unknownTurbine({ heldCount: 1 })]);
-        await click('block', row('TURB990'));
+        await chooseAction('TURB990', 'block');
         expect(q('confirm-dialog')!.dataset['action']).toBe('block');
         expect(app.text(q('confirm-dialog')!.querySelector('h2'))).toBe(
           'Block TURB990 from FARM01?',
@@ -648,12 +749,13 @@ describe('Unallocated turbines (/unallocated)', () => {
 
         expect(isOpen('confirm-dialog')).toBe(false);
         expect(notice()).toBe('Readings for TURB990 from FARM01 are now blocked.');
+        expect(document.activeElement).toBe(q('more-actions', row('TURB990'))); // focus returned
         await flushList('pending', []);
       });
 
       it('shows that it is already blocked (409) in the dialog and reloads', async () => {
         await open('/unallocated/pending', [unknownTurbine()]);
-        await click('block', row('TURB990'));
+        await chooseAction('TURB990', 'block');
         await click('confirm-action');
         const { body, opts } = conflict('TURB990 reporting FARM01 is blocked: unblock it first');
         expectPost('e-unknown', 'block').flush(body, opts);
@@ -774,6 +876,8 @@ describe('Unallocated turbines (/unallocated)', () => {
           'Unblock TURB998 from FARM01',
         ],
       ]);
+      // Unblock is pinned to the right edge when the table scrolls sideways.
+      expect(q('unblock')!.closest('td')!.style.right).toBe('0px');
     });
 
     it('shows an empty state, and a load error with a retry', async () => {

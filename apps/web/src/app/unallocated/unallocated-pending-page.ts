@@ -2,6 +2,7 @@ import { DecimalPipe } from '@angular/common';
 import { Component, ViewContainerRef, computed, inject, signal } from '@angular/core';
 import { MatButton, MatIconButton } from '@angular/material/button';
 import { MatIcon } from '@angular/material/icon';
+import { MatMenu, MatMenuContent, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
 import { map } from 'rxjs';
 import { FleetStore } from '../fleet/fleet.store';
 import { StalenessBadge } from '../fleet/staleness-badge';
@@ -30,9 +31,10 @@ interface PendingRow {
 /**
  * /unallocated/pending (owner and up): turbines whose readings ingestion holds because the id is
  * not in the fleet or the reading names another farm. One row per (turbine, reported farm), most
- * recently seen first, 25 per page; a row expands to its newest held readings. Actions: an unknown
- * turbine is assigned to a farm (dialog); a farm mismatch is kept in its farm (direct) or moved to
- * the reported one (confirmed); either can be blocked (confirmed). Reloads on
+ * recently seen first, 25 per page; a row expands to its newest held readings. Each row has one
+ * primary action by kind: an unknown turbine is assigned to a farm (dialog), a farm mismatch is kept
+ * in its farm (direct). Its "More actions" menu moves a mismatch to the reported farm (confirmed;
+ * disabled, with the reason, when that farm doesn't exist) and blocks either kind (confirmed). Reloads on
  * `unallocated-turbine.changed` (any browser, or ingestion holding a new turbine).
  */
 @Component({
@@ -49,6 +51,10 @@ interface PendingRow {
     MatButton,
     MatIcon,
     MatIconButton,
+    MatMenu,
+    MatMenuContent,
+    MatMenuItem,
+    MatMenuTrigger,
     StalenessBadge,
     TABLE_IMPORTS,
     UnallocatedTabs,
@@ -79,12 +85,9 @@ export class UnallocatedPendingPage {
   protected readonly columns = [
     'expand',
     'turbine',
-    'kind',
-    'reported',
-    'current',
+    'farms',
     'seen',
     'held',
-    'latest',
     'actions',
   ];
   protected readonly trackById = (_: number, row: PendingRow) => row.entry.id;
@@ -120,7 +123,7 @@ export class UnallocatedPendingPage {
   }
 
   protected move(entry: UnallocatedTurbine): void {
-    // No farm to move to: the button stays focusable (disabledInteractive) but does nothing.
+    // No farm to move to: the menu item stays focusable (disabledInteractive) but does nothing.
     if (entry.reportedFarm === null) return;
     this.confirm(entry, 'move');
   }

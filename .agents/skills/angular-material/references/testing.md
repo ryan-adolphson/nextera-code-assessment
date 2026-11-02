@@ -51,7 +51,8 @@ const pages = await loader.getHarness(MatPaginatorHarness.with({ selector: '[dat
 | `MatTooltipHarness` | `show`, `hide`, `isOpen`, `isDisabled`, `getTooltipText` |
 | `MatIconHarness` | `getName`, `getType`, `getNamespace`, `isInline` |
 | `MatTabNavBarHarness`, `MatTabLinkHarness` (`tabs/testing`) | bar `getLinks({ label })`, `getActiveLink`, `clickLink({ label })`, `getPanel` (→ `MatTabNavPanelHarness.getTextContent`); link `getLabel`, `isActive`, `isDisabled`, `click`. Each tab route renders its own bar, so look the bar up again after a navigation (the old host is detached). Keys: `(await link.host()).sendKeys(TestKey.RIGHT_ARROW)` (dispatches `keyCode`); Space is `sendKeys(' ')` (`TestKey` has no SPACE). Opening a tab whose page starts a resource: DOM `click()` + `NavigationEnd`, not the harness (it waits for stability) |
-| `MatMenuHarness`, `MatSnackBarHarness`, `MatTabGroupHarness`, `MatExpansionPanelHarness`, `MatProgressBarHarness`, `MatBadgeHarness` | see the other references (not used by specs here) |
+| `MatMenuHarness`, `MatMenuItemHarness` (`menu/testing`) | menu `open`, `close`, `isOpen`, `getItems({ text, selector })`, `clickItem({ text })`, `isDisabled`, `getTriggerText`, `focus`; item `click`, `getText` (includes a reason span), `isDisabled` (true for `disabledInteractive` too), `focus`, `hasSubmenu`. The host is the trigger: find it with `MatMenuHarness.with({ selector: '[data-testid=more-actions][aria-label="More actions for TURB001"]' })` from the fixture loader; the items are found in the overlay for you. Keyboard: dispatch `keydown` with `keyCode` (Enter 13, ArrowDown 40, Esc 27) and assert `document.activeElement`; `unallocated-pages.spec.ts` |
+| `MatSnackBarHarness`, `MatTabGroupHarness`, `MatExpansionPanelHarness`, `MatProgressBarHarness`, `MatBadgeHarness` | see the other references (not used by specs here) |
 
 `MatTestDialogOpener.withComponent(Component, config?)` (`dialog/testing`) opens a dialog component in isolation.
 
@@ -91,6 +92,7 @@ The built app exposes real ARIA, so use roles and names:
 | Autocomplete | `getByRole('combobox', { name: 'Farm or turbine' })`, then `getByRole('listbox')` → `getByRole('group', { name: 'Farms' }).getByRole('option')` |
 | Date range | `getByRole('button', { name: 'Open calendar' })`, then `getByRole('dialog').getByRole('button', { name: 'January 2, 2026' })` (disabled days are disabled buttons) |
 | Paginator | `getByRole('button', { name: 'Next page' })` / `'Previous page'`; range label text "1 – 25 of 100" |
+| Menu | `row.getByRole('button', { name: 'More actions for TURB001' })`, then `page.getByRole('menuitem', { name: 'Move TURB001 to FARM02…' })` (the panel is outside the row) |
 | Table | `getByRole('row')`, `getByRole('columnheader')`; sort headers carry `aria-sort` |
 
 Prefer these and `data-testid` over `mat-*`/`cdk-*` class selectors. `textContent` runs `<li>` items together, so text regexes shouldn't rely on `\b`.
