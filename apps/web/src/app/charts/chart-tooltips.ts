@@ -29,8 +29,12 @@ export function tooltipContent(
   return root;
 }
 
-/** "Jan 2, 03:00–03:30 UTC" (or "… CST" in local time): a candle's time span. */
+/**
+ * "Jan 2, 03:00–03:30 UTC" (or "… CST" in local time): a candle's time span, or its own `label`
+ * (a precomputed candle, e.g. a day).
+ */
 export function candleSpan(c: Candle, zone: string = UTC_ZONE): string {
+  if (c.label) return c.label;
   const start = formatIn(c.start, 'MMM d, HH:mm', zone);
   return `${start}–${formatIn(c.end, 'HH:mm', zone)} ${zoneAbbr(zone, c.start)}`;
 }
@@ -65,7 +69,12 @@ export function candleTooltip(
   }
   const time = document.createElement('span');
   time.className = 'block text-muted';
-  time.textContent = `${candleSpan(c, zone)} · ${c.count} ${c.count === 1 ? 'reading' : 'readings'}`;
+  time.textContent = `${candleSpan(c, zone)} · ${candleCount(c)}`;
   root.append(time);
   return root;
+}
+
+/** "3 readings", or a precomputed candle's own `detail` ("2 of 2 turbines reporting"). */
+export function candleCount(c: Candle): string {
+  return c.detail ?? `${c.count} ${c.count === 1 ? 'reading' : 'readings'}`;
 }

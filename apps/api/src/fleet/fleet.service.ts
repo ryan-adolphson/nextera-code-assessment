@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import {
   PrismaService,
+  farmDailyHistory,
   farmWeather,
   listFarms,
   telemetryStats,
   turbineTelemetry,
   turbineWeather,
+  type FarmDailyHistoryResponse,
   type FarmOverview,
   type FarmWeatherResponse,
   type TelemetryResponse,
@@ -13,6 +15,7 @@ import {
   type TurbineWeatherResponse,
 } from '@nextera/shared';
 import { httpQuery } from '../common/query-errors.js';
+import { FarmDailyQueryDto } from './dto/farm-daily-query.dto.js';
 import { WeatherQueryDto } from './dto/weather-query.dto.js';
 import { TelemetryQueryDto } from './dto/telemetry-query.dto.js';
 
@@ -65,5 +68,17 @@ export class FleetService {
     query: WeatherQueryDto,
   ): Promise<TurbineWeatherResponse> {
     return httpQuery(turbineWeather(this.prisma, turbineId, query));
+  }
+
+  /**
+   * A farm's daily candles (power summed, the rest averaged over its turbines) in [from, to),
+   * local days in `timeZone`, from the farm rollups. 404 for an unknown farm, 400 for a reversed
+   * range, one over 183 days or an unknown time zone.
+   */
+  dailyHistory(
+    farmId: string,
+    query: FarmDailyQueryDto,
+  ): Promise<FarmDailyHistoryResponse> {
+    return httpQuery(farmDailyHistory(this.prisma, farmId, query));
   }
 }

@@ -203,6 +203,29 @@
   --mat-button-toggle-selected-state-text-color: var(--on-accent);
 
   /*
+   * Section tabs (`mat-tab-nav-bar`, ui/page-tabs.ts): 40px links in the body font; inactive
+   * --muted (5.3:1 light, 6.6:1 dark), active, hovered and focused --text; a 2px --accent
+   * indicator under the active tab (5.7:1 / 6.2:1) on a hairline divider; --text paginator arrows.
+   */
+  --mat-tab-container-height: 40px;
+  --mat-tab-label-text-weight: 500;
+  --mat-tab-divider-color: var(--border);
+  --mat-tab-divider-height: 1px;
+  --mat-tab-active-indicator-color: var(--accent);
+  --mat-tab-active-hover-indicator-color: var(--accent);
+  --mat-tab-active-focus-indicator-color: var(--accent);
+  --mat-tab-active-indicator-height: 2px;
+  --mat-tab-active-label-text-color: var(--text);
+  --mat-tab-active-hover-label-text-color: var(--text);
+  --mat-tab-active-focus-label-text-color: var(--text);
+  --mat-tab-inactive-label-text-color: var(--muted);
+  --mat-tab-inactive-hover-label-text-color: var(--text);
+  --mat-tab-inactive-focus-label-text-color: var(--text);
+  --mat-tab-active-ripple-color: var(--text);
+  --mat-tab-inactive-ripple-color: var(--text);
+  --mat-tab-pagination-icon-color: var(--text);
+
+  /*
    * Slide toggle (rule Enabled switch): on = --accent track with an --on-accent handle; off =
    * a --surface track with a --muted outline and handle (Material's surface-variant has no
    * counterpart here, so the off-state tokens are set directly).

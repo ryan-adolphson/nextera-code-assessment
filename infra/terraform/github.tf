@@ -2,7 +2,8 @@
 # .github/workflows/deploy.yml exchanges the job's GitHub OIDC token for a short-lived token of the
 # deployer service account. It builds and pushes the images, runs `prisma migrate deploy` through the
 # Cloud SQL Auth Proxy, then deploys nextera-api, nextera-ingestion and nextera-web, and updates the
-# image of the demo feed job (demo_feed_enabled) and the weather sync job (weather_sync_enabled).
+# image of the demo feed job (demo_feed_enabled), the weather sync job (weather_sync_enabled) and
+# the farm rollup job (farm_rollup_enabled).
 
 resource "google_iam_workload_identity_pool" "github" {
   workload_identity_pool_id = "github"
@@ -74,11 +75,13 @@ resource "google_cloud_run_v2_service_iam_member" "deployer_developer" {
   member   = "serviceAccount:${google_service_account.deployer.email}"
 }
 
-# `gcloud run jobs update --image` on the optional jobs that exist (demo-feed.tf, weather-sync.tf).
+# `gcloud run jobs update --image` on the optional jobs that exist (demo-feed.tf, weather-sync.tf,
+# farm-rollup.tf).
 resource "google_cloud_run_v2_job_iam_member" "deployer_developer" {
   for_each = merge(
     var.demo_feed_enabled ? { demo_feed = google_cloud_run_v2_job.demo_feed[0].name } : {},
     var.weather_sync_enabled ? { weather_sync = google_cloud_run_v2_job.weather_sync[0].name } : {},
+    var.farm_rollup_enabled ? { farm_rollup = google_cloud_run_v2_job.farm_rollup[0].name } : {},
   )
 
   name     = each.value
@@ -103,6 +106,7 @@ resource "google_service_account_iam_member" "deployer_act_as" {
     },
     var.demo_feed_enabled ? { demo_feed = google_service_account.demo_feed[0].name } : {},
     var.weather_sync_enabled ? { weather_sync = google_service_account.weather_sync[0].name } : {},
+    var.farm_rollup_enabled ? { farm_rollup = google_service_account.farm_rollup[0].name } : {},
   )
 
   service_account_id = each.value

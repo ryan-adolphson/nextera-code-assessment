@@ -1,6 +1,7 @@
 # Cloud Monitoring: email notification channels (var.alert_emails), HTTPS uptime checks on the public
 # services, alert policies for the failure modes that otherwise go unnoticed (dead letters, an
-# ingestion backlog, 5xx errors, failing health checks, Cloud SQL and Redis pressure) and an optional
+# ingestion backlog, 5xx errors, failing health checks, failed Cloud Run Job executions, Cloud SQL and
+# Redis pressure) and an optional
 # monthly billing budget (var.billing_account). Every policy exists even with no email addresses: it
 # then only opens incidents in the console (Monitoring -> Alerting).
 # Ingestion is IAM-only, so it has no uptime check; the 5xx and backlog policies cover it.
@@ -27,6 +28,14 @@ locals {
     "\"${service.name}\""
   ])
   sql_database_id = "${var.project_id}:${google_sql_database_instance.main.name}" # Cloud SQL's database_id label
+
+  # The scheduled Cloud Run Jobs that exist (farm-rollup.tf, weather-sync.tf, demo-feed.tf).
+  scheduled_jobs = merge(
+    var.farm_rollup_enabled ? { farm_rollup = google_cloud_run_v2_job.farm_rollup[0].name } : {},
+    var.weather_sync_enabled ? { weather_sync = google_cloud_run_v2_job.weather_sync[0].name } : {},
+    var.demo_feed_enabled ? { demo_feed = google_cloud_run_v2_job.demo_feed[0].name } : {},
+  )
+  cloud_run_job_names = join(", ", [for name in values(local.scheduled_jobs) : "\"${name}\""])
 
   uptime_checks = {
     api = {
@@ -242,6 +251,57 @@ resource "google_monitoring_alert_policy" "uptime" {
       - nextera-api: /api/health/ready answers 503 when Cloud SQL or Memorystore is unreachable. Check `gcloud run services logs read nextera-api`, the Cloud SQL instance and Redis.
       - nextera-web: nginx refuses to start on a bad API_BASE_URL (Cloud Run then keeps the previous revision). Check `gcloud run services logs read nextera-web`.
       - After a bad deploy, roll back: `gcloud run services update-traffic <service> --to-revisions <previous revision>=100`.
+    EOT
+  }
+
+  depends_on = [google_project_service.this]
+}
+
+# One policy for every scheduled job (none when all are off); the job_name label names the job.
+# completed_execution_count is a DELTA counter written when an execution ends (after its task
+# retries), with its outcome in the result label.
+resource "google_monitoring_alert_policy" "job_failures" {
+  count = length(local.scheduled_jobs) > 0 ? 1 : 0
+
+  display_name          = "nextera: Cloud Run Job execution failed"
+  combiner              = "OR"
+  severity              = "ERROR"
+  notification_channels = local.alert_channels
+
+  conditions {
+    display_name = "A failed execution, per job"
+
+    condition_threshold {
+      filter          = "resource.type = \"cloud_run_job\" AND resource.label.job_name = one_of(${local.cloud_run_job_names}) AND metric.type = \"run.googleapis.com/job/completed_execution_count\" AND metric.label.result = \"failed\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      duration        = "0s"
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+        group_by_fields      = ["resource.label.job_name"]
+      }
+    }
+  }
+
+  alert_strategy {
+    auto_close = "1800s" # a failure is a single point: close once no failure has come for 30 min
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      An execution of a scheduled Cloud Run Job (see the job_name label) failed after its retries.
+
+      1. Logs: `gcloud run jobs executions list --job <job> --region ${var.region}`, then `gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="<job>"' --limit 50`.
+      2. On a fresh project the job may still run Terraform's placeholder image: the next deploy (deploy.yml) sets the ingestion image.
+      3. Per job:
+         - **nextera-farm-rollup** (every 15 min): the farm History tab stops updating. Usually Cloud SQL (connections, the database-url secret) or a migration that hasn't run. The next successful run catches up from its watermark; rebuild with `--full` if needed.
+         - **nextera-weather-sync** (daily): Open-Meteo errors or quota (open_meteo_api_key_enabled), or Cloud SQL. Backfill missing days with `--from … --to …`.
+         - **nextera-demo-feed** (every 5 min): a publish to the telemetry topic failed; a missed tick is only a gap.
+      4. Run it by hand once fixed: `gcloud run jobs execute <job> --region ${var.region}`.
     EOT
   }
 

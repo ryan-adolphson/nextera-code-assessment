@@ -27,6 +27,9 @@ github_repository = "my-org/nextera-code-assessment"
 # weather_sync_paused     = true    # keep the weather sync, stop its schedule
 # weather_sync_schedule   = "30 1 * * *"   # cron, UTC
 # open_meteo_api_key_enabled = true # secret open-meteo-api-key (add its value with gcloud); commercial use needs it
+# farm_rollup_enabled     = false   # on by default: the farm History tab's rollups (Cloud Run Job + Scheduler)
+# farm_rollup_paused      = true    # keep the farm rollup, stop its schedule (History goes stale)
+# farm_rollup_schedule    = "*/15 * * * *"   # cron, UTC
 
 # Monitoring (monitoring.tf): every alert policy exists regardless; these add email notifications
 # alert_emails            = ["wind-ops@example.com"]

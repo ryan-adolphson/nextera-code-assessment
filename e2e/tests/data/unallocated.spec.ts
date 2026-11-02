@@ -301,7 +301,7 @@ test.describe('[DATA] Unallocated turbines', () => {
       ]),
     ).toMatchObject({ rows: 1, inserted: 0, held: 0, blocked: 1 });
 
-    await page.getByTestId('unallocated-tabs').getByRole('link', { name: 'Blocked' }).click();
+    await page.getByTestId('unallocated-tabs').getByRole('tab', { name: 'Blocked' }).click();
     await expect(page).toHaveURL(/\/unallocated\/blocked$/);
     const blocked = page.locator(`[data-testid="blocked-row"][data-turbine-id="${turbineId}"]`);
     await expect(blocked).toContainText('Blue Sky (FARM05)');

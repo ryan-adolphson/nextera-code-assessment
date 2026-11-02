@@ -8,6 +8,8 @@
 #      DEMO_FEED_JOB is set (Terraform demo_feed_enabled).
 #   6. `gcloud run jobs update` the weather sync job (ingestion image), only if the repository variable
 #      WEATHER_SYNC_JOB is set (Terraform weather_sync_enabled).
+#   7. `gcloud run jobs update` the farm rollup job (ingestion image), only if the repository variable
+#      FARM_ROLLUP_JOB is set (Terraform farm_rollup_enabled).
 # Authenticates with Workload Identity Federation (no keys). One-time setup: CLAUDE.md, "Deploying".
 # Repository variables come from `terraform output github_actions_variables`.
 name: Deploy
@@ -55,6 +57,7 @@ jobs:
       DEPLOYER_SA: ${{ vars.GCP_DEPLOYER_SA }}
       DEMO_FEED_JOB: ${{ vars.DEMO_FEED_JOB }} # optional: set only while Terraform's demo_feed_enabled is on
       WEATHER_SYNC_JOB: ${{ vars.WEATHER_SYNC_JOB }} # optional: set only while Terraform's weather_sync_enabled is on
+      FARM_ROLLUP_JOB: ${{ vars.FARM_ROLLUP_JOB }} # optional: set only while Terraform's farm_rollup_enabled is on
       CLOUD_SQL_PROXY_VERSION: v2.26.0
     steps:
       - name: Check repository variables
@@ -200,4 +203,12 @@ jobs:
         if: env.WEATHER_SYNC_JOB != ''
         run: |
           gcloud run jobs update "$WEATHER_SYNC_JOB" --image "${REGISTRY}/ingestion:${SHA}" \
+            --project "$PROJECT_ID" --region "$REGION" --quiet
+
+      # --- 7. Farm rollup job (optional; farm_rollup_enabled) -------------------------------------
+      # Same ingestion image; the next scheduled run uses it. Skipped without FARM_ROLLUP_JOB.
+      - name: Update farm rollup job
+        if: env.FARM_ROLLUP_JOB != ''
+        run: |
+          gcloud run jobs update "$FARM_ROLLUP_JOB" --image "${REGISTRY}/ingestion:${SHA}" \
             --project "$PROJECT_ID" --region "$REGION" --quiet

@@ -28,7 +28,7 @@ export async function createTestApp(): Promise<TestApp> {
   await app.listen(0, '127.0.0.1');
 
   const prisma = app.get(PrismaService);
-  await prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, held_telemetry, unallocated_turbines, turbines, farm_weather, farms`;
+  await prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, held_telemetry, unallocated_turbines, turbines, farm_weather, farm_telemetry_rollups, farms`;
   await seedFromCsv(prisma, SEED_DATA_DIR);
   await prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry`;
 

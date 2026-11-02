@@ -8,7 +8,7 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 ## Automation status
 
-121 tests in 20 files (read-only project 95, data project 26; `npx playwright test --list`). Every scenario below has a **Status** line. Wall time for both projects locally: about 38 s.
+144 tests in 23 files (read-only project 116, data project 28; `npx playwright test --list`). Every scenario below has a **Status** line. Wall time for both projects locally: about 55 s.
 
 | Area | Files |
 |---|---|
@@ -24,10 +24,12 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 | 11 Unallocated | `tests/unallocated/access.spec.ts`, `tests/data/unallocated.spec.ts`, `tests/data/unallocated-time-zone.spec.ts` |
 | 12 Time zone | `tests/settings/time-zone.spec.ts`, `tests/data/unallocated-time-zone.spec.ts` |
 | 13 Weather | `tests/weather/weather.spec.ts`, `tests/weather/weather-history.spec.ts` |
+| 14 Farm History | `tests/farms/history.spec.ts`, `tests/data/farm-history.spec.ts` |
+| 15 Section tabs (keyboard, 320 px) | `tests/farms/tabs.spec.ts` |
 
-Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `clock.ts` (`fixBrowserDate`, `shortTimeIn`), `fleet.ts` (GET /api/farms from the page's own response, `mainNav`, `createTurbine`: held upload + assign), `rules.ts` (`ensureRule` / `removeRules`), `telemetry.ts`, `unallocated.ts`, `weather.ts`.
+Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `clock.ts` (`fixBrowserDate`, `shortTimeIn`), `fleet.ts` (GET /api/farms from the page's own response, `mainNav`, `createTurbine`: held upload + assign), `rules.ts` (`ensureRule` / `removeRules`), `telemetry.ts`, `unallocated.ts`, `weather.ts`, `farm-history.ts` (the daily response shape, a recorder for the page's daily requests, the chart's texts derived from a response, `runRollup`: `npm run rollup` at the repo root against DATABASE_URL).
 
-**Robust to a shared DB** (db:seed fixture plus db:seed:demo, the demo feed and earlier runs): expectations come from the responses the page rendered; turbine history/stats are bounded at the browser clock (`boundTelemetryAt`); the SSE stream is aborted in read-only tests that must not change mid-test; [DATA] tests use per-run turbine ids and clean up rules and unallocated entries (turbines and readings can't be deleted through the API: each run leaves `E2E-<run>-LV` on FARM04 with 4 Jan 2 readings and `E2E-<run>-RF` on FARM04 with 3, and the disabled rules "Rotor speed above 50 rpm → Warning" and "Gearbox temperature below 5 °C → Info", besides what section 11 leaves). `page.route` mocks only where real data can't reach the state: Turbines paging (60 turbines), History paging/chips in read-only (30 flagged turbines), an empty farm when every farm has turbines, error/Retry, a failed rule switch (PATCH 500) and login 429/unreachable, the SSE transport, and weather (section 13).
+**Robust to a shared DB** (db:seed fixture plus db:seed:demo, the demo feed and earlier runs): expectations come from the responses the page rendered; turbine history/stats are bounded at the browser clock (`boundTelemetryAt`); the SSE stream is aborted in read-only tests that must not change mid-test; [DATA] tests use per-run turbine ids and clean up rules and unallocated entries (turbines and readings can't be deleted through the API: each run leaves `E2E-<run>-LV` on FARM04 with 4 Jan 2 readings and `E2E-<run>-RF` on FARM04 with 3, and the disabled rules "Rotor speed above 50 rpm → Warning" and "Gearbox temperature below 5 °C → Info", besides what section 11 leaves; section 14 leaves `E2E-<run>-FH` on FARM09 with 5 readings on three new days (from Jan 10, 2026 on in a fixture-only DB), and their rollups). `page.route` mocks only where real data can't reach the state: Turbines paging (60 turbines), History paging/chips in read-only (30 flagged turbines), an empty farm when every farm has turbines, error/Retry, a failed rule switch (PATCH 500) and login 429/unreachable, the SSE transport, and weather (section 13).
 
 ### Not automated (and why)
 
@@ -538,9 +540,9 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **Steps:**
   1. Click Alerting in the nav.
-    - expect: URL /alerting/history; heading 'Alerting'; tabs History and Rules (alerting-tabs)
-  2. Click Rules, then History.
-    - expect: URLs /alerting/rules and /alerting/history; active tab highlighted
+    - expect: URL /alerting/history; heading 'Alerting'; tablist 'Alerting' (`alerting-tabs`) with tabs History and Rules
+  2. Click the Rules tab, then History (role `tab` in the tablist; the side nav's links keep `aria-current`).
+    - expect: URLs /alerting/rules and /alerting/history; the active tab `aria-selected="true"`
 
 #### 6.2. Default date range is whole UTC days
 
@@ -1081,8 +1083,8 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
   2. GET /api/unallocated-turbines with a viewer token.
     - expect: 404 (the RolesGuard convention)
   3. Sign in as owner, click 'Unallocated' in the nav.
-    - expect: /unallocated/pending, title 'Unallocated turbines · Nextera', heading 'Unallocated turbines', Pending tab aria-current=page
-    - expect: Blocked tab → /unallocated/blocked, title 'Blocked turbines · Nextera'
+    - expect: /unallocated/pending, title 'Unallocated turbines · Nextera', heading 'Unallocated turbines', tablist 'Unallocated' with the Pending tab `aria-selected="true"`
+    - expect: Blocked tab → /unallocated/blocked, title 'Blocked turbines · Nextera', Blocked `aria-selected="true"`
 
 #### 11.2. [DATA] Held unknown turbine appears live and expands to its readings
 
@@ -1297,7 +1299,7 @@ The farm Overview (`FarmWeather`) and its Weather history tab (`FarmWeatherHisto
 
 **Steps:**
   1. Admin opens /farms/FARM01.
-    - expect: `farm-tabs` links 'Overview', 'Weather history'; `farm-tab-overview` has `aria-current="page"`, `farm-tab-weather` none; no `weather-history-range`
+    - expect: `farm-tabs` (tablist 'Farm') tabs 'Overview', 'History', 'Weather history' (History: section 14); `farm-tab-overview` `aria-selected="true"`, `farm-tab-weather` `"false"`; no `weather-history-range`
   2. Click Weather history.
     - expect: URL /farms/FARM01/weather; the weather tab current, Overview not; title 'Prairie Ridge · Weather history · Nextera'; the range shown, no `farm-power`
   3. Click Overview.
@@ -1368,3 +1370,196 @@ Still not automated in the browser (covered by the Angular unit specs):
   - Missing values ('–'), a zone change reloading only the daily view in place, no refetch on live readings, Retry of only the failed request, and DST days' expected buckets (`weather/farm-weather.spec.ts`, `weather/weather.spec.ts`).
   - Weather history: a zone change while the tab is open (not reachable through the UI, see 12.6), the gap drawn for a missing bucket, the earlier range dimmed while the next loads, the `@defer` loading/error blocks (`weather/farm-weather-history-page.spec.ts`, `charts/chart-group.spec.ts`).
   - Real synced weather in the browser: the fixture's January has none; it would need seeded `farm_weather` rows for Jan 2026 or a clock inside the synced days.
+
+### 14. 14. Farm History (daily power candles from the farm rollup)
+
+**Seed:** none (own setup in `tests/farms/history.spec.ts`: `signIn(page, 'viewer')` at SEED_NOW in a UTC browser, the live stream aborted; the Chicago test uses `fixBrowserDate` + `logIn` like section 12)
+
+/farms/:farmId/history (`FarmHistoryPage`, the farm tab between Overview and Weather history) draws the farm's power output (the sum over its turbines) as one candle per day from `GET /api/farms/:farmId/telemetry/daily?from&to&timeZone`, which reads `farm_telemetry_rollups` (30-minute buckets written by the farm rollup: the compose `farm-rollup` service every 15 min, `npm run rollup`, and once after `db:seed`). Ranges 30d / 90d / 6 months (182 days) of whole days ending today in the zone shown; answers are kept in memory per (farm, range, zone) for 15 minutes; Retry and Refresh skip that cache. Expected texts are derived from the response the page rendered (real API; only the 500 is mocked).
+
+**Shared DB note:** the rollup prunes rollups older than 190 days before the newest reading. A local database that also holds current readings (db:seed:demo, the demo feed) therefore has no rollups for the fixture's January days: 14.3, 14.4 and the second half of 14.9 skip there with that reason. CI (fixture only) runs them. Note also: any `page.route` turns off Chromium's HTTP cache in Playwright, so the read-only request counts see the app's cache only; the API's `Cache-Control: private, no-cache` (every load revalidates with the ETag) is guarded in 14.11, which routes nothing.
+
+#### 14.1. Tabs: Overview / History / Weather history
+
+**File:** `tests/farms/history.spec.ts`
+
+**Status:** Automated.
+
+**Steps:**
+  1. Viewer opens /farms/FARM01.
+    - expect: `farm-tabs` (tablist 'Farm') tabs 'Overview', 'History', 'Weather history'; Overview `aria-selected="true"`, History `"false"`
+  2. Click History.
+    - expect: URL /farms/FARM01/history; History current, Overview and Weather not; title 'Prairie Ridge · History · Nextera'; `farm-history-range` shown; no `farm-power`
+  3. Click Weather history, then Overview.
+    - expect: /farms/FARM01/weather with the weather tab current and no `farm-history-range`; back on /farms/FARM01 with `farm-power`
+
+#### 14.2. Deep link and unknown farm
+
+**Status:** Automated.
+
+**Steps:**
+  1. Deep link /farms/FARM01/history.
+    - expect: h1 'Prairie Ridge FARM01'; History current; exactly one daily request; `back-to-farms` → /farms with the farms table
+  2. Deep link /farms/NOPE/history.
+    - expect: `farm-not-found` 'Farm NOPE was not found.'; no tabs, no range; no daily request
+
+#### 14.3. Default 30d request bounds
+
+**Status:** Automated.
+
+**Steps:**
+  1. Deep link the tab (UTC).
+    - expect: `farm-history-range-30d`'s button `aria-checked="true"`, 90d and 6m false; 'Days are UTC.'
+    - expect: exactly one request farmId FARM01, from=2025-12-05T00:00:00.000Z to=2026-01-04T00:00:00.000Z (Dec 5 … Jan 3, today included), timeZone=UTC; the response echoes them
+
+#### 14.4. The fixture days as daily candles (derived from the response)
+
+**Status:** Automated (skips on a pruned local DB, see the note).
+
+**Steps:**
+  1. Deep link the tab.
+    - expect: the response's days are exactly 2026-01-01 and 2026-01-02; one `app-line-chart[data-metric=powerOutputKw]` titled 'Farm power output', `candle-size` 'Daily candles · drag across the chart to zoom', SVG output, no `chart-empty`
+    - expect: `latest` = the last day's close in kW (0 decimals, e.g. '1,961 kW' for the fixture alone)
+    - expect: the plot's aria-label 'Farm power output: latest <close> kW at Fri, Jan 2, 2026. <sum of readings> readings in <days> daily candles.'
+  2. Focus the plot (selects the latest day), then Home.
+    - expect: aria-label ends 'Selected: Fri, Jan 2, 2026: start …, end …, low …, high … kW (<turbines> of <turbineCount> turbine(s) reporting).' from the response; the ECharts tooltip shows '<day> · <n> of <m> … reporting'; Home selects Thu, Jan 1, 2026
+    - expect: no `farm-history-reset-zoom`, no `farm-history-empty`
+  3. Drag across the plot from 30% to 70% of its width (brush).
+    - expect: `farm-history-reset-zoom` appears; clicking it removes it
+  4. Brush again, then click 90d.
+    - expect: the new range's request; `farm-history-reset-zoom` gone (the zoom resets with the range)
+
+#### 14.5. "Updated" from computedAt
+
+**Status:** Automated (skips when computedAt is null).
+
+**Steps:**
+  1. Deep link the tab.
+    - expect: `farm-history-status` has role status; `farm-history-updated` 'Updated <computedAt as MMM d, HH:mm> UTC.'; `farm-history-note` 'Daily figures refresh every 15 minutes.'
+
+#### 14.6. Ranges and the in-memory cache
+
+**Status:** Automated.
+
+**Steps:**
+  1. Click 90d, then 6 months.
+    - expect: one request each: from=2025-10-06T00:00Z and from=2025-07-06T00:00Z (182 days), to=2026-01-04T00:00Z, timeZone=UTC; the clicked button `aria-checked="true"`
+  2. Click 30d, then 90d.
+    - expect: no request (answered from memory); as a fence, Refresh then sends exactly one, so the list is 30d, 90d, 6m, 90d (Refresh)
+
+#### 14.7. Refresh skips the cache
+
+**Status:** Automated.
+
+**Steps:**
+  1. Deep link, then Refresh.
+    - expect: exactly one more request with the same farm/from/to/timeZone; the same days; Refresh enabled again; the note and the chart's latest value still shown; no error
+
+#### 14.8. 500 and Retry (mocked)
+
+**Status:** Automated.
+
+**Steps:**
+  1. The first daily request answers 500.
+    - expect: `farm-history-error` (role alert) 'The daily history could not be loaded.'; no Refresh, no charts, no empty state; one request
+  2. Retry (the real API from now on).
+    - expect: one more request with the same query; the error gone; Refresh and the note shown; the chart's latest value from the response (or the empty state when it has no days)
+
+#### 14.9. Empty farm
+
+**Status:** Automated.
+
+**Steps:**
+  1. Deep link /farms/FARM10/history (no test writes to FARM10; neither the fixture nor the demo data has readings near Jan 2026).
+    - expect: the response's days []; `farm-history-empty` 'No daily history yet for this farm.'; no charts, no error; the note and Refresh shown
+
+#### 14.10. Local time (browser in America/Chicago)
+
+**Status:** Automated.
+
+**Steps:**
+  1. `fixBrowserDate(SEED_NOW)` (Jan 2, 18:00 CST) + `logIn` viewer; Settings → Local; deep link the tab.
+    - expect: 'Days are local time (America/Chicago).'; exactly one request from=2025-12-04T06:00:00.000Z to=2026-01-03T06:00:00.000Z timeZone=America/Chicago (Dec 4 … Jan 2 from local midnight); the response's timeZone echoed
+    - expect (fixture rollups present): days 2025-12-31, 2026-01-01, 2026-01-02 (the UTC readings span three Chicago days); summary and latest from the response; 'Updated <computedAt in Chicago> CST.'
+
+#### 14.11. [DATA] Upload a new day, roll up, Refresh
+
+**File:** `tests/data/farm-history.spec.ts`
+
+**Status:** Automated. Step 3 is a regression guard for the browser HTTP cache bug (fixed: the API now sends `Cache-Control: private, no-cache`).
+
+**Setup:** a per-run turbine `E2E-<run>-FH` joins FARM09 (no other test uses it) through `createTurbine` with two readings on a base day: the day after FARM09's newest daily-history day in the run's day window (or its first day), so every upload is a new day for the farm and nothing lands in the windows the read-only tests show at SEED_NOW. The window respects the rollup's 190-day retention: fixture-only DB (FARM01's January rollups present, CI) Jan 10 … Jun 30, 2026 (a later reading would prune the fixture's January rollups); a DB with current readings (demo data) 150 … 30 days before today. Base + 2 must stay in the window (else reset the DB). `npm run rollup` runs (polled until the API shows the day, since another run may hold the lock).
+
+**Steps:**
+  1. Browser clock at noon UTC of base + 1, events aborted (so Playwright's HTTP cache is off); viewer opens /farms/FARM09/history.
+    - expect: the newest candle is the base day
+  2. Upload two readings on base + 1 (1,234 and 1,321 kW) through ingestion; roll up; Refresh.
+    - expect: the API's newest day is base + 1 with 1 turbine, 2 readings, power open 1234 / close 1321 / high 1321 / low 1234; after Refresh the newest candle is that day and `latest` '1,321 kW'
+  3. A new context with nothing routed (the HTTP cache on, as for a user), clock on base + 2: open the tab, upload one reading on base + 2 (1,500 kW), roll up, Refresh within the minute.
+    - expect: the Refresh request reaches the API (200) with base + 2 as the newest day; the newest candle is base + 2 with `latest` '1,500 kW'. Regression guard: the API used to send `Cache-Control: private, max-age=60`, which let Chromium answer the Refresh fetch from its disk cache (no request reached the API), so the page kept showing '1,321 kW'; it now sends `private, no-cache`.
+
+**Cleanup:** the Unallocated entry is removed; the turbine, its readings and their rollups stay (no delete API).
+
+#### 14.12. Not automated (covered by the Angular unit specs, `farm-history/*.spec.ts`)
+
+  - The 15-minute expiry of the in-memory cache and the day rollover at midnight (needs page.clock advancing with zoned Date subclasses, see `support/clock.ts`), the earlier range dimmed while the next loads, the `@defer` loading/error blocks, and DST days (23/25 h candles).
+
+### 15. 15. Section tabs (keyboard and narrow screens)
+
+**Seed:** none (own setup in `tests/farms/tabs.spec.ts`: `signIn(page, 'viewer')` at SEED_NOW, the live stream aborted)
+
+The farm, Alerting and Unallocated tabs are the shared `PageTabs` (`ui/page-tabs.ts`): a routed Material tab nav bar. The `<nav>` (`<section>-tabs`, same `aria-label`) is `role="tablist"`, so it is not a navigation landmark; each link (`<section>-tab-<id>`) is `role="tab"` with `aria-selected`, `aria-controls` → the `<section>-tab-panel` (`role="tabpanel"`) and a roving tabindex; no `aria-current` (the side nav's `nav-*` links keep theirs). jsdom has no real key handling or layout, so this section is browser-only.
+
+#### 15.1. One tab stop
+
+**Status:** Automated.
+
+**Steps:**
+  1. Open /farms/FARM01.
+    - expect: Overview `tabindex="0"`, History and Weather history `-1`; Overview's `aria-controls` is the `farm-tab-panel`'s id; one tabpanel visible
+
+#### 15.2. Arrows, Home and End move focus only
+
+**Status:** Automated.
+
+**Steps:**
+  1. Focus Overview; ArrowRight ×3, then ArrowLeft.
+    - expect: focus History → Weather history → Overview (wraps) → Weather history (wraps back)
+  2. End, then Home.
+    - expect: focus Weather history, then Overview
+    - expect: the URL stays /farms/FARM01 and Overview stays selected (focus alone doesn't navigate)
+
+#### 15.3. Enter and Space follow the focused tab
+
+**Status:** Automated.
+
+**Steps:**
+  1. Focus Overview, ArrowRight, Enter.
+    - expect: /farms/FARM01/history; History `aria-selected="true"` and `tabindex="0"`, Overview `"false"`
+  2. Focus Weather history, Space.
+    - expect: /farms/FARM01/weather; Weather history selected
+
+#### 15.4. Focus after navigating (known bug)
+
+**Status:** Automated as `test.fail` (bug reported to angular-engineer).
+
+**Steps:**
+  1. Focus Overview, ArrowRight, Enter.
+    - expect: focus on the History tab. **Actual:** focus falls back to `<body>`, because each tab route renders its own `PageTabs`, so the bar is destroyed and re-created on every tab change (all three sections). Drop `test.fail` once fixed.
+
+#### 15.5. 320 px wide
+
+**Status:** Automated (viewport 320 × 720, `reducedMotion: 'reduce'` so Material's 500 ms slide doesn't run between steps).
+
+**Steps:**
+  1. Open /farms/FARM01.
+    - expect: no horizontal page overflow (`scrollWidth` ≤ 320); the tab bar inside the viewport; all tabs on one row
+    - expect: Material's pagination arrows visible (`.mat-mdc-tab-header-pagination-before|after` inside `farm-tabs`: mouse-only `<div>`s without a role or test hook); Weather history clipped under the after-arrow
+  2. Click the after-arrow until Weather history is fully in view (each click scrolls a step; 3 clicks today).
+    - expect: the tab moves left on every click and ends fully visible; still no page overflow
+  3. Deep link /farms/FARM01/weather.
+    - expect: the selected Weather history tab is scrolled fully between the arrows
+  4. On /farms/FARM01, focus Overview and press End.
+    - expect: focus on Weather history, scrolled fully into view
+  5. Open /alerting/history.
+    - expect: tabs History and Rules fit, so no pagination arrows; no page overflow

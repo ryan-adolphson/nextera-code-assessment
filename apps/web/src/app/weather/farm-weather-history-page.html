@@ -3,116 +3,120 @@
 </nav>
 
 @if (farm(); as farm) {
-  <app-farm-header [farm]="farm" />
+  <app-farm-header [farm]="farm">
+    <p class="mt-4 text-sm text-muted">
+      Open-Meteo weather at the farm in 30-minute buckets; gaps are buckets with no weather synced.
+      Times are {{ tz.label() }}.
+    </p>
 
-  <p class="mt-4 text-sm text-muted">
-    Open-Meteo weather at the farm in 30-minute buckets; gaps are buckets with no weather synced.
-    Times are {{ tz.label() }}.
-  </p>
-
-  <!-- Whole days in the zone shown (Settings), default the last 7 ending today, at most 31; a
+    <!-- Whole days in the zone shown (Settings), default the last 7 ending today, at most 31; a
        complete, valid range loads. -->
-  <div class="mt-4 flex flex-wrap items-start gap-3" role="search" aria-label="Weather date range">
-    <mat-form-field
-      appearance="outline"
-      subscriptSizing="dynamic"
-      data-testid="weather-history-range"
+    <div
+      class="mt-4 flex flex-wrap items-start gap-3"
+      role="search"
+      aria-label="Weather date range"
     >
-      <mat-label>Dates ({{ tz.tag() }})</mat-label>
-      <mat-date-range-input [rangePicker]="picker" [max]="maxDate()">
-        <input
-          matStartDate
-          placeholder="Start date"
-          data-testid="weather-history-from"
-          [value]="start()"
-          (dateChange)="onStart($event.value)"
-        />
-        <input
-          matEndDate
-          placeholder="End date"
-          data-testid="weather-history-to"
-          [value]="end()"
-          (dateChange)="onEnd($event.value)"
-        />
-      </mat-date-range-input>
-      <mat-datepicker-toggle matIconSuffix [for]="picker" />
-      <mat-date-range-picker #picker (opened)="onPicking(true)" (closed)="onPicking(false)" />
-    </mat-form-field>
-    <p class="pt-2.5 text-sm text-muted" role="status" data-testid="weather-history-status">
-      @if (error(); as message) {
-        <span class="text-danger" data-testid="weather-history-range-error">{{ message }}</span>
-      } @else if (loading()) {
-        Loading weather…
-      } @else if (synced(); as synced) {
-        {{ synced.count }} of {{ synced.total }} half-hours synced
-      }
-    </p>
-  </div>
-
-  @if (failed()) {
-    <p
-      class="mt-4 flex items-center gap-3 rounded-lg bg-danger-bg px-4 py-3 text-danger"
-      role="alert"
-      data-testid="weather-history-error"
-    >
-      The weather could not be loaded.
-      <button
-        matButton="outlined"
-        type="button"
-        data-testid="weather-history-retry"
-        (click)="retry()"
+      <mat-form-field
+        appearance="outline"
+        subscriptSizing="dynamic"
+        data-testid="weather-history-range"
       >
-        Retry
-      </button>
-    </p>
-  } @else if (empty()) {
-    <p
-      class="mt-4 rounded-lg border border-line px-4 py-6 text-center"
-      data-testid="weather-history-empty"
-    >
-      No weather synced for these days.
-    </p>
-  }
-
-  <!-- ECharts loads in its own chunk once there is weather to draw (prefetched when idle); the
-       group is deferred as a unit (shared crosshair and zoom). -->
-  <div class="mt-4">
-    @defer (when hasCharts(); prefetch on idle) {
-      @if (hasCharts()) {
-        @if (domain(); as window) {
-          <app-chart-group
-            label="Weather charts"
-            testId="weather-history-charts"
-            resetTestId="weather-history-reset-zoom"
-            [charts]="charts()"
-            [domain]="window"
-            [gapMs]="gapMs"
-            [refreshing]="loading()"
-            [resetKey]="shown()"
+        <mat-label>Dates ({{ tz.tag() }})</mat-label>
+        <mat-date-range-input [rangePicker]="picker" [max]="maxDate()">
+          <input
+            matStartDate
+            placeholder="Start date"
+            data-testid="weather-history-from"
+            [value]="start()"
+            (dateChange)="onStart($event.value)"
           />
+          <input
+            matEndDate
+            placeholder="End date"
+            data-testid="weather-history-to"
+            [value]="end()"
+            (dateChange)="onEnd($event.value)"
+          />
+        </mat-date-range-input>
+        <mat-datepicker-toggle matIconSuffix [for]="picker" />
+        <mat-date-range-picker #picker (opened)="onPicking(true)" (closed)="onPicking(false)" />
+      </mat-form-field>
+      <p class="pt-2.5 text-sm text-muted" role="status" data-testid="weather-history-status">
+        @if (error(); as message) {
+          <span class="text-danger" data-testid="weather-history-range-error">{{ message }}</span>
+        } @else if (loading()) {
+          Loading weather…
+        } @else if (synced(); as synced) {
+          {{ synced.count }} of {{ synced.total }} half-hours synced
+        }
+      </p>
+    </div>
+
+    @if (failed()) {
+      <p
+        class="mt-4 flex items-center gap-3 rounded-lg bg-danger-bg px-4 py-3 text-danger"
+        role="alert"
+        data-testid="weather-history-error"
+      >
+        The weather could not be loaded.
+        <button
+          matButton="outlined"
+          type="button"
+          data-testid="weather-history-retry"
+          (click)="retry()"
+        >
+          Retry
+        </button>
+      </p>
+    } @else if (empty()) {
+      <p
+        class="mt-4 rounded-lg border border-line px-4 py-6 text-center"
+        data-testid="weather-history-empty"
+      >
+        No weather synced for these days.
+      </p>
+    }
+
+    <!-- ECharts loads in its own chunk once there is weather to draw (prefetched when idle); the
+       group is deferred as a unit (shared crosshair and zoom). -->
+    <div class="mt-4">
+      @defer (when hasCharts(); prefetch on idle) {
+        @if (hasCharts()) {
+          @if (domain(); as window) {
+            <app-chart-group
+              label="Weather charts"
+              testId="weather-history-charts"
+              resetTestId="weather-history-reset-zoom"
+              [charts]="charts()"
+              [domain]="window"
+              [gapMs]="gapMs"
+              [refreshing]="loading()"
+              [resetKey]="shown()"
+            />
+          }
+        }
+      } @placeholder {
+        <!-- Nothing before the first weather; afterwards the charts' size. -->
+        @if (hasCharts()) {
+          <app-chart-skeleton [cards]="chartSkeleton" />
+        }
+      } @loading (after 100ms; minimum 300ms) {
+        @if (hasCharts()) {
+          <app-chart-skeleton [cards]="chartSkeleton" [loading]="true" />
+        }
+      } @error {
+        @if (hasCharts()) {
+          <p
+            class="rounded-lg border border-line bg-surface px-4 py-6 text-center"
+            role="alert"
+            data-testid="charts-load-error"
+          >
+            The charts could not be loaded. Reload the page to try again.
+          </p>
         }
       }
-    } @placeholder {
-      <!-- Nothing before the first weather; afterwards the charts' size. -->
-      @if (hasCharts()) {
-        <app-chart-skeleton [cards]="chartSkeleton" />
-      }
-    } @loading (after 100ms; minimum 300ms) {
-      @if (hasCharts()) {
-        <app-chart-skeleton [cards]="chartSkeleton" [loading]="true" />
-      }
-    } @error {
-      @if (hasCharts()) {
-        <p
-          class="rounded-lg border border-line bg-surface px-4 py-6 text-center"
-          role="alert"
-          data-testid="charts-load-error"
-        >
-          The charts could not be loaded. Reload the page to try again.
-        </p>
-      }
-    }
-  </div>
+    </div>
+  </app-farm-header>
 } @else {
   <p data-testid="farm-not-found">Farm {{ farmId() }} was not found.</p>
 }

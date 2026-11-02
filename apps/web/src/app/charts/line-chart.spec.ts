@@ -1,7 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { LineChart, RangeStats, TimeRange, ChartMarker } from './line-chart';
-import { ChartPoint } from './scales';
+import { Candle, ChartPoint } from './scales';
 import { BROWSER_TIME_ZONE, TimeZoneSettings } from '../core/time-zone';
 
 const MIN = 60_000;
@@ -836,5 +836,158 @@ describe('LineChart in local time (Settings)', () => {
       }
     ).tooltip[0].formatter([{ value: [t0 + 22.5 * MIN, 82.1, 126.5, 82.1, 126.5] }]);
     expect(content.lastElementChild!.textContent).toBe('Jan 1, 21:15–21:30 CST · 3 readings');
+  });
+});
+
+/**
+ * Precomputed candles (the farm History tab): one per local day as given, never re-bucketed from
+ * readings. Chicago around the autumn DST change: Oct 31 is 24 h, Nov 1 is 25 h (CDT → CST).
+ */
+@Component({
+  imports: [LineChart],
+  template: `
+    <app-line-chart
+      kind="candlestick"
+      title="Farm power output"
+      unit="kW"
+      [decimals]="0"
+      [points]="[]"
+      [candles]="candles()"
+      candleLabel="Daily"
+      [domain]="domain"
+      [hoverT]="hoverT()"
+      (hoverTChange)="hoverT.set($event)"
+    />
+  `,
+})
+class DailyHost {
+  static readonly OCT31 = Date.parse('2026-10-31T05:00:00Z'); // Oct 31, 00:00 CDT
+  static readonly NOV1 = Date.parse('2026-11-01T05:00:00Z'); // Nov 1, 00:00 CDT
+  static readonly NOV2 = Date.parse('2026-11-02T06:00:00Z'); // Nov 2, 00:00 CST: 25 h later
+  readonly domain = { from: DailyHost.OCT31, to: DailyHost.NOV2 };
+  readonly candles = signal<Candle[] | null>([
+    {
+      t: (DailyHost.OCT31 + DailyHost.NOV1) / 2,
+      start: DailyHost.OCT31,
+      end: DailyHost.NOV1,
+      open: 3000,
+      close: 4200,
+      low: 900,
+      high: 5100,
+      count: 576,
+      label: 'Sat, Oct 31, 2026',
+      detail: '2 of 2 turbines reporting',
+    },
+    {
+      t: (DailyHost.NOV1 + DailyHost.NOV2) / 2,
+      start: DailyHost.NOV1,
+      end: DailyHost.NOV2,
+      open: 4200,
+      close: 2500,
+      low: 1200,
+      high: 6400,
+      count: 300,
+      label: 'Sun, Nov 1, 2026',
+      detail: '1 of 2 turbines reporting',
+    },
+  ]);
+  readonly hoverT = signal<number | null>(null);
+}
+
+describe('LineChart (precomputed daily candles)', () => {
+  let fixture: ComponentFixture<DailyHost>;
+  let host: DailyHost;
+  let chart: LineChart;
+
+  beforeEach(async () => {
+    localStorage.clear();
+    TestBed.configureTestingModule({
+      providers: [{ provide: BROWSER_TIME_ZONE, useValue: 'America/Chicago' }],
+    });
+    TestBed.inject(TimeZoneSettings).setMode('local');
+    fixture = TestBed.createComponent(DailyHost);
+    host = fixture.componentInstance;
+    await fixture.whenStable();
+    chart = fixture.debugElement.children[0].componentInstance as LineChart;
+  });
+
+  const option = () =>
+    chart.chart!.getOption() as unknown as {
+      series: { data: unknown[] }[];
+      xAxis: Axis[];
+      yAxis: { min: number; max: number }[];
+      tooltip: { formatter: (params: unknown) => HTMLElement }[];
+    };
+  const el = () => fixture.nativeElement as HTMLElement;
+  const plot = () => el().querySelector('[role=img]')!;
+
+  it('draws the candles as given, each centred on its own local day (25 h on the DST day)', () => {
+    const nov1Centre = (DailyHost.NOV1 + DailyHost.NOV2) / 2;
+    expect(DailyHost.NOV2 - DailyHost.NOV1).toBe(25 * 60 * MIN);
+    expect(option().series[0].data).toEqual([
+      [(DailyHost.OCT31 + DailyHost.NOV1) / 2, 3000, 4200, 900, 5100],
+      [nov1Centre, 4200, 2500, 1200, 6400],
+    ]);
+    // Nov 1's centre is 12:30 local (CDT until 01:00, then CST): the 25-hour day, not 24.
+    expect(new Date(nov1Centre).toISOString()).toBe('2026-11-01T17:30:00.000Z');
+    expect(el().querySelector('[data-testid=candle-size]')!.textContent).toContain(
+      'Daily candles · drag across the chart to zoom',
+    );
+    expect(el().querySelector('[data-testid=chart-empty]')).toBeNull();
+    expect(el().querySelector('[data-testid=latest]')!.textContent).toContain('2,500');
+  });
+
+  it('fits the y-axis to the candles’ lows and highs, not only their closes', () => {
+    const [y] = option().yAxis;
+    expect(y.min).toBeLessThan(900);
+    expect(y.max).toBeGreaterThan(6400);
+  });
+
+  it('ticks the days at local midnight (and noon on the wall clock, DST day included)', () => {
+    const { customValues, formatter } = option().xAxis[0].axisLabel;
+    expect(customValues.map((v) => formatter(v))).toEqual([
+      'Oct 31',
+      '12:00',
+      'Nov 1',
+      '12:00',
+      'Nov 2',
+    ]);
+    expect(customValues).toEqual([
+      DailyHost.OCT31,
+      Date.parse('2026-10-31T17:00:00Z'), // 12:00 CDT
+      DailyHost.NOV1,
+      Date.parse('2026-11-01T18:00:00Z'), // 12:00 CST, after the change
+      DailyHost.NOV2,
+    ]);
+  });
+
+  it('names the day and the turbines reporting in the tooltip and aria-label', async () => {
+    chart.hoverAt(DailyHost.NOV1 + 60 * MIN);
+    await fixture.whenStable();
+    expect(host.hoverT()).toBe((DailyHost.NOV1 + DailyHost.NOV2) / 2);
+    expect(chart.activeIndex).toBe(1);
+
+    const content = option().tooltip[0].formatter([
+      { value: [(DailyHost.NOV1 + DailyHost.NOV2) / 2, 4200, 2500, 1200, 6400] },
+    ]);
+    expect([...content.children].map((c) => c.textContent?.replace(/\s+/g, ' '))).toEqual([
+      'Start4,200 kW',
+      'End2,500 kW',
+      'Low1,200 kW',
+      'High6,400 kW',
+      'Sun, Nov 1, 2026 · 1 of 2 turbines reporting',
+    ]);
+    expect(plot().getAttribute('aria-label')).toBe(
+      'Farm power output: latest 2,500 kW at Sun, Nov 1, 2026. 876 readings in 2 daily candles. ' +
+        'Selected: Sun, Nov 1, 2026: start 4,200, end 2,500, low 1,200, high 6,400 kW (1 of 2 turbines reporting).',
+    );
+  });
+
+  it('keeps only the candles inside the domain, and draws none without any', async () => {
+    host.candles.set([]);
+    await fixture.whenStable();
+    expect(option().series[0].data).toEqual([]);
+    expect(el().querySelector('[data-testid=chart-empty]')).not.toBeNull();
+    expect(plot().getAttribute('aria-label')).toBe('Farm power output: no readings in this range.');
   });
 });

@@ -11,6 +11,7 @@ import {
   type AlertConfigResponse,
 } from './alert-config.js';
 import { compareAlertsWorstFirst } from './evaluate-alerts.js';
+import { FARM_ROLLUP_METRICS } from './farm-rollup.js';
 
 /** SSE event published by the ingestion worker for every newly stored reading. */
 export const TELEMETRY_RECEIVED = 'telemetry.received';
@@ -323,5 +324,84 @@ export function toWeatherDayResponse(row: WeatherDayRow): WeatherDayResponse {
     surfacePressureMeanHpa: round2(row.surface_pressure_mean),
     precipitationSumMm: round2(row.precipitation_sum),
     cloudCoverMeanPct: round2(row.cloud_cover_mean),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Farm daily history (GET /api/farms/:farmId/telemetry/daily), from the farm rollups
+
+/** A candle: the first, last, highest and lowest value of a series over a period. */
+export interface Ohlc {
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+}
+
+/**
+ * One local day of a farm's series (power summed over the turbines reporting at each timestamp,
+ * the other metrics averaged): open = the day's first point, close = its last, high/low over the
+ * day. Values rounded to 2 decimals.
+ */
+export interface FarmDayResponse {
+  /** The local calendar day in the response's timeZone (YYYY-MM-DD). */
+  date: string;
+  /** The most distinct turbines that reported in any 30 minutes of the day. */
+  turbines: number;
+  /** Readings in the day. */
+  readings: number;
+  powerOutputKw: Ohlc;
+  windSpeedMs: Ohlc;
+  rotorRpm: Ohlc;
+  bladePitchDeg: Ohlc;
+  gearboxTempC: Ohlc;
+}
+
+/** GET /api/farms/:farmId/telemetry/daily. */
+export interface FarmDailyHistoryResponse {
+  farmId: string;
+  /** The requested [from, to) (ISO, UTC). */
+  from: string;
+  to: string;
+  /** IANA zone of the days (default UTC). */
+  timeZone: string;
+  /** Turbines on the farm now. */
+  turbineCount: number;
+  /** When the rollup job last wrote any of the range's rows (ISO); null when there are none. */
+  computedAt: string | null;
+  /** Oldest first; days without readings are omitted. */
+  days: FarmDayResponse[];
+}
+
+/** One row of the daily query: the day, its counts and `<prefix>_open|_close|_high|_low`. */
+export interface FarmDayRow {
+  day: string;
+  turbines: number | bigint;
+  readings: number | bigint;
+  computed_at: Date;
+  [column: string]: unknown;
+}
+
+const round = (value: unknown): number => Math.round(Number(value) * 100) / 100;
+
+export function toFarmDayResponse(row: FarmDayRow): FarmDayResponse {
+  const ohlc = (metric: TelemetryMetric): Ohlc => {
+    const p = FARM_ROLLUP_METRICS[metric].prefix;
+    return {
+      open: round(row[`${p}_open`]),
+      close: round(row[`${p}_close`]),
+      high: round(row[`${p}_high`]),
+      low: round(row[`${p}_low`]),
+    };
+  };
+  return {
+    date: row.day,
+    turbines: Number(row.turbines),
+    readings: Number(row.readings),
+    powerOutputKw: ohlc('powerOutputKw'),
+    windSpeedMs: ohlc('windSpeedMs'),
+    rotorRpm: ohlc('rotorRpm'),
+    bladePitchDeg: ohlc('bladePitchDeg'),
+    gearboxTempC: ohlc('gearboxTempC'),
   };
 }

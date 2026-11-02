@@ -19,7 +19,8 @@ const INSTRUCTIONS =
   'readings they flagged. Ids are business keys ("FARM01", "TURB001"). Times are UTC ISO 8601 ' +
   'with a zone; ranges are [from, to) on measurement time. Start with list_farms. ' +
   'get_weather gives a farm’s or turbine’s 30-minute or daily Open-Meteo weather (80 m wind is ' +
-  'closest to hub height; pair it with get_telemetry for power vs weather). Readings from turbines not in the fleet, or reporting the wrong ' +
+  'closest to hub height; pair it with get_telemetry for power vs weather). get_farm_daily gives a farm’s daily ' +
+  'candles (power summed over its turbines, the rest averaged; up to 183 days). Readings from turbines not in the fleet, or reporting the wrong ' +
   'farm, are held, not stored: list_unallocated and get_unallocated_readings show them.';
 
 /** The MCP server with every fleet tool registered on `db` (a read-only client in production). */

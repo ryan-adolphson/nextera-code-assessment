@@ -1,0 +1,126 @@
+<nav class="text-sm" aria-label="Back">
+  <a routerLink="/farms" data-testid="back-to-farms">← All farms</a>
+</nav>
+
+@if (farm(); as farm) {
+  <app-farm-header [farm]="farm">
+    <p class="mt-4 text-sm text-muted">
+      The farm's power output (the sum over its turbines) as one candle per day: start and end are
+      the day's first and last total, low and high its extremes. Days are {{ tz.label() }}.
+    </p>
+
+    <div class="mt-4 flex flex-wrap items-center gap-3">
+      <!-- One choice of three: a Material toggle group (role=radiogroup, aria-checked). -->
+      <mat-button-toggle-group
+        hideSingleSelectionIndicator
+        aria-label="History range"
+        data-testid="farm-history-range"
+        [value]="range()"
+        (change)="setRange($event.value)"
+      >
+        @for (option of ranges; track option.id) {
+          <mat-button-toggle
+            [value]="option.id"
+            [attr.data-testid]="'farm-history-range-' + option.id"
+          >
+            {{ option.label }}
+          </mat-button-toggle>
+        }
+      </mat-button-toggle-group>
+      <p class="m-0 text-sm text-muted" role="status" data-testid="farm-history-status">
+        @if (loading() && !history()) {
+          Loading daily history…
+        } @else if (history(); as history) {
+          @if (history.computedAt) {
+            <span data-testid="farm-history-updated"
+              >Updated {{ history.computedAt | appTime: 'MMM d, HH:mm' : true }}.</span
+            >{{ ' ' }}
+          }
+          <span data-testid="farm-history-note">Daily figures refresh every 15 minutes.</span>
+        }
+      </p>
+      @if (history() && !failed()) {
+        <!-- disabledInteractive: aria-disabled while it reloads, so a focused Refresh keeps focus. -->
+        <button
+          #refresh
+          matButton
+          type="button"
+          data-testid="farm-history-refresh"
+          disabledInteractive
+          [disabled]="loading()"
+          (click)="reload()"
+        >
+          Refresh
+        </button>
+      }
+    </div>
+
+    @if (failed()) {
+      <p
+        class="mt-4 flex items-center gap-3 rounded-lg bg-danger-bg px-4 py-3 text-danger"
+        role="alert"
+        data-testid="farm-history-error"
+      >
+        The daily history could not be loaded.
+        <button
+          #retry
+          matButton="outlined"
+          type="button"
+          data-testid="farm-history-retry"
+          (click)="reload()"
+        >
+          Retry
+        </button>
+      </p>
+    }
+    <!-- Always there (empty otherwise), so the empty state is announced when it appears. -->
+    <div role="status">
+      @if (empty()) {
+        <p
+          class="mt-4 rounded-lg border border-line px-4 py-6 text-center"
+          data-testid="farm-history-empty"
+        >
+          No daily history yet for this farm.
+        </p>
+      }
+    </div>
+
+    <!-- ECharts loads in its own chunk once there are days to draw (prefetched when idle). -->
+    <div class="mt-4">
+      @defer (when hasCharts(); prefetch on idle) {
+        @if (chart(); as chart) {
+          <app-chart-group
+            kind="candlestick"
+            label="Farm history charts"
+            testId="farm-history-charts"
+            resetTestId="farm-history-reset-zoom"
+            [charts]="chart.charts"
+            [domain]="chart.domain"
+            [refreshing]="loading()"
+            [resetKey]="chart.key"
+          />
+        }
+      } @placeholder {
+        @if (hasCharts()) {
+          <app-chart-skeleton [cards]="chartSkeleton" />
+        }
+      } @loading (after 100ms; minimum 300ms) {
+        @if (hasCharts()) {
+          <app-chart-skeleton [cards]="chartSkeleton" [loading]="true" />
+        }
+      } @error {
+        @if (hasCharts()) {
+          <p
+            class="rounded-lg border border-line bg-surface px-4 py-6 text-center"
+            role="alert"
+            data-testid="charts-load-error"
+          >
+            The charts could not be loaded. Reload the page to try again.
+          </p>
+        }
+      }
+    </div>
+  </app-farm-header>
+} @else {
+  <p data-testid="farm-not-found">Farm {{ farmId() }} was not found.</p>
+}

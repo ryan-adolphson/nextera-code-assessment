@@ -8,15 +8,20 @@ import { describeTriggerWithLevel } from './alert-text';
  * styled in `styles.css`), e.g. "Error: Gearbox temperature 126.5 °C > 120". Its own file so the
  * History page can `@defer` it: Material chips load only when a row is first expanded (a deferred
  * dependency from a package would make the compiler import the whole package module).
+ *
+ * A `mat-chip-set` is `role="presentation"` while it has chips and a `mat-chip` has no role, so
+ * the set's `aria-label` would name nothing: both roles are set (Material inputs), making it a
+ * list "Triggered alerts" with one item per rule.
  */
 @Component({
   selector: 'app-alert-chips',
   imports: [MatChip, MatChipSet],
   template: `
-    <mat-chip-set aria-label="Triggered alerts" data-testid="reading-alert-chips">
+    <mat-chip-set role="list" aria-label="Triggered alerts" data-testid="reading-alert-chips">
       @for (alert of reading().alerts; track alert.id) {
         <mat-chip
           class="alert-chip"
+          role="listitem"
           disableRipple
           data-testid="alert-chip"
           [attr.data-level]="alert.alertLevel"

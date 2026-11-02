@@ -4,9 +4,11 @@
  *      --allow-remote) and asks for confirmation (--yes skips it; required without a terminal).
  *   2. Stops the compose demo-feed if it runs (so it can't publish while the readings are re-seeded).
  *   3. Deletes the readings in one transaction: telemetry_alerts, telemetry, held_telemetry,
- *      unallocated_turbines, farm_weather. Farms, turbines, users and alert rules stay.
+ *      unallocated_turbines, farm_weather and the farm rollups (rows, dirty markers, watermark).
+ *      Farms, turbines, users and alert rules stay.
  *   4. Seeds the test users and 7 days (DEMO_RESET_HOURS) of demo data up to now (SEED_NOW
- *      overrides), with the anomalies and the 20 stale turbines (DEMO_ANOMALIES lagging and stopped).
+ *      overrides), with the anomalies and the 20 stale turbines (DEMO_ANOMALIES lagging and stopped),
+ *      then runs the farm rollup (a full run: the watermark was deleted).
  *   5. Syncs the farm weather for those days (Open-Meteo; a failure is a warning). --no-weather skips.
  *   6. Publishes one demo feed tick from this machine and (re)starts the compose demo-feed with
  *      DEMO_FEED_ENABLED=true (a shell override: .env is never edited), rebuilding its image first
@@ -38,7 +40,7 @@ import { SEED_PASSWORD_MIN_LENGTH } from '../src/seed/seed-users.js';
 import { floorToTelemetryStep } from '../src/seed/generate-telemetry.js';
 import { utcDay } from '../src/weather/open-meteo.js';
 import { syncFarmWeather } from '../src/weather/sync-weather.js';
-import { DATA_DIR, seedTestUsers } from './seed-support.js';
+import { DATA_DIR, rollupAfterSeed, seedTestUsers } from './seed-support.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const FEED_COMMAND = 'DEMO_FEED_ENABLED=true npm run demo:feed';
@@ -152,7 +154,8 @@ async function main(): Promise<number> {
     console.log(
       `  Deleted ${cleared.telemetry} telemetry rows, ${cleared.telemetryAlerts} telemetry_alerts, ` +
         `${cleared.heldTelemetry} held readings, ${cleared.unallocatedTurbines} unallocated entries, ` +
-        `${cleared.farmWeather} weather rows. Farms, turbines, users and alert rules kept.`,
+        `${cleared.farmWeather} weather rows, ${cleared.farmRollups} farm rollup rows. ` +
+        'Farms, turbines, users and alert rules kept.',
     );
 
     // 3. Seed.
@@ -175,6 +178,7 @@ async function main(): Promise<number> {
         `${unallocated.length} unallocated entries (${unallocated.map((u) => `${u.turbineId}@${u.reportedFarmId} ${u.status}`).join(', ')}) ` +
         `in ${((Date.now() - seedStarted) / 1000).toFixed(1)} s`,
     );
+    console.log(`  ${(await rollupAfterSeed(prisma)).replace(/,$/, '')}`);
 
     // 4. Weather.
     step(4, 'Syncing the farm weather');

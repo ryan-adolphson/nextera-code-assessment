@@ -232,6 +232,15 @@ describe('demo reset', () => {
       prisma.farmWeather.deleteMany.mockImplementation(
         count('farm_weather', 50),
       );
+      prisma.farmTelemetryRollup.deleteMany.mockImplementation(
+        count('farm_telemetry_rollups', 30),
+      );
+      prisma.farmRollupDirty.deleteMany.mockImplementation(
+        count('farm_rollup_dirty', 2),
+      );
+      prisma.farmRollupState.deleteMany.mockImplementation(
+        count('farm_rollup_state', 1),
+      );
     });
 
     it('deletes the readings in one transaction and keeps the setup', async () => {
@@ -241,6 +250,7 @@ describe('demo reset', () => {
         heldTelemetry: 20,
         unallocatedTurbines: 6,
         farmWeather: 50,
+        farmRollups: 30,
       });
       expect(prisma.$transaction).toHaveBeenCalledOnce();
       expect(order).toEqual([
@@ -249,6 +259,9 @@ describe('demo reset', () => {
         'held_telemetry',
         'unallocated_turbines',
         'farm_weather',
+        'farm_telemetry_rollups',
+        'farm_rollup_dirty',
+        'farm_rollup_state',
       ]);
       for (const kept of [
         prisma.farm.deleteMany,

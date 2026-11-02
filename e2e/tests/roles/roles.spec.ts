@@ -129,7 +129,7 @@ test.describe('Navigation', () => {
     await expect(page).toHaveTitle('Turbine · Nextera');
     await expect(nav.getByRole('link', { name: 'Farms' })).toHaveAttribute('aria-current', 'page');
     await nav.getByRole('link', { name: 'Alerting' }).click();
-    await page.getByRole('link', { name: 'Rules' }).click();
+    await page.getByRole('tablist', { name: 'Alerting' }).getByRole('tab', { name: 'Rules' }).click();
     await expect(page).toHaveURL(/\/alerting\/rules$/);
     await expect(page).toHaveTitle('Alert rules · Nextera');
     await expect(nav.getByRole('link', { name: 'Alerting' })).toHaveAttribute(

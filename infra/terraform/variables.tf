@@ -168,6 +168,31 @@ variable "open_meteo_api_key_enabled" {
   default     = false
 }
 
+# --- Farm rollup (farm-rollup.tf) -----------------------------------------------
+
+variable "farm_rollup_enabled" {
+  description = "Create the farm rollup: Cloud Run Job nextera-farm-rollup (incremental 30-minute farm rollups for the web app's farm History tab) + a Cloud Scheduler trigger (farm_rollup_schedule). On by default: without it the History tab has no data."
+  type        = bool
+  default     = true
+}
+
+variable "farm_rollup_paused" {
+  description = "Pause the farm rollup's Cloud Scheduler trigger (keeps the job; the History tab stops updating). Only used when farm_rollup_enabled."
+  type        = bool
+  default     = false
+}
+
+variable "farm_rollup_schedule" {
+  description = "Cron schedule (UTC) of the farm rollup. Default every 15 minutes (the web app says \"Daily figures refresh every 15 minutes\")."
+  type        = string
+  default     = "*/15 * * * *"
+
+  validation {
+    condition     = length(split(" ", trimspace(var.farm_rollup_schedule))) == 5
+    error_message = "farm_rollup_schedule must be a five-field cron expression such as \"*/15 * * * *\"."
+  }
+}
+
 # --- Monitoring (monitoring.tf) ----------------------------------------------------
 
 variable "alert_emails" {

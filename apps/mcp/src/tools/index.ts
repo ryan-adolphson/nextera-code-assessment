@@ -1,3 +1,4 @@
+import { getFarmDailyTool } from './get-farm-daily.js';
 import { getReportSummaryTool } from './report-summary.js';
 import { getTelemetryStatsTool } from './get-telemetry-stats.js';
 import { getTelemetryTool } from './get-telemetry.js';
@@ -22,6 +23,7 @@ export const TOOLS: readonly Tool[] = [
   listAlertRulesTool,
   getReportSummaryTool,
   getWeatherTool,
+  getFarmDailyTool,
   listUnallocatedTool,
   getUnallocatedReadingsTool,
 ];

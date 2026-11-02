@@ -1,4 +1,5 @@
 import {
+  runFarmRollup,
   seedFromCsv,
   upsertFarmWeather,
   type WeatherBucketRow,
@@ -13,7 +14,7 @@ describe('Fleet API (e2e, CSV seed data)', () => {
   beforeAll(async () => {
     t = await createTestApp();
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farm_weather, farms`;
+      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
   });
 
@@ -400,6 +401,213 @@ describe('Fleet API (e2e, CSV seed data)', () => {
 
     it('returns 401 without a token', async () => {
       const res = await fetch(`${t.url}/api/farms/FARM01/weather?${DAYS}`);
+      expect(res.status).toBe(401);
+    });
+  });
+
+  describe('GET /api/farms/:farmId/telemetry/daily', () => {
+    const NOW = new Date('2026-01-03T00:00:00Z');
+    const DAYS = 'from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z';
+    const path = `/farms/FARM01/telemetry/daily?${DAYS}`;
+    // fetch() adds `Cache-Control: no-cache` to a request with If-None-Match (Fetch spec, cache
+    // mode no-store), and Express rightly answers that with a full 200; a browser revalidating
+    // its own cached copy (or curl) doesn't, so send what it would.
+    const revalidate = (etag: string) => ({
+      'If-None-Match': etag,
+      'Cache-Control': 'max-age=0',
+    });
+
+    beforeAll(async () => {
+      await t.prisma
+        .$executeRaw`TRUNCATE TABLE farm_telemetry_rollups, farm_rollup_state, farm_rollup_dirty`;
+      await runFarmRollup(t.prisma, { mode: { kind: 'full' }, now: NOW });
+    });
+
+    it('returns daily candles of the farm series from the rollups (viewer)', async () => {
+      const res = await get(path);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(Object.keys(body)).toEqual([
+        'farmId',
+        'from',
+        'to',
+        'timeZone',
+        'turbineCount',
+        'computedAt',
+        'days',
+      ]);
+      expect(body).toMatchObject({
+        farmId: 'FARM01',
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-01-03T00:00:00.000Z',
+        timeZone: 'UTC',
+        turbineCount: 1,
+      });
+      expect(Date.parse(body.computedAt)).not.toBeNaN();
+      expect(body.days.map((d: { date: string }) => d.date)).toEqual([
+        '2026-01-01',
+        '2026-01-02',
+      ]);
+
+      // FARM01 has one turbine (TURB001), so each day is that turbine's own OHLC: check it
+      // against the raw readings, computed independently of the rollups.
+      const expected = await t.prisma.$queryRaw<
+        {
+          day: string;
+          n: number;
+          open: number;
+          close: number;
+          high: number;
+          low: number;
+        }[]
+      >`
+        SELECT to_char(timestamp AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+               count(*)::int AS n,
+               (array_agg(power_output_kw ORDER BY timestamp))[1] AS open,
+               (array_agg(power_output_kw ORDER BY timestamp DESC))[1] AS close,
+               max(power_output_kw) AS high, min(power_output_kw) AS low
+        FROM telemetry WHERE farm_id = 'FARM01' GROUP BY 1 ORDER BY 1`;
+      expect(body.days).toEqual(
+        expected.map((e) => ({
+          date: e.day,
+          turbines: 1,
+          readings: e.n,
+          powerOutputKw: {
+            open: Math.round(e.open * 100) / 100,
+            close: Math.round(e.close * 100) / 100,
+            high: Math.round(e.high * 100) / 100,
+            low: Math.round(e.low * 100) / 100,
+          },
+          windSpeedMs: expect.any(Object),
+          rotorRpm: expect.any(Object),
+          bladePitchDeg: expect.any(Object),
+          gearboxTempC: expect.any(Object),
+        })),
+      );
+      // The TURB001 stop (0 kW in 15.8 m/s wind on 2026-01-01) is the day's low.
+      expect(body.days[0].powerOutputKw.low).toBe(0);
+    });
+
+    it('groups local days in timeZone', async () => {
+      const res = await get(
+        '/farms/FARM01/telemetry/daily?from=2026-01-01T06:00:00Z&to=2026-01-03T06:00:00Z&timeZone=America/Chicago',
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.timeZone).toBe('America/Chicago');
+      // 2026-01-01 00:00Z..06:00Z is still 2025-12-31 in Chicago, so it falls outside the range.
+      expect(body.days.map((d: { date: string }) => d.date)).toEqual([
+        '2026-01-01',
+        '2026-01-02',
+      ]);
+      expect(body.days[1].readings).toBeLessThan(288); // ends at 2026-01-02T23:55Z = 17:55 CST
+    });
+
+    it('sends a weak ETag and Cache-Control: private, no-cache, and 304 for If-None-Match', async () => {
+      const first = await get(path);
+      const etag = first.headers.get('etag');
+      expect(etag).toMatch(/^W\/"[A-Za-z0-9_-]{43}"$/);
+      expect(first.headers.get('cache-control')).toBe('private, no-cache');
+      expect((await get(path)).headers.get('etag')).toBe(etag); // stable
+
+      const notModified = await get(path, revalidate(etag!));
+      expect(notModified.status).toBe(304);
+      expect(await notModified.text()).toBe('');
+      expect(notModified.headers.get('etag')).toBe(etag);
+      expect(notModified.headers.get('cache-control')).toBe(
+        'private, no-cache',
+      );
+      // A reload (what fetch sends by default) gets the full body.
+      expect((await get(path, { 'If-None-Match': etag! })).status).toBe(200);
+
+      // Another range or zone is another representation.
+      const other = await get(
+        `/farms/FARM01/telemetry/daily?${DAYS}&timeZone=Asia/Kolkata`,
+        revalidate(etag!),
+      );
+      expect(other.status).toBe(200);
+      expect(other.headers.get('etag')).not.toBe(etag);
+    });
+
+    it('changes the ETag when a rollup run changes the data', async () => {
+      const before = (await get(path)).headers.get('etag')!;
+      const reading = await t.prisma.telemetry.create({
+        data: {
+          turbineId: 'TURB001',
+          farmId: 'FARM01',
+          timestamp: new Date('2026-01-01T00:02:30Z'), // a late reading
+          powerOutputKw: 9999,
+          windSpeedMs: 12,
+          rotorRpm: 15,
+          bladePitchDeg: 2,
+          gearboxTempC: 70,
+        },
+      });
+      try {
+        await runFarmRollup(t.prisma, { now: NOW });
+        const res = await get(path, revalidate(before));
+        expect(res.status).toBe(200);
+        expect(res.headers.get('etag')).not.toBe(before);
+        const body = await res.json();
+        expect(body.days[0].powerOutputKw.high).toBe(9999);
+      } finally {
+        await t.prisma.telemetry.delete({ where: { id: reading.id } });
+        await runFarmRollup(t.prisma, { mode: { kind: 'full' }, now: NOW });
+      }
+    });
+
+    it('returns no days and computedAt null for a farm without readings', async () => {
+      const res = await get(`/farms/FARM03/telemetry/daily?${DAYS}`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        farmId: 'FARM03',
+        turbineCount: 0,
+        computedAt: null,
+        days: [],
+      });
+    });
+
+    it('answers 404 for an unknown farm, without cache headers', async () => {
+      const res = await get(`/farms/FARM99/telemetry/daily?${DAYS}`);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({
+        message: 'Farm FARM99 not found',
+      });
+      expect(res.headers.get('cache-control')).not.toBe('private, no-cache');
+    });
+
+    it.each([
+      ['a missing to', 'from=2026-01-01T00:00:00Z', /to must be/],
+      [
+        'a reversed range',
+        'from=2026-01-03T00:00:00Z&to=2026-01-01T00:00:00Z',
+        /to must be after from/,
+      ],
+      [
+        'more than 183 days',
+        'from=2026-01-01T00:00:00Z&to=2026-07-04T00:00:00Z',
+        /at most 183 days/,
+      ],
+      ['an unknown zone', `${DAYS}&timeZone=Mars/Olympus`, /IANA time zone/],
+      ['a POSIX zone', `${DAYS}&timeZone=UTC%2B6`, /IANA time zone/],
+      [
+        'a zone-less timestamp',
+        'from=2026-01-01T00:00:00&to=2026-01-02T00:00:00Z',
+        /from/,
+      ],
+      [
+        'an unknown parameter',
+        `${DAYS}&limit=5`,
+        /property limit should not exist/,
+      ],
+    ])('answers 400 for %s', async (_, qs, message) => {
+      const res = await get(`/farms/FARM01/telemetry/daily?${qs}`);
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(await res.json())).toMatch(message);
+    });
+
+    it('answers 401 without a token', async () => {
+      const res = await fetch(`${t.url}/api${path}`);
       expect(res.status).toBe(401);
     });
   });

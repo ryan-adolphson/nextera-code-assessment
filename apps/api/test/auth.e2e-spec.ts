@@ -127,6 +127,7 @@ describe('Auth (e2e)', () => {
       ['GET', '/api/auth/me', 'viewer'],
       ['GET', '/api/farms', 'viewer'],
       ['GET', `/api/farms/FARM01/weather?${DAY}`, 'viewer'],
+      ['GET', `/api/farms/FARM01/telemetry/daily?${DAY}`, 'viewer'],
       ['GET', `/api/turbines/TURB001/weather?${DAY}`, 'viewer'],
       ['GET', '/api/turbines/TURB001/telemetry', 'viewer'],
       ['GET', '/api/turbines/TURB001/telemetry/stats', 'viewer'],

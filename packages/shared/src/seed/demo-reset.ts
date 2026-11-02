@@ -151,7 +151,7 @@ export async function confirmDemoReset({
     );
   }
   const answer = await ask(
-    `Delete every reading, held reading, unallocated entry and weather row in ${describeTarget(target)}? [y/N] `,
+    `Delete every reading, held reading, unallocated entry, weather row and farm rollup in ${describeTarget(target)}? [y/N] `,
   );
   return /^y(es)?$/i.test(answer.trim());
 }
@@ -162,11 +162,13 @@ export interface ClearedReadings {
   heldTelemetry: number;
   unallocatedTurbines: number;
   farmWeather: number;
+  farmRollups: number;
 }
 
 /**
  * Deletes the readings and what hangs off them, in one transaction: telemetry_alerts, telemetry,
- * held_telemetry, unallocated_turbines and farm_weather. Farms, turbines, users and alert
+ * held_telemetry, unallocated_turbines, farm_weather and the farm rollups (rows, dirty markers and
+ * the watermark, so the next rollup run is a full one). Farms, turbines, users and alert
  * rules stay (so a moved turbine stays moved). DELETE, not TRUNCATE: it doesn't take an ACCESS
  * EXCLUSIVE lock, so the running services' reads aren't blocked behind it.
  */
@@ -181,12 +183,16 @@ export async function clearDemoReadings(
       const heldTelemetry = await tx.heldTelemetry.deleteMany();
       const unallocatedTurbines = await tx.unallocatedTurbine.deleteMany();
       const farmWeather = await tx.farmWeather.deleteMany();
+      const farmRollups = await tx.farmTelemetryRollup.deleteMany();
+      await tx.farmRollupDirty.deleteMany();
+      await tx.farmRollupState.deleteMany();
       return {
         telemetryAlerts: telemetryAlerts.count,
         telemetry: telemetry.count,
         heldTelemetry: heldTelemetry.count,
         unallocatedTurbines: unallocatedTurbines.count,
         farmWeather: farmWeather.count,
+        farmRollups: farmRollups.count,
       };
     },
     { timeout: 120_000 },

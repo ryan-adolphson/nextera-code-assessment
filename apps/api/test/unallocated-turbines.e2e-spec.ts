@@ -3,6 +3,7 @@ import {
   enabledAlertRules,
   holdReadings,
   insertTelemetryWithAlerts,
+  runFarmRollup,
   seedFromCsv,
   type HoldableReading,
   type ReadingClass,
@@ -45,7 +46,7 @@ describe('Unallocated turbines API (e2e)', () => {
 
   const reseed = async () => {
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, held_telemetry, unallocated_turbines, turbines, farm_weather, farms`;
+      .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, held_telemetry, unallocated_turbines, turbines, farm_weather, farm_telemetry_rollups, farm_rollup_dirty, farm_rollup_state, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
   };
 
@@ -511,6 +512,53 @@ describe('Unallocated turbines API (e2e)', () => {
         )
       ).json();
       expect(report.readings).toEqual([]);
+    });
+
+    it('marks both farms dirty in the move, so the next rollup moves the farm history too', async () => {
+      const NOW = new Date('2026-01-03T00:00:00Z');
+      const daily = async (farmId: string) =>
+        (
+          await (
+            await api(
+              'GET',
+              `/farms/${farmId}/telemetry/daily?from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z`,
+            )
+          ).json()
+        ).days as { date: string; turbines: number; readings: number }[];
+      await runFarmRollup(t.prisma, { now: NOW }); // first run: every farm
+      const farm01Readings = (await daily('FARM01')).map((d) => d.readings);
+      expect(farm01Readings).toHaveLength(2);
+      const farm02Readings = (await daily('FARM02')).map((d) => d.readings);
+      const entry = await hold(
+        reading({ turbineId: 'TURB001', farmId: 'FARM02' }),
+      );
+
+      expect(
+        (await api('POST', `/unallocated-turbines/${entry.id}/move`)).status,
+      ).toBe(200);
+
+      // Written by the turbines trigger in the move's transaction: both farms, from the first reading.
+      const first = await t.prisma.telemetry.findFirstOrThrow({
+        where: { turbineId: 'TURB001' },
+        orderBy: { timestamp: 'asc' },
+      });
+      const markers = await t.prisma.farmRollupDirty.findMany({
+        orderBy: { farmId: 'asc' },
+      });
+      expect(markers.map((m) => [m.farmId, m.fromTime.toISOString()])).toEqual([
+        ['FARM01', first.timestamp.toISOString()],
+        ['FARM02', first.timestamp.toISOString()],
+      ]);
+
+      const result = await runFarmRollup(t.prisma, { now: NOW });
+      expect(result).toMatchObject({ dirty: 2 });
+      expect(await t.prisma.farmRollupDirty.count()).toBe(0);
+      expect(await daily('FARM01')).toEqual([]);
+      const farm02 = await daily('FARM02');
+      expect(farm02.map((d) => d.turbines)).toEqual([2, 2]);
+      expect(farm02.map((d) => d.readings)).toEqual(
+        farm02Readings.map((n, i) => n + farm01Readings[i]),
+      );
     });
 
     it('409s when the reported farm does not exist', async () => {

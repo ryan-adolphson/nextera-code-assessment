@@ -35,12 +35,12 @@ test.describe('Unallocated access by role', () => {
     await expect(page).toHaveURL(/\/unallocated\/pending$/);
     await expect(page).toHaveTitle('Unallocated turbines · Nextera');
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Unallocated turbines');
-    const tabs = page.getByRole('navigation', { name: 'Unallocated' });
-    await expect(tabs.getByRole('link', { name: 'Pending' })).toHaveAttribute('aria-current', 'page');
+    const tabs = page.getByRole('tablist', { name: 'Unallocated' });
+    await expect(tabs.getByRole('tab', { name: 'Pending' })).toHaveAttribute('aria-selected', 'true');
 
-    await tabs.getByRole('link', { name: 'Blocked' }).click();
+    await tabs.getByRole('tab', { name: 'Blocked' }).click();
     await expect(page).toHaveURL(/\/unallocated\/blocked$/);
     await expect(page).toHaveTitle('Blocked turbines · Nextera');
-    await expect(tabs.getByRole('link', { name: 'Blocked' })).toHaveAttribute('aria-current', 'page');
+    await expect(tabs.getByRole('tab', { name: 'Blocked' })).toHaveAttribute('aria-selected', 'true');
   });
 });

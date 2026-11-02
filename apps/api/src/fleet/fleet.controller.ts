@@ -1,11 +1,15 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import type {
+  FarmDailyHistoryResponse,
   FarmWeatherResponse,
   TelemetryResponse,
   TelemetryStatsResponse,
   TurbineWeatherResponse,
 } from '@nextera/shared';
 import { Roles } from '../auth/auth.decorators.js';
+import { jsonEtag } from '../common/etag.js';
+import { FarmDailyQueryDto } from './dto/farm-daily-query.dto.js';
 import { WeatherQueryDto } from './dto/weather-query.dto.js';
 import { TelemetryQueryDto } from './dto/telemetry-query.dto.js';
 import { FarmOverview, FleetService } from './fleet.service.js';
@@ -19,6 +23,26 @@ export class FleetController {
   @Get('farms')
   farms(): Promise<FarmOverview[]> {
     return this.fleet.overview();
+  }
+
+  /**
+   * GET /api/farms/:farmId/telemetry/daily?from=&to=&timeZone=: the farm's daily candles from the
+   * farm rollups. `ETag` (a hash of the body) + `Cache-Control: private, no-cache`: private,
+   * because the response depends on the Bearer token, so no shared cache may keep it; no-cache, so
+   * the browser revalidates every time (a `max-age` let it answer the web's Refresh from its own
+   * cache, hiding a new rollup run; the web keeps its own in-memory cache). A matching
+   * `If-None-Match` gets 304 without a body (Express, once the ETag header is set).
+   */
+  @Get('farms/:farmId/telemetry/daily')
+  async dailyHistory(
+    @Param('farmId') farmId: string,
+    @Query() query: FarmDailyQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<FarmDailyHistoryResponse> {
+    const body = await this.fleet.dailyHistory(farmId, query);
+    res.setHeader('ETag', jsonEtag(body));
+    res.setHeader('Cache-Control', 'private, no-cache');
+    return body;
   }
 
   /**

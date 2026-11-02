@@ -111,10 +111,10 @@ test.describe('Alerting history', () => {
       await expect(page.getByTestId('history-empty')).toHaveText('No alerts in this range.');
 
     // Tabs: Rules and back.
-    const tabs = page.getByRole('navigation', { name: /Alerting/ });
-    await tabs.getByRole('link', { name: 'Rules' }).click();
+    const tabs = page.getByRole('tablist', { name: 'Alerting' });
+    await tabs.getByRole('tab', { name: 'Rules' }).click();
     await expect(page).toHaveURL(/\/alerting\/rules$/);
-    await tabs.getByRole('link', { name: 'History' }).click();
+    await tabs.getByRole('tab', { name: 'History' }).click();
     await expect(page).toHaveURL(/\/alerting\/history$/);
   });
 

@@ -236,10 +236,25 @@ describe('in a local time zone', () => {
       ['2026-03-11T05:00', 'Mar 11'],
       ['2026-03-12T05:00', 'Mar 12'],
     ]);
-    // 48-hour steps on a narrow chart: still local midnights.
+    // Day steps on a narrow chart: still local midnights.
     const wide = timeTicks(at('2026-10-28T05:00Z'), at('2026-11-07T06:00Z'), 320, 80, CHICAGO);
     expect(wide.every((tick) => /^[A-Z][a-z]{2} \d+$/.test(tick.label))).toBe(true);
     expect(wide.map((tick) => iso(tick.t))).toContain('2026-11-03T06:00');
+  });
+
+  it('steps whole days over months of daily candles, on local midnights', () => {
+    // 30 days at 640 px: every 4th day; 182 days: every 28th. All local midnights, DST or not.
+    const month = timeTicks(at('2026-10-03T05:00Z'), at('2026-11-02T06:00Z'), 640, 80, CHICAGO);
+    expect(month.length).toBeGreaterThanOrEqual(6);
+    expect(month.length).toBeLessThanOrEqual(8);
+    expect(month.every((tick) => /^[A-Z][a-z]{2} \d+$/.test(tick.label))).toBe(true);
+    expect(month.slice(1).every((tick, i) => tick.t - month[i].t === 96 * H)).toBe(true);
+    const half = timeTicks(at('2026-05-04T05:00Z'), at('2026-11-02T06:00Z'), 640, 80, CHICAGO);
+    expect(half.length).toBeLessThanOrEqual(8);
+    expect(half.slice(1).every((tick, i) => Math.round((tick.t - half[i].t) / H / 24) === 28)).toBe(
+      true,
+    );
+    expect(half.every((tick) => /^[A-Z][a-z]{2} \d+$/.test(tick.label))).toBe(true);
   });
 
   it('aligns ticks to whole local hours in a +5:30 zone, with the date at its midnight', () => {

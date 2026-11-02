@@ -9,6 +9,7 @@ import { ROLE_LABELS, Role } from '../core/auth/roles';
 import { TimeZoneSettings } from '../core/time-zone';
 import { IconName } from '../ui/icons';
 import { FleetStore, LiveStatus } from './fleet.store';
+import { FarmHistoryCache } from '../farm-history/farm-history-cache';
 
 const LIVE_LABELS: Record<LiveStatus, string> = {
   connecting: 'Connecting…',
@@ -62,7 +63,8 @@ export const NAV_ITEMS = [
 @Component({
   selector: 'app-fleet-shell',
   imports: [MatButton, MatIcon, MatIconButton, RouterLink, RouterLinkActive, RouterOutlet],
-  providers: [FleetStore],
+  // FarmHistoryCache: the History tab's daily figures for this session (gone on sign-out).
+  providers: [FleetStore, FarmHistoryCache],
   templateUrl: './fleet-shell.html',
   host: { '(document:keydown.escape)': 'closeMenu()' },
 })

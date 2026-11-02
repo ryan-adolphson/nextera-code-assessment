@@ -3,7 +3,11 @@ import { Component, input } from '@angular/core';
 import { FarmTabs } from './farm-tabs';
 import { FarmSummary } from './fleet.store';
 
-/** A farm page's header (name, id, location) and its tabs (Overview, Weather history). */
+/**
+ * A farm page's header (name, id, location) and its tabs (Overview, History, Weather history); the
+ * page's content goes inside (`<app-farm-header [farm]="farm">…</app-farm-header>`) and is
+ * projected into the tab panel.
+ */
 @Component({
   selector: 'app-farm-header',
   imports: [DecimalPipe, FarmTabs],
@@ -15,7 +19,7 @@ import { FarmSummary } from './fleet.store';
     <p class="text-sm text-muted">
       {{ farm().latitude | number: '1.2-2' }}, {{ farm().longitude | number: '1.2-2' }}
     </p>
-    <app-farm-tabs [farmId]="farm().id" />
+    <app-farm-tabs [farmId]="farm().id"><ng-content /></app-farm-tabs>
   `,
 })
 export class FarmHeader {

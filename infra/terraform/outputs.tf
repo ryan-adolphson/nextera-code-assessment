@@ -65,6 +65,11 @@ output "weather_sync_job" {
   value       = var.weather_sync_enabled ? google_cloud_run_v2_job.weather_sync[0].name : null
 }
 
+output "farm_rollup_job" {
+  description = "Cloud Run Job of the farm rollup (null unless farm_rollup_enabled). Run it now: gcloud run jobs execute <this> --region <region>."
+  value       = var.farm_rollup_enabled ? google_cloud_run_v2_job.farm_rollup[0].name : null
+}
+
 output "github_workload_identity_provider" {
   description = "Workload Identity Federation provider for google-github-actions/auth (GitHub variable GCP_WIF_PROVIDER)."
   value       = google_iam_workload_identity_pool_provider.github.name
@@ -76,7 +81,7 @@ output "github_deployer_service_account" {
 }
 
 output "github_actions_variables" {
-  description = "Repository variables for .github/workflows/deploy.yml (not secrets). See CLAUDE.md, Deploying. DEMO_FEED_JOB only when demo_feed_enabled, WEATHER_SYNC_JOB only when weather_sync_enabled (delete each with `gh variable delete <name>` before turning its job off)."
+  description = "Repository variables for .github/workflows/deploy.yml (not secrets). See CLAUDE.md, Deploying. DEMO_FEED_JOB only when demo_feed_enabled, WEATHER_SYNC_JOB only when weather_sync_enabled, FARM_ROLLUP_JOB only when farm_rollup_enabled (delete each with `gh variable delete <name>` before turning its job off)."
   value = merge(
     {
       GCP_PROJECT_ID    = var.project_id
@@ -88,5 +93,6 @@ output "github_actions_variables" {
     },
     var.demo_feed_enabled ? { DEMO_FEED_JOB = google_cloud_run_v2_job.demo_feed[0].name } : {},
     var.weather_sync_enabled ? { WEATHER_SYNC_JOB = google_cloud_run_v2_job.weather_sync[0].name } : {},
+    var.farm_rollup_enabled ? { FARM_ROLLUP_JOB = google_cloud_run_v2_job.farm_rollup[0].name } : {},
   )
 }

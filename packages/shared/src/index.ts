@@ -47,10 +47,15 @@ export {
   toTurbineResponse,
   toWeatherDayResponse,
   toWeatherHalfHourResponse,
+  toFarmDayResponse,
 } from './wind/responses.js';
 export type {
+  FarmDailyHistoryResponse,
+  FarmDayResponse,
+  FarmDayRow,
   FarmResponse,
   MetricStats,
+  Ohlc,
   TelemetryMetric,
   TelemetryResponse,
   TelemetryStatsResponse,
@@ -82,6 +87,7 @@ export {
   ALERT_RULE_ORDER,
   DEFAULT_TELEMETRY_LIMIT,
   DEFAULT_WEATHER_TIME_ZONE,
+  MAX_FARM_DAILY_RANGE_DAYS,
   MAX_QUERY_RANGE_DAYS,
   MAX_TELEMETRY_LIMIT,
   QueryError,
@@ -89,6 +95,7 @@ export {
   QueryNotFoundError,
   alertsInRange,
   checkTimeZone,
+  farmDailyHistory,
   farmWeather,
   getTurbine,
   getUnallocated,
@@ -104,6 +111,7 @@ export {
   turbineWeather,
 } from './wind/queries.js';
 export type {
+  FarmDailyQuery,
   FarmOverview,
   FarmWeatherQuery,
   MetricSummary,
@@ -117,6 +125,25 @@ export type {
   TurbineDetail,
   TurbineOverview,
 } from './wind/queries.js';
+
+// Farm telemetry rollups (30-minute farm series buckets → daily candles on read): the job
+// (`node dist/farm-rollup/main.js` in the ingestion image, `npm run rollup`, the seeds)
+export {
+  FARM_ROLLUP_BUCKET_MINUTES,
+  FARM_ROLLUP_LOCK,
+  FARM_ROLLUP_LOOKBACK_MS,
+  FARM_ROLLUP_METRICS,
+  FARM_ROLLUP_RETENTION_DAYS,
+  FARM_ROLLUP_TIMEOUT_MS,
+  floorToBucket,
+  runFarmRollup,
+} from './wind/farm-rollup.js';
+export type {
+  FarmRollupClient,
+  FarmRollupMode,
+  FarmRollupOptions,
+  FarmRollupResult,
+} from './wind/farm-rollup.js';
 
 // Farm weather (Open-Meteo minutely_15 → 30-minute farm_weather): client, request planning and the sync
 // (`node dist/weather-sync/main.js` in the ingestion image, `npm run weather:sync`)

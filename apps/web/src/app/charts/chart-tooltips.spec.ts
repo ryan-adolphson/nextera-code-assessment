@@ -28,6 +28,14 @@ describe('candleTooltip', () => {
     ]);
   });
 
+  it('names a precomputed candle by its own label and detail (a day and its turbines)', () => {
+    const c = { ...candle(576), label: 'Sat, Jan 3, 2026', detail: '2 of 2 turbines reporting' };
+    expect(lines(candleTooltip(c, format(c), 'kW')).at(-1)).toBe(
+      'Sat, Jan 3, 2026 · 2 of 2 turbines reporting',
+    );
+    expect(candleSpan(c, 'America/Chicago')).toBe('Sat, Jan 3, 2026');
+  });
+
   it('says "1 reading" for a single reading', () => {
     const c = candle(1);
     expect(lines(candleTooltip(c, format(c), '°C')).at(-1)).toBe(

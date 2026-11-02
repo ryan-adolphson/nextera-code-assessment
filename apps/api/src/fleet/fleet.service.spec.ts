@@ -4,6 +4,7 @@ import { Prisma, PrismaService } from '@nextera/shared';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { FleetService } from './fleet.service.js';
 import { WeatherQueryDto } from './dto/weather-query.dto.js';
+import { FarmDailyQueryDto } from './dto/farm-daily-query.dto.js';
 
 const farm = (id: string, turbineIds: string[]) => ({
   id,
@@ -480,6 +481,157 @@ describe('FleetService', () => {
         timeZone: 'UTC',
         points: [],
       });
+    });
+  });
+
+  describe('dailyHistory', () => {
+    const RANGE = { from: '2026-01-01T06:00:00Z', to: '2026-01-03T06:00:00Z' };
+    const query = (overrides: Partial<FarmDailyQueryDto> = {}) =>
+      Object.assign(new FarmDailyQueryDto(), {
+        ...RANGE,
+        timeZone: 'UTC',
+        ...overrides,
+      });
+    const farmRow = { id: 'FARM01', _count: { turbines: 3 } };
+    const ohlc = (prefix: string, base: number) => ({
+      [`${prefix}_open`]: base,
+      [`${prefix}_close`]: base + 1,
+      [`${prefix}_high`]: base + 2.005,
+      [`${prefix}_low`]: base - 1.123456,
+    });
+    const dayRow = (day: string, computedAt: string) => ({
+      day,
+      turbines: 2,
+      readings: BigInt(576),
+      computed_at: new Date(computedAt),
+      ...ohlc('power', 4000),
+      ...ohlc('wind_speed', 9),
+      ...ohlc('rotor_rpm', 14),
+      ...ohlc('blade_pitch', 3),
+      ...ohlc('gearbox_temp', 80),
+    });
+
+    it('throws NotFoundException for an unknown farm before reading rollups', async () => {
+      prisma.farm.findUnique.mockResolvedValue(null);
+      await expect(service.dailyHistory('FARM99', query())).rejects.toThrow(
+        new NotFoundException('Farm FARM99 not found'),
+      );
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a reversed range', { to: RANGE.from }, 'to must be after from'],
+      [
+        'an empty range',
+        { to: RANGE.from, from: RANGE.from },
+        'to must be after from',
+      ],
+      [
+        'more than 183 days (+1 h for DST)',
+        { from: '2026-01-01T00:00:00Z', to: '2026-07-03T01:00:01Z' },
+        'The range may span at most 183 days',
+      ],
+    ])('throws BadRequestException for %s', async (_, overrides, message) => {
+      prisma.farm.findUnique.mockResolvedValue(farmRow as never);
+      await expect(
+        service.dailyHistory('FARM01', query(overrides)),
+      ).rejects.toThrow(new BadRequestException(message));
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('accepts 183 local days that are an hour longer across a DST change', async () => {
+      prisma.farm.findUnique.mockResolvedValue(farmRow as never);
+      prisma.$queryRaw.mockResolvedValue([]);
+      // Chicago: 2026-07-01 00:00 CDT (05:00Z) to 2026-12-31 00:00 CST (06:00Z) = 183 days + 1 h.
+      await expect(
+        service.dailyHistory(
+          'FARM01',
+          query({ from: '2026-07-01T05:00:00Z', to: '2026-12-31T06:00:00Z' }),
+        ),
+      ).resolves.toMatchObject({ days: [] });
+    });
+
+    it('throws BadRequestException for a time zone Postgres does not know', async () => {
+      prisma.farm.findUnique.mockResolvedValue(farmRow as never);
+      prisma.$queryRaw.mockResolvedValue([{ known: false }]);
+      await expect(
+        service.dailyHistory('FARM01', query({ timeZone: 'Mars/Olympus' })),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'timeZone must be an IANA time zone name, e.g. "America/Chicago" (default "UTC")',
+        ),
+      );
+    });
+
+    it('aggregates the rollups by local day in one query and maps the days', async () => {
+      prisma.farm.findUnique.mockResolvedValue(farmRow as never);
+      prisma.$queryRaw.mockResolvedValue([
+        dayRow('2026-01-01', '2026-01-03T00:15:00Z'),
+        dayRow('2026-01-02', '2026-01-03T00:30:00Z'),
+      ]);
+
+      const result = await service.dailyHistory('FARM01', query());
+
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = prisma.$queryRaw.mock
+        .calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
+      const sql = Prisma.sql(strings, ...values);
+      const text = sql.sql.replace(/\s+/g, ' ');
+      expect(text).toContain(
+        "to_char(r.bucket_start AT TIME ZONE ?::text, 'YYYY-MM-DD') AS day",
+      );
+      expect(text).toContain(
+        '(array_agg(r.power_open ORDER BY r.bucket_start))[1] AS power_open',
+      );
+      expect(text).toContain(
+        '(array_agg(r.power_close ORDER BY r.bucket_start DESC))[1] AS power_close',
+      );
+      expect(text).toContain('max(r.gearbox_temp_high) AS gearbox_temp_high');
+      expect(text).toContain('FROM farm_telemetry_rollups r');
+      expect(sql.values).toEqual([
+        'UTC',
+        'FARM01',
+        new Date(RANGE.from),
+        new Date(RANGE.to),
+      ]);
+      expect(result).toEqual({
+        farmId: 'FARM01',
+        from: '2026-01-01T06:00:00.000Z',
+        to: '2026-01-03T06:00:00.000Z',
+        timeZone: 'UTC',
+        turbineCount: 3,
+        computedAt: '2026-01-03T00:30:00.000Z',
+        days: [
+          expect.objectContaining({ date: '2026-01-01' }),
+          {
+            date: '2026-01-02',
+            turbines: 2,
+            readings: 576,
+            powerOutputKw: {
+              open: 4000,
+              close: 4001,
+              high: 4002.01,
+              low: 3998.88,
+            },
+            windSpeedMs: { open: 9, close: 10, high: 11.01, low: 7.88 },
+            rotorRpm: { open: 14, close: 15, high: 16.01, low: 12.88 },
+            bladePitchDeg: { open: 3, close: 4, high: 5.01, low: 1.88 },
+            gearboxTempC: { open: 80, close: 81, high: 82.01, low: 78.88 },
+          },
+        ],
+      });
+    });
+
+    it('answers an empty range with no days and computedAt null', async () => {
+      prisma.farm.findUnique.mockResolvedValue(farmRow as never);
+      prisma.$queryRaw.mockResolvedValue([]);
+      await expect(service.dailyHistory('FARM01', query())).resolves.toEqual(
+        expect.objectContaining({
+          computedAt: null,
+          days: [],
+          turbineCount: 3,
+        }),
+      );
     });
   });
 });

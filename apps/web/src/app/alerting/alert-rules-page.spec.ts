@@ -137,10 +137,17 @@ describe('AlertRulesPage (/alerting/rules)', () => {
         b.getAttribute('data-level'),
       ),
     ).toEqual(['info', 'warn', 'error']);
-    // Tabs: Rules is current; the side nav keeps Alerting current.
-    expect(q('alerting-tab-rules')!.getAttribute('aria-current')).toBe('page');
-    expect(q('alerting-tab-history')!.getAttribute('aria-current')).toBeNull();
+    // Tabs (Material tab nav bar, tablist "Alerting"): Rules is selected and the page is in the
+    // tab panel; the side nav keeps Alerting current.
+    expect(q('alerting-tabs')!.getAttribute('role')).toBe('tablist');
+    expect(q('alerting-tab-rules')!.getAttribute('aria-selected')).toBe('true');
+    expect(q('alerting-tab-history')!.getAttribute('aria-selected')).toBe('false');
+    expect(q('alerting-tab-rules')!.hasAttribute('aria-current')).toBe(false);
     expect(q('alerting-tab-history')!.getAttribute('href')).toBe('/alerting/history');
+    expect(q('alerting-tab-panel')!.getAttribute('aria-labelledby')).toBe(
+      q('alerting-tab-rules')!.id,
+    );
+    expect(q('alerting-tab-panel')!.contains(q('rules'))).toBe(true);
     // The Active tab is gone: History and Rules only.
     expect(
       [...app.root().querySelectorAll('nav[aria-label=Alerting] a')].map((a) => app.text(a)),

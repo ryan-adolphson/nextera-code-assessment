@@ -1,46 +1,36 @@
 import { Component, computed, input } from '@angular/core';
-import { RouterLink, RouterLinkActive } from '@angular/router';
+import { PageTab, PageTabs } from '../ui/page-tabs';
 
 /** A farm's tabs, in order. `id` is the `farm-tab-<id>` test hook; `path` is under /farms/:farmId. */
 export const FARM_TABS = [
   { id: 'overview', path: '', label: 'Overview', exact: true },
+  { id: 'history', path: 'history', label: 'History', exact: false },
   { id: 'weather', path: 'weather', label: 'Weather history', exact: false },
 ] as const;
 
 /**
- * Tab-style links between a farm's pages (like the Alerting tabs): each tab is its own route, so
- * this is a navigation landmark with `aria-current="page"`, not an ARIA tablist. Overview matches
- * exactly (/farms/:farmId), so it isn't current on /farms/:farmId/weather.
+ * A farm's routed tabs (`PageTabs`: Material tab nav bar, tablist "Farm"); the farm page below
+ * them is projected into the tab panel. Overview matches exactly (/farms/:farmId), so it isn't
+ * active on /farms/:farmId/history or /weather.
  */
 @Component({
   selector: 'app-farm-tabs',
-  imports: [RouterLink, RouterLinkActive],
+  imports: [PageTabs],
+  host: { class: 'block' },
   template: `
-    <nav aria-label="Farm" class="mt-4 border-b border-line" data-testid="farm-tabs">
-      <ul class="-mb-px flex gap-1">
-        @for (tab of tabs(); track tab.id) {
-          <li>
-            <a
-              class="inline-block border-b-2 border-transparent px-4 py-2 font-medium text-muted no-underline hover:text-ink hover:no-underline aria-[current=page]:border-accent aria-[current=page]:text-ink"
-              [routerLink]="tab.link"
-              routerLinkActive
-              [routerLinkActiveOptions]="{ exact: tab.exact }"
-              ariaCurrentWhenActive="page"
-              [attr.data-testid]="'farm-tab-' + tab.id"
-              >{{ tab.label }}</a
-            >
-          </li>
-        }
-      </ul>
-    </nav>
+    <app-page-tabs section="farm" label="Farm" [tabs]="tabs()">
+      <ng-content />
+    </app-page-tabs>
   `,
 })
 export class FarmTabs {
   readonly farmId = input.required<string>();
 
-  protected readonly tabs = computed(() =>
+  protected readonly tabs = computed<PageTab[]>(() =>
     FARM_TABS.map((tab) => ({
-      ...tab,
+      id: tab.id,
+      label: tab.label,
+      exact: tab.exact,
       link: ['/farms', this.farmId(), ...(tab.path ? [tab.path] : [])],
     })),
   );

@@ -44,7 +44,7 @@ describe('MCP server (mocked Prisma)', () => {
     await mcp.close();
   });
 
-  it('lists the 10 read-only tools with their input schemas', async () => {
+  it('lists the 11 read-only tools with their input schemas', async () => {
     const { tools } = await mcp.client.listTools();
 
     expect(tools.map((t) => t.name)).toEqual([
@@ -56,6 +56,7 @@ describe('MCP server (mocked Prisma)', () => {
       'list_alert_rules',
       'get_report_summary',
       'get_weather',
+      'get_farm_daily',
       'list_unallocated',
       'get_unallocated_readings',
     ]);
@@ -101,6 +102,18 @@ describe('MCP server (mocked Prisma)', () => {
       default: 'daily',
     });
     expect(weather.inputSchema.properties!.timeZone).toMatchObject({
+      type: 'string',
+      default: 'UTC',
+    });
+    const daily = tools.find((t) => t.name === 'get_farm_daily')!;
+    expect(daily.inputSchema.required).toEqual(['farmId', 'from', 'to']);
+    expect(Object.keys(daily.inputSchema.properties!)).toEqual([
+      'farmId',
+      'from',
+      'to',
+      'timeZone',
+    ]);
+    expect(daily.inputSchema.properties!.timeZone).toMatchObject({
       type: 'string',
       default: 'UTC',
     });
@@ -252,6 +265,11 @@ describe('MCP server (mocked Prisma)', () => {
       ['list_alert_rules', { enabled: true }, 'enabled'],
       ['get_report_summary', { farmId: 'FARM01', ...RANGE, limit: 5 }, 'limit'],
       ['get_weather', { farmId: 'FARM01', ...RANGE, zone: 'UTC' }, 'zone'],
+      [
+        'get_farm_daily',
+        { farmId: 'FARM01', ...RANGE, metric: 'power' },
+        'metric',
+      ],
       ['list_unallocated', { status: 'pending', farmId: 'FARM01' }, 'farmId'],
       ['get_unallocated_readings', { id: ENTRY_ID, from: RANGE.from }, 'from'],
     ])('%s rejects an unknown argument, naming it', async (tool, args, key) => {
@@ -738,6 +756,101 @@ describe('MCP server (mocked Prisma)', () => {
         isError: true,
         text: 'The query failed: canceling statement',
       });
+    });
+  });
+
+  describe('get_farm_daily', () => {
+    const dayRow = {
+      day: '2026-01-01',
+      turbines: 1,
+      readings: 288,
+      computed_at: new Date('2026-01-03T00:15:00Z'),
+      ...Object.fromEntries(
+        [
+          'power',
+          'wind_speed',
+          'rotor_rpm',
+          'blade_pitch',
+          'gearbox_temp',
+        ].flatMap((p) => [
+          [`${p}_open`, 1],
+          [`${p}_close`, 2],
+          [`${p}_high`, 3.456],
+          [`${p}_low`, 0],
+        ]),
+      ),
+    };
+
+    beforeEach(() => {
+      prisma.farm.findUnique.mockResolvedValue({
+        id: 'FARM01',
+        _count: { turbines: 2 },
+      } as never);
+    });
+
+    it('returns the daily candles of the shared query', async () => {
+      prisma.$queryRaw.mockResolvedValue([dayRow]);
+
+      const result = await mcp.call('get_farm_daily', {
+        farmId: 'FARM01',
+        ...RANGE,
+      });
+
+      expect(result.isError).toBe(false);
+      expect(result.json()).toEqual({
+        farmId: 'FARM01',
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-01-03T00:00:00.000Z',
+        timeZone: 'UTC',
+        turbineCount: 2,
+        computedAt: '2026-01-03T00:15:00.000Z',
+        days: [
+          {
+            date: '2026-01-01',
+            turbines: 1,
+            readings: 288,
+            powerOutputKw: { open: 1, close: 2, high: 3.46, low: 0 },
+            windSpeedMs: { open: 1, close: 2, high: 3.46, low: 0 },
+            rotorRpm: { open: 1, close: 2, high: 3.46, low: 0 },
+            bladePitchDeg: { open: 1, close: 2, high: 3.46, low: 0 },
+            gearboxTempC: { open: 1, close: 2, high: 3.46, low: 0 },
+          },
+        ],
+      });
+    });
+
+    it('allows 183 days, rejects more, a reversed range and an unknown farm', async () => {
+      prisma.$queryRaw.mockResolvedValue([]);
+      expect(
+        (
+          await mcp.call('get_farm_daily', {
+            farmId: 'FARM01',
+            from: '2026-01-01T00:00:00Z',
+            to: '2026-07-03T00:00:00Z',
+          })
+        ).isError,
+      ).toBe(false);
+      expect(
+        await mcp.call('get_farm_daily', {
+          farmId: 'FARM01',
+          from: '2026-01-01T00:00:00Z',
+          to: '2026-07-04T00:00:00Z',
+        }),
+      ).toMatchObject({
+        isError: true,
+        text: 'The range may span at most 183 days',
+      });
+      expect(
+        await mcp.call('get_farm_daily', {
+          farmId: 'FARM01',
+          from: RANGE.to,
+          to: RANGE.from,
+        }),
+      ).toMatchObject({ isError: true, text: 'to must be after from' });
+      prisma.farm.findUnique.mockResolvedValue(null);
+      expect(
+        await mcp.call('get_farm_daily', { farmId: 'FARM99', ...RANGE }),
+      ).toMatchObject({ isError: true, text: 'Farm FARM99 not found' });
     });
   });
 

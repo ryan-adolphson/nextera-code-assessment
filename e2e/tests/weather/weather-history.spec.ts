@@ -83,15 +83,15 @@ test.describe('Farm tabs', () => {
     await page.goto(FARM_URL);
 
     await expect(tabs(page)).toBeVisible();
-    await expect(tabs(page).getByRole('link')).toHaveText(['Overview', 'Weather history']);
-    await expect(overviewTab(page)).toHaveAttribute('aria-current', 'page');
-    await expect(weatherTab(page)).not.toHaveAttribute('aria-current');
+    await expect(tabs(page).getByRole('tab')).toHaveText(['Overview', 'History', 'Weather history']);
+    await expect(overviewTab(page)).toHaveAttribute('aria-selected', 'true');
+    await expect(weatherTab(page)).toHaveAttribute('aria-selected', 'false');
     await expect(page.getByTestId('weather-history-range')).toHaveCount(0);
 
     await weatherTab(page).click();
     await expect(page).toHaveURL(new RegExp(`${WEATHER_URL}$`));
-    await expect(weatherTab(page)).toHaveAttribute('aria-current', 'page');
-    await expect(overviewTab(page)).not.toHaveAttribute('aria-current');
+    await expect(weatherTab(page)).toHaveAttribute('aria-selected', 'true');
+    await expect(overviewTab(page)).toHaveAttribute('aria-selected', 'false');
     await expect(page).toHaveTitle(`${FARM_NAME} · Weather history · Nextera`);
     await expect(range(page)).toBeVisible();
     // The Overview's content is not on this tab.
@@ -99,7 +99,7 @@ test.describe('Farm tabs', () => {
 
     await overviewTab(page).click();
     await expect(page).toHaveURL(new RegExp(`${FARM_URL}$`));
-    await expect(overviewTab(page)).toHaveAttribute('aria-current', 'page');
+    await expect(overviewTab(page)).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByTestId('farm-power')).toBeVisible();
   });
 
@@ -108,7 +108,7 @@ test.describe('Farm tabs', () => {
     await page.goto(WEATHER_URL);
 
     await expect(page.getByRole('heading', { level: 1 })).toContainText(`${FARM_NAME} ${FARM}`);
-    await expect(weatherTab(page)).toHaveAttribute('aria-current', 'page');
+    await expect(weatherTab(page)).toHaveAttribute('aria-selected', 'true');
     await expect(range(page)).toBeVisible();
 
     await page.getByTestId('back-to-farms').click();

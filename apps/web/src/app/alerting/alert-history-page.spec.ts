@@ -3,6 +3,7 @@ import { TestRequest } from '@angular/common/http/testing';
 import { DeferBlockBehavior, DeferBlockState, TestBed } from '@angular/core/testing';
 import { MatDateRangeInputHarness } from '@angular/material/datepicker/testing';
 import { MatPaginatorHarness } from '@angular/material/paginator/testing';
+import { MatTabNavBarHarness } from '@angular/material/tabs/testing';
 import { Title } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { TimeZoneSettings } from '../core/time-zone';
@@ -143,7 +144,17 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     expect(q('history-range')!.querySelector('mat-datepicker-toggle button')).not.toBeNull();
     expect(await (await range.getEndInput()).getMax()).toBe('2026-01-03'); // ISO from the harness
     expect(TestBed.inject(Title).getTitle()).toBe('Alert history · Nextera');
-    expect(q('alerting-tab-history')!.getAttribute('aria-current')).toBe('page');
+    // Tabs (Material tab nav bar): History is the active link and the page is in its tab panel.
+    const tabs = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatTabNavBarHarness.with({ selector: '[data-testid=alerting-tabs]' }),
+    );
+    expect(await Promise.all((await tabs.getLinks()).map((l) => l.getLabel()))).toEqual([
+      'History',
+      'Rules',
+    ]);
+    expect(await (await tabs.getActiveLink()).getLabel()).toBe('History');
+    expect(await (await tabs.getPanel()).getTextContent()).toContain('No alerts in this range.');
+    expect(q('alerting-tab-history')!.getAttribute('aria-selected')).toBe('true');
     expect(app.text(q('history-empty'))).toBe('No alerts in this range.');
     expect(app.text(q('history-count'))).toBe('0 flagged readings on 0 turbines');
   });

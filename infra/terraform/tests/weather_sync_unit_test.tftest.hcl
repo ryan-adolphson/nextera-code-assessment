@@ -28,6 +28,10 @@ variables {
 run "disabled_by_default_creates_nothing" {
   command = plan
 
+  variables {
+    farm_rollup_enabled = false # on by default and also needs Cloud Scheduler (farm_rollup_unit_test)
+  }
+
   assert {
     condition = (
       length(google_cloud_run_v2_job.weather_sync) == 0
@@ -43,7 +47,7 @@ run "disabled_by_default_creates_nothing" {
 
   assert {
     condition     = !contains(keys(google_project_service.this), "cloudscheduler.googleapis.com")
-    error_message = "Cloud Scheduler should only be enabled when the demo feed or the weather sync is on."
+    error_message = "Cloud Scheduler should only be enabled when a scheduled job (demo feed, weather sync, farm rollup) is on."
   }
 
   assert {
@@ -213,11 +217,11 @@ run "demo_feed_and_weather_sync_both_get_deployer_bindings" {
 
   assert {
     condition = (
-      toset(keys(google_cloud_run_v2_job_iam_member.deployer_developer)) == toset(["demo_feed", "weather_sync"])
+      toset(keys(google_cloud_run_v2_job_iam_member.deployer_developer)) == toset(["demo_feed", "weather_sync", "farm_rollup"])
       && contains(keys(google_service_account_iam_member.deployer_act_as), "demo_feed")
       && contains(keys(google_service_account_iam_member.deployer_act_as), "weather_sync")
     )
-    error_message = "The deployer should be able to update both optional jobs."
+    error_message = "The deployer should be able to update every enabled job (the farm rollup is on by default)."
   }
 
   assert {

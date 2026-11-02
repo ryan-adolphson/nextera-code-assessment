@@ -1,40 +1,28 @@
-import { Component } from '@angular/core';
-import { RouterLink, RouterLinkActive } from '@angular/router';
+import { Component, booleanAttribute, input } from '@angular/core';
+import { PageTab, PageTabs } from '../ui/page-tabs';
 
 /** The Alerting section's tabs, in order. `id` is the `alerting-tab-<id>` test hook. */
 export const ALERTING_TABS = [
-  { id: 'history', path: '/alerting/history', label: 'History', exact: false },
-  { id: 'rules', path: '/alerting/rules', label: 'Rules', exact: false },
-] as const;
+  { id: 'history', link: '/alerting/history', label: 'History' },
+  { id: 'rules', link: '/alerting/rules', label: 'Rules' },
+] as const satisfies readonly PageTab[];
 
 /**
- * Tab-style links between the Alerting pages. They are page links (each tab is its own route), so
- * this is a navigation landmark with `aria-current="page"`, not an ARIA tablist; the side nav's
- * Alerting item stays current on both.
+ * The Alerting pages' routed tabs (`PageTabs`: Material tab nav bar, tablist "Alerting"); the page
+ * below them is projected into the tab panel. The side nav's Alerting item stays current on both.
  */
 @Component({
   selector: 'app-alerting-tabs',
-  imports: [RouterLink, RouterLinkActive],
+  imports: [PageTabs],
+  host: { '[class]': "fill() ? 'flex min-h-0 flex-1 flex-col' : 'block'" },
   template: `
-    <nav aria-label="Alerting" class="mt-4 border-b border-line" data-testid="alerting-tabs">
-      <ul class="-mb-px flex gap-1">
-        @for (tab of tabs; track tab.id) {
-          <li>
-            <a
-              class="inline-block border-b-2 border-transparent px-4 py-2 font-medium text-muted no-underline hover:text-ink hover:no-underline aria-[current=page]:border-accent aria-[current=page]:text-ink"
-              [routerLink]="tab.path"
-              routerLinkActive
-              [routerLinkActiveOptions]="{ exact: tab.exact }"
-              ariaCurrentWhenActive="page"
-              [attr.data-testid]="'alerting-tab-' + tab.id"
-              >{{ tab.label }}</a
-            >
-          </li>
-        }
-      </ul>
-    </nav>
+    <app-page-tabs section="alerting" label="Alerting" [tabs]="tabs" [fill]="fill()">
+      <ng-content />
+    </app-page-tabs>
   `,
 })
 export class AlertingTabs {
+  /** On a window-high page (History), keep its flex-column chain (see `PageTabs`). */
+  readonly fill = input(false, { transform: booleanAttribute });
   protected readonly tabs = ALERTING_TABS;
 }

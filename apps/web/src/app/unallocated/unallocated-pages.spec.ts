@@ -178,7 +178,11 @@ describe('Unallocated turbines (/unallocated)', () => {
       expect(TestBed.inject(Router).url).toBe('/unallocated/pending');
       expect(TestBed.inject(Title).getTitle()).toBe('Unallocated turbines · Nextera');
       expect(app.text(app.root().querySelector('h1'))).toBe('Unallocated turbines');
-      expect(q('unallocated-tab-pending')!.getAttribute('aria-current')).toBe('page');
+      expect(q('unallocated-tabs')!.getAttribute('role')).toBe('tablist');
+      expect(q('unallocated-tabs')!.getAttribute('aria-label')).toBe('Unallocated');
+      expect(q('unallocated-tab-pending')!.getAttribute('aria-selected')).toBe('true');
+      expect(q('unallocated-tab-blocked')!.getAttribute('aria-selected')).toBe('false');
+      expect(q('unallocated-tab-panel')!.contains(q('unallocated-count'))).toBe(true);
       expect(q('unallocated-tab-blocked')!.getAttribute('href')).toBe('/unallocated/blocked');
       expect(q('nav-unallocated')!.getAttribute('aria-current')).toBe('page');
       expect(app.text(q('unallocated-count'))).toBe('3 turbines pending');
@@ -743,7 +747,11 @@ describe('Unallocated turbines (/unallocated)', () => {
         }),
       ]);
       expect(TestBed.inject(Title).getTitle()).toBe('Blocked turbines · Nextera');
-      expect(q('unallocated-tab-blocked')!.getAttribute('aria-current')).toBe('page');
+      expect(q('unallocated-tab-blocked')!.getAttribute('aria-selected')).toBe('true');
+      expect(q('unallocated-tab-pending')!.getAttribute('aria-selected')).toBe('false');
+      expect(q('unallocated-tab-panel')!.getAttribute('aria-labelledby')).toBe(
+        q('unallocated-tab-blocked')!.id,
+      );
       expect(app.text(q('blocked-count'))).toBe('2 blocked turbines');
       const cells = [...app.root().querySelectorAll('[data-testid=blocked-row]')].map((r) =>
         [...r.querySelectorAll('td')].map((td) => app.text(td)),

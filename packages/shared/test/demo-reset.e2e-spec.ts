@@ -79,7 +79,10 @@ describe('demo reset (e2e)', () => {
                (SELECT count(*) FROM telemetry_alerts)::int AS alerts,
                (SELECT count(*) FROM held_telemetry)::int AS held,
                (SELECT count(*) FROM unallocated_turbines)::int AS unallocated,
-               (SELECT count(*) FROM farm_weather)::int AS weather`)
+               (SELECT count(*) FROM farm_weather)::int AS weather,
+               (SELECT count(*) FROM farm_telemetry_rollups)::int AS rollups,
+               (SELECT count(*) FROM farm_telemetry_rollups
+                WHERE bucket_start < '2026-09-02T00:00:00Z')::int AS old_rollups`)
     )[0];
 
   it('refuses without --yes when stdin is not a terminal, and a remote host without --allow-remote', async () => {
@@ -145,8 +148,9 @@ describe('demo reset (e2e)', () => {
     expect(stdout).toMatch(/Target database: .*\/migration_\w+ \(local\)/);
     expect(stdout).not.toContain(PASSWORD);
     expect(stdout).toMatch(
-      /Deleted \d+ telemetry rows, 7 telemetry_alerts, \d+ held readings, 6 unallocated entries, 1 weather rows/,
+      /Deleted \d+ telemetry rows, 7 telemetry_alerts, \d+ held readings, 6 unallocated entries, 1 weather rows, \d+ farm rollup rows/,
     );
+    expect(stdout).toMatch(/farm rollup: \d+ rows for 10 farms in \d+ ms/);
     expect(stdout).toMatch(/Live feed: skipped \(--no-feed\)/);
 
     // The setup is untouched: same ids, the move kept, the user's rule kept.
@@ -180,7 +184,10 @@ describe('demo reset (e2e)', () => {
       telemetry: expected.length,
       alerts: 7,
       weather: 0,
+      old_rollups: 0, // the deleted reading's bucket is gone with it
     });
+    // 7 days of 30-minute buckets for every farm (all have demo turbines), plus the seed's end.
+    expect(c.rollups).toBeGreaterThanOrEqual(10 * 7 * 48);
     expect(
       await one(
         `SELECT 1 FROM telemetry WHERE timestamp = '2026-09-01T00:00:00Z'`,

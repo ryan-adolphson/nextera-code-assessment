@@ -18,6 +18,9 @@ import {
   toTurbineResponse,
   toWeatherDayResponse,
   toWeatherHalfHourResponse,
+  toFarmDayResponse,
+  type FarmDailyHistoryResponse,
+  type FarmDayRow,
   type FarmResponse,
   type FarmWeatherResponse,
   type TurbineWeatherResponse,
@@ -30,6 +33,7 @@ import {
   type WeatherDayRow,
   type WeatherInterval,
 } from './responses.js';
+import { FARM_ROLLUP_METRICS } from './farm-rollup.js';
 import {
   toHeldReadingResponse,
   toUnallocatedResponse,
@@ -859,5 +863,94 @@ async function weatherOfFarm(
     interval,
     timeZone: zone,
     points: rows.map(toWeatherDayResponse),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Farm daily history: daily candles of the farm series, aggregated from the 30-minute rollups the
+// farm rollup job writes (src/wind/farm-rollup.ts); never from telemetry directly.
+
+/** The widest range of the farm daily history: about 6 months of days. */
+export const MAX_FARM_DAILY_RANGE_DAYS = 183;
+/** A range of whole local days may be an hour longer than N × 24 h across a DST change. */
+const DST_SLACK_MS = 60 * 60 * 1000;
+
+/** A farm's daily history over a required [from, to) range (ISO instants, ≤ 183 days). */
+export interface FarmDailyQuery extends TimeRange {
+  /**
+   * IANA zone of the days (default UTC). Send from/to at local midnights of this zone for whole
+   * days: the range applies to the 30-minute buckets' start times.
+   */
+  timeZone?: string;
+}
+
+/** Per metric: open = the day's first bucket's open, close = its last's close, high/low over the day. */
+const DAY_AGGREGATES = Prisma.raw(
+  Object.values(FARM_ROLLUP_METRICS)
+    .map(({ prefix: p }) =>
+      [
+        `(array_agg(r.${p}_open ORDER BY r.bucket_start))[1] AS ${p}_open`,
+        `(array_agg(r.${p}_close ORDER BY r.bucket_start DESC))[1] AS ${p}_close`,
+        `max(r.${p}_high) AS ${p}_high`,
+        `min(r.${p}_low) AS ${p}_low`,
+      ].join(', '),
+    )
+    .join(',\n'),
+);
+
+/**
+ * A farm's series as one candle per local day in `timeZone` (default UTC; a DST day has 46 or 50
+ * buckets), oldest first, aggregated in Postgres from farm_telemetry_rollups in [from, to) on the
+ * bucket's start: about 8.8k primary-key rows for 6 months. Days without readings are omitted.
+ * `turbines` per day is the most that reported in any of its buckets; `turbineCount` the farm's
+ * turbines now; `computedAt` the newest computed_at among the rows (null when there are none).
+ */
+export async function farmDailyHistory(
+  db: ReadClient,
+  farmId: string,
+  { from, to, timeZone = DEFAULT_WEATHER_TIME_ZONE }: FarmDailyQuery,
+): Promise<FarmDailyHistoryResponse> {
+  const farm = await db.farm.findUnique({
+    where: { id: farmId },
+    select: { id: true, _count: { select: { turbines: true } } },
+  });
+  if (!farm) throw new QueryNotFoundError(`Farm ${farmId} not found`);
+  const start = new Date(from);
+  const end = new Date(to);
+  if (end <= start) throw new QueryInputError('to must be after from');
+  if (
+    end.getTime() - start.getTime() >
+    MAX_FARM_DAILY_RANGE_DAYS * DAY_MS + DST_SLACK_MS
+  ) {
+    throw new QueryInputError(
+      `The range may span at most ${MAX_FARM_DAILY_RANGE_DAYS} days`,
+    );
+  }
+  const zone = await checkTimeZone(db, timeZone);
+
+  // The local day of each bucket in the bound zone, as for the weather's daily rows.
+  const rows = await db.$queryRaw<FarmDayRow[]>`
+    SELECT
+      to_char(r.bucket_start AT TIME ZONE ${zone}::text, 'YYYY-MM-DD') AS day,
+      max(r.turbines)::int AS turbines,
+      sum(r.readings)::int AS readings,
+      max(r.computed_at) AS computed_at,
+      ${DAY_AGGREGATES}
+    FROM farm_telemetry_rollups r
+    WHERE r.farm_id = ${farmId} AND r.bucket_start >= ${start} AND r.bucket_start < ${end}
+    GROUP BY 1
+    ORDER BY 1`;
+  const computedAt = rows.reduce<Date | null>(
+    (max, r) => (!max || r.computed_at > max ? r.computed_at : max),
+    null,
+  );
+  return {
+    farmId: farm.id,
+    from: start.toISOString(),
+    to: end.toISOString(),
+    timeZone: zone,
+    turbineCount: farm._count.turbines,
+    computedAt: computedAt?.toISOString() ?? null,
+    days: rows.map(toFarmDayResponse),
   };
 }

@@ -2,6 +2,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import {
   PrismaClient,
   enabledAlertRules,
+  runFarmRollup,
   seedFromCsv,
   storeAlerts,
 } from '@nextera/shared';
@@ -62,7 +63,7 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     writer = new PrismaClient({
       adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
     });
-    await writer.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, turbines, farm_weather, farms, unallocated_turbines, held_telemetry`;
+    await writer.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms, unallocated_turbines, held_telemetry`;
     await seedFromCsv(writer, SEED_DATA_DIR);
     await writer.alertConfig.createMany({
       data: [
@@ -87,6 +88,11 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     );
 
     await writer.farmWeather.createMany({ data: weatherBuckets });
+    await writer.$executeRaw`TRUNCATE TABLE farm_rollup_state, farm_rollup_dirty`;
+    await runFarmRollup(writer, {
+      mode: { kind: 'full' },
+      now: new Date('2026-01-03T00:00:00Z'),
+    });
     // Pending: TURB099 isn't in the fleet; TURB001 (on FARM01) reports FARM05. Blocked: TURB097,
     // blocked by a user (whose email the tools must not show).
     const blocker = await writer.user.create({
@@ -146,9 +152,10 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     }
   });
 
-  it('tools/list lists the 10 tools', async () => {
+  it('tools/list lists the 11 tools', async () => {
     const { tools } = await mcp.client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      'get_farm_daily',
       'get_report_summary',
       'get_telemetry',
       'get_telemetry_stats',
@@ -352,6 +359,39 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     const none = await mcp.call('get_weather', { farmId: 'FARM01', ...day });
     expect(none.isError).toBe(false);
     expect(none.json()).toMatchObject({ count: 0, rows: [] });
+  });
+
+  it('get_farm_daily: daily candles of the fixture from the rollups, through the read-only client', async () => {
+    const result = await mcp.call('get_farm_daily', {
+      farmId: 'FARM02',
+      from: '2026-01-01T00:00:00Z',
+      to: '2026-01-03T00:00:00Z',
+    });
+
+    expect(result.isError).toBe(false);
+    const body = result.json();
+    expect(body).toMatchObject({
+      farmId: 'FARM02',
+      timeZone: 'UTC',
+      turbineCount: 1,
+      computedAt: expect.any(String),
+    });
+    expect(body.days.map((d: { date: string }) => d.date)).toEqual([
+      '2026-01-01',
+      '2026-01-02',
+    ]);
+    // TURB002's pitch spike (44° at 2026-01-01 18:10) and stuck gearbox (126.5 °C on 2026-01-02).
+    expect(body.days[0].bladePitchDeg.high).toBe(44);
+    expect(body.days[1].gearboxTempC.high).toBe(126.5);
+    const unknown = await mcp.call('get_farm_daily', {
+      farmId: 'FARM99',
+      from: '2026-01-01T00:00:00Z',
+      to: '2026-01-03T00:00:00Z',
+    });
+    expect(unknown).toMatchObject({
+      isError: true,
+      text: 'Farm FARM99 not found',
+    });
   });
 
   it('list_unallocated: pending by latest activity, blocked without the blocking user', async () => {

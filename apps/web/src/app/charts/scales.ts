@@ -16,11 +16,15 @@ function niceStep(value: number): number {
   return nice * 10 ** exponent;
 }
 
-/** Tick steps, finest first: 15 and 30 minutes, then 1, 2, 3, 6, 12, 24 and 48 hours. */
+/**
+ * Tick steps, finest first: 15 and 30 minutes, 1, 2, 3, 6, 12, 24 and 48 hours, then 4, 7, 14 and
+ * 28 days (months of daily candles). Day steps are whole wall-clock days, so they stay on midnight.
+ */
 const TIME_STEPS = [
   minutesToMilliseconds(15),
   minutesToMilliseconds(30),
   ...[1, 2, 3, 6, 12, 24, 48].map(hoursToMilliseconds),
+  ...[4, 7, 14, 28].map((days) => days * millisecondsInDay),
 ];
 
 export interface TimeTick {
@@ -161,6 +165,12 @@ export interface Candle {
   high: number;
   /** Readings in the bucket. */
   count: number;
+  /**
+   * Precomputed candles (e.g. one per day from the API): the period's name, replacing the time
+   * span ("Sat, Jan 3, 2026"), and what to say instead of "N readings" ("2 of 2 turbines reporting").
+   */
+  label?: string;
+  detail?: string;
 }
 
 /**
