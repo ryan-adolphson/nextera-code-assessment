@@ -40,7 +40,7 @@ cp .env.example .env
 
 npm install                           # backend packages and the shared Prisma client
 docker compose up -d --wait --build   # database, Pub/Sub, migrations, API, ingestion, web
-npm run db:seed:demo                  # demo users, 10 farms, 25 turbines, the last 72 h of data
+npm run db:seed:demo                  # demo users, 10 farms, 200 turbines, the last 72 h of data
 ```
 
 Open http://localhost:8082 and sign in with one of the demo logins. Every account uses the password you set as `SEED_USER_PASSWORD` in `.env`.
@@ -55,7 +55,7 @@ Open http://localhost:8082 and sign in with one of the demo logins. Every accoun
 
 **Live data (optional).** Set `DEMO_FEED_ENABLED=true` in `.env`, then run `docker compose up -d demo-feed`: every turbine reports a new reading every 5 minutes and the app updates live. Set it back to `false` and run the same command to stop it. Run `db:seed:demo` before you turn it on.
 
-**Fresh demo in one command:** `npm run demo:reset -- --yes` clears all readings, alerts and weather from the local database, then seeds the last 7 days up to now, fetches the weather, and starts the live feed. Farms, turbines, users and rules are kept. It includes missing data, so the demo can show how gaps are handled: TURB011, TURB018 and TURB013 stay 20, 45 and 90+ minutes behind, which shows the yellow, orange and red "No data in 15/30/60 min" pills. It only runs against a local database.
+**Fresh demo in one command:** `npm run demo:reset -- --yes` clears all readings, alerts and weather from the local database, then seeds the last 7 days up to now, fetches the weather, and starts the live feed. Farms, turbines, users and rules are kept. It includes missing data, so the demo can show how gaps are handled: about 10% of the 200 turbines (20) are stale: 8 stay 20 minutes behind, 6 stay 45 minutes behind and 6 have stopped, which shows the yellow, orange and red "No data in 15/30/60 min" pills. It only runs against a local database.
 
 **Stop:** `docker compose down`. Add `-v` to also delete the database.
 

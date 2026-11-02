@@ -214,23 +214,29 @@ export interface DemoStaleTurbine {
   kind: 'lagging' | 'stopped';
 }
 
-/** The demo turbines that show a staleness pill: the lagging ones, then the stopped one. */
+/** The demo turbines that show a staleness pill: the lagging ones, then the stopped ones. */
 export function demoStaleTurbines(): DemoStaleTurbine[] {
-  const farmOf = (id: string) =>
-    DEMO_TURBINES.find((t) => t.turbineId === id)?.farmId ?? '?';
+  const farmOf = new Map(DEMO_TURBINES.map((t) => [t.turbineId, t.farmId]));
   const { lagging, stopped } = DEMO_ANOMALIES;
   return [
     ...lagging.map((l) => ({
       turbineId: l.turbineId,
-      farmId: farmOf(l.turbineId),
+      farmId: farmOf.get(l.turbineId) ?? '?',
       minutesBehind: l.lagMinutes,
       kind: 'lagging' as const,
     })),
-    {
-      turbineId: stopped.turbineId,
-      farmId: farmOf(stopped.turbineId),
-      minutesBehind: stopped.offsetMinutes,
+    ...stopped.map((s) => ({
+      turbineId: s.turbineId,
+      farmId: farmOf.get(s.turbineId) ?? '?',
+      minutesBehind: s.offsetMinutes,
       kind: 'stopped' as const,
-    },
+    })),
   ];
+}
+
+/** How many turbines show each pill, in first-seen order (e.g. for the reset's summary). */
+export function countByPill(pills: readonly string[]): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const pill of pills) counts.set(pill, (counts.get(pill) ?? 0) + 1);
+  return [...counts];
 }

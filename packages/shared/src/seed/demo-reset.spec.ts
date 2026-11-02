@@ -5,6 +5,7 @@ import {
   assertResetTarget,
   clearDemoReadings,
   confirmDemoReset,
+  countByPill,
   databaseTarget,
   demoStaleTurbines,
   describeTarget,
@@ -23,7 +24,7 @@ describe('demo reset', () => {
       DEMO_ANOMALIES.pitchSpike.offsetMinutes,
       DEMO_ANOMALIES.gearboxStuck.offsetMinutes,
       DEMO_ANOMALIES.gap.offsetMinutes,
-      DEMO_ANOMALIES.stopped.offsetMinutes,
+      ...DEMO_ANOMALIES.stopped.map((s) => s.offsetMinutes),
       ...DEMO_ANOMALIES.late.map((l) => l.offsetMinutes),
       ...DEMO_ANOMALIES.lagging.map((l) => l.lagMinutes),
     ];
@@ -273,31 +274,37 @@ describe('demo reset', () => {
       expect(expectedStalenessPill(minutes)).toBe(pill);
     });
 
-    it('lists the lagging turbines and the stopped one, one pill each', () => {
+    it('lists the 14 lagging turbines, then the 6 stopped ones: 8 yellow, 6 orange, 6 red', () => {
       const stale = demoStaleTurbines();
-      expect(stale).toEqual([
-        {
-          turbineId: 'TURB011',
-          farmId: 'FARM04',
-          minutesBehind: 20,
-          kind: 'lagging',
-        },
-        {
-          turbineId: 'TURB018',
-          farmId: 'FARM07',
-          minutesBehind: 45,
-          kind: 'lagging',
-        },
-        {
-          turbineId: 'TURB013',
-          farmId: 'FARM05',
-          minutesBehind: 90,
-          kind: 'stopped',
-        },
-      ]);
+      expect(stale).toHaveLength(20);
+      expect(stale.slice(0, 14).every((s) => s.kind === 'lagging')).toBe(true);
+      expect(stale.slice(14).every((s) => s.kind === 'stopped')).toBe(true);
+      expect(stale).toContainEqual({
+        turbineId: 'TURB011',
+        farmId: 'FARM04',
+        minutesBehind: 20,
+        kind: 'lagging',
+      });
+      expect(stale).toContainEqual({
+        turbineId: 'TURB018',
+        farmId: 'FARM07',
+        minutesBehind: 45,
+        kind: 'lagging',
+      });
+      expect(stale[14]).toEqual({
+        turbineId: 'TURB013',
+        farmId: 'FARM05',
+        minutesBehind: 90,
+        kind: 'stopped',
+      });
+      expect(stale.map((s) => s.farmId)).not.toContain('?');
       expect(
-        new Set(stale.map((s) => expectedStalenessPill(s.minutesBehind))).size,
-      ).toBe(3);
+        countByPill(stale.map((s) => expectedStalenessPill(s.minutesBehind))),
+      ).toEqual([
+        ['No data in 15 min (yellow)', 8],
+        ['No data in 30 min (orange)', 6],
+        ['No data in 60 min (red)', 6],
+      ]);
     });
   });
 });

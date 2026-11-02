@@ -215,10 +215,22 @@ describe('demo reset (e2e)', () => {
       latest.map((l) => [l.turbine_id, minutesBefore(l.latest)]),
     );
     expect(behind).toMatchObject({ TURB011: 20, TURB018: 45, TURB013: 90 });
+    const stale: [string, number][] = [
+      ...DEMO_ANOMALIES.lagging.map((l): [string, number] => [
+        l.turbineId,
+        l.lagMinutes,
+      ]),
+      ...DEMO_ANOMALIES.stopped.map((s): [string, number] => [
+        s.turbineId,
+        s.offsetMinutes,
+      ]),
+    ];
+    expect(stale).toHaveLength(20);
+    for (const [id, minutes] of stale) expect(behind[id], id).toBe(minutes);
     const others = Object.entries(behind).filter(
-      ([id]) => !['TURB011', 'TURB018', 'TURB013'].includes(id),
+      ([id]) => !stale.some(([staleId]) => staleId === id),
     );
-    expect(others).toHaveLength(DEMO_TURBINES.length - 3);
+    expect(others).toHaveLength(DEMO_TURBINES.length - 20);
     expect(others.every(([, minutes]) => minutes === 0)).toBe(true);
     expect(stdout).toMatch(
       /TURB011 \(FARM04, lagging, 20 min behind\): 2026-10-09T11:40:00\.000Z/,
@@ -229,6 +241,11 @@ describe('demo reset (e2e)', () => {
     expect(stdout).toMatch(
       /TURB013 \(FARM05, stopped, 90 min behind\): 2026-10-09T10:30:00\.000Z/,
     );
+    expect(stdout).toMatch(
+      /TURB195 \(FARM10, stopped, 300 min behind\): 2026-10-09T07:00:00\.000Z/,
+    );
+    // RESET_NOW is in the past here, so every stale turbine is red now: only the count is checked.
+    expect(stdout).toMatch(/20 of 200 turbines stale: 20 × No data in 60 min/);
 
     // Unallocated entries re-created, except TURB003@FARM02 (TURB003 is on FARM02 now).
     const entries = await one(`
@@ -236,10 +253,10 @@ describe('demo reset (e2e)', () => {
       FROM unallocated_turbines ORDER BY status::text DESC, turbine_id`);
     expect(entries).toEqual([
       { pair: 'TURB004@FARM99', status: 'pending' },
-      { pair: 'TURB098@FARM99', status: 'pending' },
-      { pair: 'TURB099@FARM01', status: 'pending' },
+      { pair: 'TURB998@FARM99', status: 'pending' },
+      { pair: 'TURB999@FARM01', status: 'pending' },
       { pair: 'TURB005@FARM03', status: 'blocked' },
-      { pair: 'TURB097@FARM05', status: 'blocked' },
+      { pair: 'TURB997@FARM05', status: 'blocked' },
     ]);
   });
 });

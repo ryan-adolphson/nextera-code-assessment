@@ -6,7 +6,7 @@
  *   3. Deletes the readings in one transaction: telemetry_alerts, telemetry, held_telemetry,
  *      unallocated_turbines, farm_weather. Farms, turbines, users and alert rules stay.
  *   4. Seeds the test users and 7 days (DEMO_RESET_HOURS) of demo data up to now (SEED_NOW
- *      overrides), with the anomalies and the stale turbines (lagging TURB011/TURB018, stopped TURB013).
+ *      overrides), with the anomalies and the 20 stale turbines (DEMO_ANOMALIES lagging and stopped).
  *   5. Syncs the farm weather for those days (Open-Meteo; a failure is a warning). --no-weather skips.
  *   6. Publishes one demo feed tick from this machine and (re)starts the compose demo-feed with
  *      DEMO_FEED_ENABLED=true (a shell override: .env is never edited), rebuilding its image first
@@ -26,6 +26,7 @@ import {
   assertResetTarget,
   clearDemoReadings,
   confirmDemoReset,
+  countByPill,
   databaseTarget,
   demoStaleTurbines,
   describeTarget,
@@ -160,6 +161,7 @@ async function main(): Promise<number> {
       `Seeding ${DEMO_RESET_HOURS} h of demo data up to ${end.toISOString()}`,
     );
     const users = await seedTestUsers(prisma);
+    const seedStarted = Date.now();
     const seeded = await seedDemo(prisma, {
       dataDir: DATA_DIR,
       end,
@@ -170,7 +172,8 @@ async function main(): Promise<number> {
       `  ${seeded.farms} farms, ${seeded.turbines} demo turbines, ${users} users, ` +
         `${seeded.rulesCreated} default rules created (${seeded.rulesEvaluated} enabled), ` +
         `${seeded.inserted} readings from ${seeded.from} to ${seeded.to}, ${seeded.alerts} triggered alerts, ` +
-        `${unallocated.length} unallocated entries (${unallocated.map((u) => `${u.turbineId}@${u.reportedFarmId} ${u.status}`).join(', ')})`,
+        `${unallocated.length} unallocated entries (${unallocated.map((u) => `${u.turbineId}@${u.reportedFarmId} ${u.status}`).join(', ')}) ` +
+        `in ${((Date.now() - seedStarted) / 1000).toFixed(1)} s`,
     );
 
     // 4. Weather.
@@ -279,10 +282,12 @@ async function main(): Promise<number> {
         `(${seeded.alerts} alerts) for ${seeded.turbines} turbines over ${DEMO_RESET_HOURS} h; weather: ${weather}.`,
     );
     console.log('  Stale turbines (latest reading → expected pill now):');
+    const pills: string[] = [];
     for (const s of stale) {
       const at = latest.find((l) => l.turbineId === s.turbineId)?._max
         .timestamp;
       const age = at ? (now - at.getTime()) / 60_000 : null;
+      pills.push(age === null ? 'no readings' : expectedStalenessPill(age));
       console.log(
         `    ${s.turbineId} (${s.farmId}, ${s.kind}, ${s.minutesBehind} min behind): ` +
           (at && age !== null
@@ -290,6 +295,12 @@ async function main(): Promise<number> {
             : 'no readings'),
       );
     }
+    console.log(
+      `  ${stale.length} of ${seeded.turbines} turbines stale: ` +
+        countByPill(pills)
+          .map(([pill, n]) => `${n} × ${pill}`)
+          .join(', '),
+    );
     console.log(`  Live feed: ${feed}`);
     return 0;
   } finally {

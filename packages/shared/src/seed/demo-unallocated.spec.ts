@@ -56,11 +56,11 @@ describe('DEMO_UNALLOCATED', () => {
       ];
     });
     expect(describe).toEqual([
-      ['TURB099', 'unknown_turbine', 'farm exists', 'pending'],
-      ['TURB098', 'unknown_turbine', 'unknown farm', 'pending'],
+      ['TURB999', 'unknown_turbine', 'farm exists', 'pending'],
+      ['TURB998', 'unknown_turbine', 'unknown farm', 'pending'],
       ['TURB003', 'farm_mismatch', 'farm exists', 'pending'],
       ['TURB004', 'farm_mismatch', 'unknown farm', 'pending'],
-      ['TURB097', 'unknown_turbine', 'farm exists', 'blocked'],
+      ['TURB997', 'unknown_turbine', 'farm exists', 'blocked'],
       ['TURB005', 'farm_mismatch', 'farm exists', 'blocked'],
     ]);
   });
@@ -195,16 +195,16 @@ describe('seedDemoUnallocated', () => {
     expect(
       results.map((r) => [r.turbineId, r.outcome, r.kind, r.status, r.held]),
     ).toEqual([
-      ['TURB099', 'created', 'unknown_turbine', 'pending', 72],
-      ['TURB098', 'created', 'unknown_turbine', 'pending', 36],
+      ['TURB999', 'created', 'unknown_turbine', 'pending', 72],
+      ['TURB998', 'created', 'unknown_turbine', 'pending', 36],
       ['TURB003', 'created', 'farm_mismatch', 'pending', 24],
       ['TURB004', 'created', 'farm_mismatch', 'pending', 12],
-      ['TURB097', 'created', 'unknown_turbine', 'blocked', 0],
+      ['TURB997', 'created', 'unknown_turbine', 'blocked', 0],
       ['TURB005', 'created', 'farm_mismatch', 'blocked', 0],
     ]);
 
     const readings = demoUnallocatedReadings(DEMO_UNALLOCATED[0], END);
-    const [first, rest] = holdCalls('TURB099');
+    const [first, rest] = holdCalls('TURB999');
     expect(first.readings).toEqual([
       { ...readings[0], kind: 'unknown_turbine' },
     ]);
@@ -220,7 +220,7 @@ describe('seedDemoUnallocated', () => {
     expect(vi.mocked(blockUnallocated).mock.calls.map(([, ...a]) => a)).toEqual(
       [
         [
-          'id-TURB097',
+          'id-TURB997',
           {
             blockedAt: new Date(END_MS - 24 * 60 * MIN),
             blockedById: 'admin-id',
@@ -247,8 +247,8 @@ describe('seedDemoUnallocated', () => {
 
   it('tops up an existing pending entry in one hold, never moving last_seen_at back', async () => {
     const lastSeenAt = new Date(END_MS + 3 * 60 * MIN); // the live feed's, later than the seed end
-    existing.set(key('TURB099', 'FARM01'), {
-      id: 'id-TURB099',
+    existing.set(key('TURB999', 'FARM01'), {
+      id: 'id-TURB999',
       status: 'pending',
       lastSeenAt,
     } as UnallocatedTurbine);
@@ -256,22 +256,22 @@ describe('seedDemoUnallocated', () => {
     const [result] = await seedDemoUnallocated(prisma, END);
 
     expect(result).toMatchObject({ outcome: 'updated', status: 'pending' });
-    const calls = holdCalls('TURB099');
+    const calls = holdCalls('TURB999');
     expect(calls).toHaveLength(1);
     expect(calls[0].readings).toHaveLength(72);
     expect(calls[0].now).toEqual(lastSeenAt);
   });
 
   it('skips a resolved pair (the turbine is on the reported farm now)', async () => {
-    classOf.set(key('TURB099', 'FARM01'), 'known');
+    classOf.set(key('TURB999', 'FARM01'), 'known');
     classOf.set(key('TURB003', 'FARM02'), 'known');
 
     const results = await seedDemoUnallocated(prisma, END);
 
-    for (const turbineId of ['TURB099', 'TURB003']) {
+    for (const turbineId of ['TURB999', 'TURB003']) {
       expect(results.find((r) => r.turbineId === turbineId)).toEqual({
         turbineId,
-        reportedFarmId: turbineId === 'TURB099' ? 'FARM01' : 'FARM02',
+        reportedFarmId: turbineId === 'TURB999' ? 'FARM01' : 'FARM02',
         outcome: 'resolved',
         kind: null,
         status: null,
@@ -281,14 +281,14 @@ describe('seedDemoUnallocated', () => {
     }
   });
 
-  it('derives the kind from the fleet now (an assigned TURB098 on another farm is a mismatch)', async () => {
-    classOf.set(key('TURB098', 'FARM99'), 'farm_mismatch');
+  it('derives the kind from the fleet now (an assigned TURB998 on another farm is a mismatch)', async () => {
+    classOf.set(key('TURB998', 'FARM99'), 'farm_mismatch');
     const results = await seedDemoUnallocated(prisma, END);
     expect(results[1]).toMatchObject({
-      turbineId: 'TURB098',
+      turbineId: 'TURB998',
       kind: 'farm_mismatch',
     });
-    expect(holdCalls('TURB098')[0].readings[0].kind).toBe('farm_mismatch');
+    expect(holdCalls('TURB998')[0].readings[0].kind).toBe('farm_mismatch');
   });
 
   it('leaves blocked entries alone, and never blocks a pending one', async () => {
@@ -300,7 +300,7 @@ describe('seedDemoUnallocated', () => {
       status: 'blocked',
       kind: 'farm_mismatch',
     } as UnallocatedTurbine);
-    existing.set(key('TURB097', 'FARM05'), {
+    existing.set(key('TURB997', 'FARM05'), {
       id: 'y',
       status: 'pending',
       kind: 'unknown_turbine',
@@ -312,12 +312,12 @@ describe('seedDemoUnallocated', () => {
       outcome: 'unchanged',
       status: 'blocked',
     });
-    expect(results.find((r) => r.turbineId === 'TURB097')).toMatchObject({
+    expect(results.find((r) => r.turbineId === 'TURB997')).toMatchObject({
       outcome: 'unchanged',
       status: 'pending',
     });
     expect(holdCalls('TURB003')).toEqual([]);
-    expect(holdCalls('TURB097')).toEqual([]);
+    expect(holdCalls('TURB997')).toEqual([]);
     expect(vi.mocked(blockUnallocated).mock.calls.map(([, id]) => id)).toEqual([
       'id-TURB005',
     ]);

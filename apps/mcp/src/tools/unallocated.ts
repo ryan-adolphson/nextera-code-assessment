@@ -65,7 +65,7 @@ export const listUnallocatedTool = defineTool({
       .default('pending')
       .describe('pending (default) or blocked.'),
     turbineId: businessKey(
-      'Only this turbine id’s entries, e.g. "TURB099" (optional).',
+      'Only this turbine id’s entries, e.g. "TURB999" (optional).',
     ).optional(),
   },
   async run({ db, now }, { status, turbineId }) {

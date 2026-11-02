@@ -8,13 +8,14 @@ import {
   demoReportingLagMinutes,
   floorToTelemetryStep,
   generateTelemetry,
+  isDemoStopped,
   type GeneratedTelemetryRow,
 } from '@nextera/shared';
 
 /**
  * The live demo feed (`npm run demo:feed`, or `node dist/demo-feed/main.js` in the ingestion
  * image): every tick publishes one reading per demo turbine to the telemetry topic, timestamped at
- * the current 5-minute boundary (a lagging turbine: its lag earlier; the stopped one: none) and
+ * the current 5-minute boundary (a lagging turbine: its lag earlier; a stopped one: none) and
  * continuing the demo seed's curve (same generator and seed).
  * The readings go through Pub/Sub → ingestion like a real turbine's, so alerts and SSE work as in
  * production. It is not part of the ingestion service: the worker never imports it.
@@ -52,8 +53,8 @@ export interface DemoFeedDeps {
  * - a lagging turbine (DEMO_ANOMALIES.lagging) at the boundary at or before `at` − its lag, so its
  *   staleness stays constant (ingestion is idempotent on (turbine_id, timestamp): an older boundary
  *   is just a late reading);
- * - none for the stopped turbine (TURB013), which stays red;
- * - one for the unallocated turbine (DEMO_ANOMALIES.unallocated: TURB099 claiming FARM01, not in
+ * - none for the stopped turbines (DEMO_ANOMALIES.stopped), which stay red;
+ * - one for the unallocated turbine (DEMO_ANOMALIES.unallocated: TURB999 claiming FARM01, not in
  *   the fleet), which ingestion holds for the Unallocated tab.
  * Values come from the seed's generator, so each continues the seeded curve.
  */
@@ -61,28 +62,55 @@ export function demoFeedReadings(
   at: Date | number,
 ): Omit<GeneratedTelemetryRow, 'received_at'>[] {
   const end = floorToTelemetryStep(at).getTime();
-  const turbines = [...DEMO_TURBINES, DEMO_ANOMALIES.unallocated];
+  const turbines = [...DEMO_TURBINES, DEMO_ANOMALIES.unallocated].filter(
+    (t) => !isDemoStopped(t.turbineId),
+  );
   const maxLag = Math.max(...DEMO_ANOMALIES.lagging.map((l) => l.lagMinutes));
   // A window back to the oldest lagging boundary: the generator leaves out each turbine's
   // last `lag` minutes, so the reading at end − lag is in it.
-  const rows = generateTelemetry({
-    turbines,
-    end,
-    hours: (maxLag + TELEMETRY_STEP_MINUTES) / 60,
-    seed: DEMO_SEED,
-  });
+  const rows = new Map(
+    generateTelemetry({
+      turbines,
+      end,
+      hours: (maxLag + TELEMETRY_STEP_MINUTES) / 60,
+      seed: DEMO_SEED,
+    }).map((r) => [`${r.turbine_id}@${r.timestamp}`, r]),
+  );
   return turbines.flatMap(({ turbineId }) => {
-    if (turbineId === DEMO_ANOMALIES.stopped.turbineId) return [];
     const timestamp = floorToTelemetryStep(
       end - demoReportingLagMinutes(turbineId) * 60_000,
     ).toISOString();
-    const row = rows.find(
-      (r) => r.turbine_id === turbineId && r.timestamp === timestamp,
-    );
+    const row = rows.get(`${turbineId}@${timestamp}`);
     if (!row) return [];
     const { received_at: _receivedAt, ...reading } = row; // live: Pub/Sub publishTime
     return [reading];
   });
+}
+
+/**
+ * "14 lagging (8 × 20 min, 6 × 45 min), 6 stopped": the tick's stale turbines, for the log
+ * (the full list of ids would be 20 per line).
+ */
+export function describeStale(
+  readings: readonly { turbine_id: string; timestamp: string }[],
+  end: number,
+): string {
+  const lags = new Map<number, number>();
+  for (const { turbineId } of DEMO_ANOMALIES.lagging) {
+    const r = readings.find((x) => x.turbine_id === turbineId);
+    if (!r) continue;
+    const minutes = (end - Date.parse(r.timestamp)) / 60_000;
+    lags.set(minutes, (lags.get(minutes) ?? 0) + 1);
+  }
+  const lagging = [...lags.values()].reduce((a, b) => a + b, 0);
+  const detail = [...lags]
+    .sort(([a], [b]) => a - b)
+    .map(([minutes, n]) => `${n} × ${minutes} min`)
+    .join(', ');
+  return (
+    `${lagging} lagging (${detail}), ` +
+    `${DEMO_ANOMALIES.stopped.length} stopped not published`
+  );
 }
 
 /** Runs the feed; resolves with the process exit code. */
@@ -121,15 +149,10 @@ export async function runDemoFeed({
     await Promise.all(
       readings.map((reading) => topic.publishMessage({ json: reading })),
     );
-    const lagging = DEMO_ANOMALIES.lagging
-      .map(({ turbineId }) => {
-        const r = readings.find((x) => x.turbine_id === turbineId);
-        return r && `${turbineId} at ${r.timestamp}`;
-      })
-      .filter(Boolean);
+    const boundary = floorToTelemetryStep(at);
     log.log(
-      `Demo feed: published ${readings.length} readings for ${floorToTelemetryStep(at).toISOString()} ` +
-        `(lagging: ${lagging.join(', ')}) to ${topicName}`,
+      `Demo feed: published ${readings.length} readings for ${boundary.toISOString()} ` +
+        `(${describeStale(readings, boundary.getTime())}) to ${topicName} in ${now() - at} ms`,
     );
   };
 

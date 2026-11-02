@@ -36,9 +36,10 @@ export interface DemoUnallocatedEntry {
 
 /**
  * The demo seed's unallocated entries. Turbine ids are either outside DEMO_TURBINES (unknown
- * turbines) or demo turbines reporting another farm than their own (farm mismatches); FARM99 is
- * not a farm. Pending ones end at the seed's end; TURB099 on FARM01 is the pair the live demo feed
- * publishes (DEMO_ANOMALIES.unallocated), so the feed continues its held readings.
+ * turbines: TURB997–TURB999, above the fleet's TURB001–TURB200) or demo turbines reporting another
+ * farm than their own (farm mismatches); FARM99 is not a farm. Pending ones end at the seed's end;
+ * TURB999 on FARM01 is the pair the live demo feed publishes (DEMO_ANOMALIES.unallocated), so the
+ * feed continues its held readings.
  */
 export const DEMO_UNALLOCATED: readonly DemoUnallocatedEntry[] = [
   // Unknown turbine, existing farm: Assign preselects FARM01.
@@ -51,7 +52,7 @@ export const DEMO_UNALLOCATED: readonly DemoUnallocatedEntry[] = [
   },
   // Unknown turbine, unknown farm: "Unknown farm FARM99", Assign has no preselected farm.
   {
-    turbineId: 'TURB098',
+    turbineId: 'TURB998',
     reportedFarmId: 'FARM99',
     status: 'pending',
     hours: 3,
@@ -75,7 +76,7 @@ export const DEMO_UNALLOCATED: readonly DemoUnallocatedEntry[] = [
   },
   // Blocked unknown turbine, a day before the end, by the admin.
   {
-    turbineId: 'TURB097',
+    turbineId: 'TURB997',
     reportedFarmId: 'FARM05',
     status: 'blocked',
     hours: 2,
@@ -155,7 +156,7 @@ export interface DemoUnallocatedResult {
  * ones. Idempotent: a re-run tops up pending entries to the new end (never moving last_seen_at
  * back), leaves blocked ones alone and skips pairs that are resolved. Since an assign, keep, move
  * or unblock deletes its entry, a re-run can't tell those apart from "never seeded": a kept pair
- * (or a TURB098 assigned to an existing farm, now a farm mismatch with FARM99) is created again,
+ * (or a TURB998 assigned to an existing farm, now a farm mismatch with FARM99) is created again,
  * like the turbine's next real reading would; an unblocked pair is blocked again. Publishes no
  * events.
  */

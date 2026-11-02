@@ -41,7 +41,7 @@ resource "google_cloud_run_v2_job" "demo_feed" {
 
     template {
       service_account = google_service_account.demo_feed[0].email
-      timeout         = "60s" # one tick: 24 publishes
+      timeout         = "60s" # one tick: 195 publishes
       max_retries     = 1     # a failed publish exits 1; the next tick comes 5 minutes later anyway
 
       containers {

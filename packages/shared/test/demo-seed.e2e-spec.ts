@@ -150,17 +150,21 @@ describe('demo seed (e2e)', () => {
       ]),
     ]);
 
-    // The newest reading is at SEED_NOW, except the stale turbines: the stopped one 90 min
-    // older, the lagging ones 20 and 45 min.
+    // The newest reading is at SEED_NOW, except the 20 stale turbines (10 %): the stopped ones
+    // 90 min to 5 h older, the lagging ones 20 and 45 min.
     const { rows: latest } = await m.db.query(`
       SELECT turbine_id, max(timestamp) AS latest FROM telemetry GROUP BY turbine_id`);
-    expect(latest).toHaveLength(DEMO_TURBINES.length);
+    expect(latest).toHaveLength(200);
     for (const { turbine_id, latest: at } of latest) {
       expect(minutesBefore(at), turbine_id).toBe(
         demoReportingLagMinutes(turbine_id),
       );
     }
-    expect(demoReportingLagMinutes(DEMO_ANOMALIES.stopped.turbineId)).toBe(90);
+    const behind = latest.map((l) => minutesBefore(l.latest));
+    expect(behind.filter((min) => min > 15 && min <= 30)).toHaveLength(8);
+    expect(behind.filter((min) => min > 30 && min <= 60)).toHaveLength(6);
+    expect(behind.filter((min) => min > 60)).toHaveLength(6);
+    expect(behind.filter((min) => min === 0)).toHaveLength(180);
   });
 
   it('inserts nothing on a second run with the same SEED_NOW', async () => {
@@ -201,8 +205,8 @@ describe('demo seed (e2e)', () => {
       // pending (12 more readings each since the 13:00 top-up)
       ['TURB003', 'FARM02', 'farm_mismatch', 'pending', 24 + 12, null],
       ['TURB004', 'FARM99', 'farm_mismatch', 'pending', 12 + 12, null],
-      ['TURB098', 'FARM99', 'unknown_turbine', 'pending', 36 + 12, null],
-      ['TURB099', 'FARM01', 'unknown_turbine', 'pending', 72 + 12, null],
+      ['TURB998', 'FARM99', 'unknown_turbine', 'pending', 36 + 12, null],
+      ['TURB999', 'FARM01', 'unknown_turbine', 'pending', 72 + 12, null],
       // blocked: no held readings, never topped up
       [
         'TURB005',
@@ -213,7 +217,7 @@ describe('demo seed (e2e)', () => {
         'owner@nextera.local',
       ],
       [
-        'TURB097',
+        'TURB997',
         'FARM05',
         'unknown_turbine',
         'blocked',
@@ -252,9 +256,9 @@ describe('demo seed (e2e)', () => {
     const before = await unallocated();
     const out = await seed('2026-10-08T13:00:00Z');
     expect(out).toMatch(
-      /TURB099@FARM01 updated \(unknown_turbine, pending, \+0 held\)/,
+      /TURB999@FARM01 updated \(unknown_turbine, pending, \+0 held\)/,
     );
-    expect(out).toMatch(/TURB097@FARM05 unchanged/);
+    expect(out).toMatch(/TURB997@FARM05 unchanged/);
     expect(await unallocated()).toEqual(before);
   });
 
@@ -280,11 +284,11 @@ describe('demo seed (e2e)', () => {
           await change(tx);
           return importHeld(tx, id, farmId);
         });
-      const assign = await entryId('TURB099', 'FARM01');
+      const assign = await entryId('TURB999', 'FARM01');
       await resolve(assign, 'FARM01', (tx) =>
         tx.turbine.create({
           data: {
-            turbineId: 'TURB099',
+            turbineId: 'TURB999',
             farmId: 'FARM01',
             latitude: 41.25,
             longitude: -96.53,
@@ -302,7 +306,7 @@ describe('demo seed (e2e)', () => {
       await resolve(keep, 'FARM01', () => Promise.resolve());
 
       const out = await seed('2026-10-08T14:00:00Z');
-      expect(out).toMatch(/TURB099@FARM01 resolved/);
+      expect(out).toMatch(/TURB999@FARM01 resolved/);
       expect(out).toMatch(/TURB003@FARM02 resolved/);
       expect(out).toMatch(
         /TURB004@FARM99 created \(farm_mismatch, pending, \+12 held\)/,
@@ -311,9 +315,9 @@ describe('demo seed (e2e)', () => {
       const rows = await unallocated();
       expect(rows.map((u) => `${u.turbine_id}@${u.reported_farm_id}`)).toEqual([
         'TURB004@FARM99',
-        'TURB098@FARM99',
+        'TURB998@FARM99',
         'TURB005@FARM03',
-        'TURB097@FARM05',
+        'TURB997@FARM05',
       ]);
       // The move stays: TURB003 is on FARM02, with its new readings.
       const { rows: turb003 } = await m.db.query(`

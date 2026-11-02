@@ -243,8 +243,10 @@ export {
 // Demo data: generated telemetry for the last hours (npm run db:seed:demo, npm run demo:feed)
 export {
   DEMO_ALERT_RULES,
+  DEMO_FARM_LAYOUT,
   DEMO_SEED,
   DEMO_TURBINES,
+  demoFleetTurbines,
 } from './seed/demo-fleet.js';
 export type { DemoTurbine } from './seed/demo-fleet.js';
 export {
@@ -252,6 +254,7 @@ export {
   TELEMETRY_STEP_MINUTES,
   demoReportingLagMinutes,
   floorToTelemetryStep,
+  isDemoStopped,
   generateTelemetry,
 } from './seed/generate-telemetry.js';
 export type {

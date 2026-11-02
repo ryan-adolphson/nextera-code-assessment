@@ -1,7 +1,7 @@
 import type { PrismaClient } from '../generated/prisma/client.js';
 import {
   enabledAlertRules,
-  insertTelemetryWithAlerts,
+  insertTelemetryBulk,
 } from '../wind/store-telemetry.js';
 import { DEMO_ALERT_RULES, DEMO_SEED, DEMO_TURBINES } from './demo-fleet.js';
 import {
@@ -18,7 +18,10 @@ import { seedFarmsFromCsv } from './seed-from-csv.js';
 /** Default window of the demo seed (SEED_HOURS overrides it, up to DEMO_SEED_MAX_HOURS). */
 export const DEMO_SEED_HOURS = 72;
 export const DEMO_SEED_MAX_HOURS = 31 * 24;
-const BATCH_SIZE = 1000;
+/** Turbines generated at a time: bounds memory (10 × 168 h = ~20k rows instead of ~400k). */
+const TURBINES_PER_CHUNK = 10;
+/** Readings per insert transaction. */
+const BATCH_SIZE = 5000;
 
 export interface DemoSeedOptions {
   /** Directory of the fixture farms.csv (prisma/data). */
@@ -84,7 +87,8 @@ export function parseDemoSeedEnv(
 /**
  * The demo seed: fixture farms, the DEMO_TURBINES, the DEMO_ALERT_RULES that don't exist yet,
  * `hours` of generated telemetry up to `end`, with each new reading's triggered rules in
- * telemetry_alerts (the same insert as ingestion, one transaction per batch), and the
+ * telemetry_alerts (`insertTelemetryBulk`: the same rule evaluation as ingestion, one transaction
+ * per batch of 5,000), and the
  * DEMO_UNALLOCATED entries (`seedDemoUnallocated`). Idempotent on (turbine_id, timestamp): a re-run
  * only adds the readings since the last one. Publishes no events.
  */
@@ -119,26 +123,37 @@ export async function seedDemo(
   });
   const rules = await enabledAlertRules(prisma);
 
-  const rows = generateTelemetry({
-    turbines,
-    end: floorToTelemetryStep(end),
-    hours,
-    seed: DEMO_SEED,
-  });
+  // Generated a few turbines at a time (a turbine's rows don't depend on the others), inserted
+  // in batched transactions: each batch's readings and their alerts commit together.
+  const endStep = floorToTelemetryStep(end);
+  let rowCount = 0;
   let inserted = 0;
   let alerts = 0;
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const stored = await prisma.$transaction(
-      (tx) =>
-        insertTelemetryWithAlerts(
-          tx,
-          rows.slice(i, i + BATCH_SIZE).map(toTelemetryInput),
-          rules,
-        ),
-      { timeout: 60_000 },
-    );
-    inserted += stored.length;
-    alerts += stored.reduce((n, r) => n + r.alerts.length, 0);
+  let from: string | null = null;
+  let to: string | null = null;
+  for (let t = 0; t < turbines.length; t += TURBINES_PER_CHUNK) {
+    const rows = generateTelemetry({
+      turbines: turbines.slice(t, t + TURBINES_PER_CHUNK),
+      end: endStep,
+      hours,
+      seed: DEMO_SEED,
+    });
+    rowCount += rows.length;
+    // Oldest first: the first and last rows are the chunk's oldest and newest times.
+    if (rows.length) {
+      if (from === null || rows[0].timestamp < from) from = rows[0].timestamp;
+      const last = rows[rows.length - 1].timestamp;
+      if (to === null || last > to) to = last;
+    }
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const batch = rows.slice(i, i + BATCH_SIZE).map(toTelemetryInput);
+      const stored = await prisma.$transaction(
+        (tx) => insertTelemetryBulk(tx, batch, rules),
+        { timeout: 60_000 },
+      );
+      inserted += stored.inserted;
+      alerts += stored.alerts;
+    }
   }
 
   const unallocated = await seedDemoUnallocated(prisma, end);
@@ -148,12 +163,12 @@ export async function seedDemo(
     turbines: DEMO_TURBINES.length,
     rulesCreated,
     rulesEvaluated: rules.length,
-    rows: rows.length,
+    rows: rowCount,
     inserted,
-    skipped: rows.length - inserted,
+    skipped: rowCount - inserted,
     alerts,
-    from: rows[0]?.timestamp ?? null,
-    to: rows.at(-1)?.timestamp ?? null,
+    from,
+    to,
     unallocated,
   };
 }
