@@ -25,3 +25,7 @@ e2e/.auth/
 .playwright-mcp/
 .npm
 .angular-config.json
+
+# Load test (load/): only the smoke run docs/load-test.md cites is kept
+load/results/*.json
+!load/results/smoke-*.json

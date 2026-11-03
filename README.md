@@ -99,4 +99,6 @@ npm run build -w @nextera/mcp
 
 Use `MCP_DATABASE_URL` to point it at another database (in GCP: a role with only `SELECT`). Try the tools by hand with `npx @modelcontextprotocol/inspector node apps/mcp/dist/main.js`.
 
+**Load testing:** [docs/load-test.md](docs/load-test.md) has the Artillery harness and its smoke run, which proves the harness works and says nothing about capacity.
+
 `CLAUDE.md` has the full reference: architecture, data model, auth, conventions and deployment.

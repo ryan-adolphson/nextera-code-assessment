@@ -1,0 +1,13 @@
+{
+  "name": "@nextera/load",
+  "private": true,
+  "type": "module",
+  "description": "Artillery load test harness (docs/load-test.md). Separate npm project, not a workspace. Install with PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1.",
+  "scripts": {
+    "ingest": "ARTILLERY_DISABLE_TELEMETRY=true artillery run ingest.yml --output results/ingest.json",
+    "reads": "ARTILLERY_DISABLE_TELEMETRY=true artillery run reads.yml --output results/reads.json"
+  },
+  "devDependencies": {
+    "artillery": "2.0.34"
+  }
+}

@@ -186,6 +186,7 @@ npm run db:seed                               # load prisma/data/*.csv + the vie
 npm run rollup                                # one farm rollup run (incremental; -- --full = last 190 days, -- --from YYYY-MM-DD); rollup:watch loops
 npm run db:seed:demo                          # demo data instead: 200 turbines, default rules, 72 h up to now + anomalies (re-run tops up; SEED_HOURS/SEED_NOW)
 npm run demo:reset -- --yes                   # local demo from scratch: clear readings, 7 days of demo data up to now, weather, live feed (local DB only unless --allow-remote)
+npm run load:setup && npm run load:ingest && npm run load:reads && npm run load:check   # Artillery smoke run against the throwaway load/docker-compose.yml stack; install, env and teardown in docs/load-test.md (not in CI)
 npm run weather:sync -- --from 2026-01-01 --to 2026-01-31   # Open-Meteo weather per farm (default: last 7 UTC days; --farm FARM01)
 DEMO_FEED_ENABLED=true npm run demo:feed      # live demo readings every DEMO_FEED_INTERVAL_SECONDS to the emulator (-- --once: one tick); db:seed:demo first
 # compose demo-feed: set DEMO_FEED_ENABLED=true (or false) in .env, then `docker compose up -d demo-feed`. Disabled it

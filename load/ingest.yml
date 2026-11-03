@@ -1,0 +1,21 @@
+# POST /pubsub/telemetry directly with a push envelope (no Pub/Sub). Needs LOAD_INGESTION_URL and
+# npm run load:setup. Smoke rate; the planned rates are in docs/load-test.md.
+config:
+  target: "{{ $env.LOAD_INGESTION_URL }}"
+  processor: ./processor.js
+  phases:
+    - name: smoke
+      duration: 30
+      arrivalRate: 5
+  plugins:
+    ensure: {}
+  ensure:
+    conditions:
+      - expression: "http.codes.204 == http.requests"
+        strict: true
+scenarios:
+  - name: telemetry push
+    flow:
+      - post:
+          url: /pubsub/telemetry
+          beforeRequest: addTelemetryMessage

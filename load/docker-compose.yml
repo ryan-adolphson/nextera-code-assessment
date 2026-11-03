@@ -1,0 +1,89 @@
+# Throwaway stack for the load test smoke run (docs/load-test.md). Own project name, ports, volume
+# and image tags, so the `nextera` compose project and its images stay untouched. Same service
+# images and limits as docker-compose.yml, but no Pub/Sub: the worker needs only DATABASE_URL and
+# REDIS_URL at startup, and the test posts push envelopes straight to it.
+# The secrets have no defaults and are never written to a file here: export them first.
+name: nextera-load
+
+x-database-url: &database-url postgresql://nextera:${LOAD_POSTGRES_PASSWORD:?Set LOAD_POSTGRES_PASSWORD}@postgres:5432/nextera?schema=public
+x-redis-url: &redis-url redis://:${LOAD_REDIS_PASSWORD:?Set LOAD_REDIS_PASSWORD}@redis:6379
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: nextera
+      POSTGRES_PASSWORD: ${LOAD_POSTGRES_PASSWORD:?Set LOAD_POSTGRES_PASSWORD}
+      POSTGRES_DB: nextera
+    ports:
+      - "127.0.0.1:15433:5432"
+    volumes:
+      - load-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nextera -d nextera"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--requirepass", "${LOAD_REDIS_PASSWORD:?Set LOAD_REDIS_PASSWORD}"]
+    environment:
+      REDIS_PASSWORD: ${LOAD_REDIS_PASSWORD:?Set LOAD_REDIS_PASSWORD} # for the healthcheck
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    image: nextera-load/migrate:smoke
+    build:
+      context: ..
+      dockerfile: packages/shared/Dockerfile
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: nextera-load/api:smoke
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    mem_limit: 512m
+    cpus: 1
+    environment:
+      DATABASE_URL: *database-url
+      REDIS_URL: *redis-url
+      JWT_SECRET: ${LOAD_JWT_SECRET:?Set LOAD_JWT_SECRET}
+    ports:
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  ingestion:
+    image: nextera-load/ingestion:smoke
+    build:
+      context: ..
+      dockerfile: apps/ingestion/Dockerfile
+    mem_limit: 512m
+    cpus: 1
+    environment:
+      DATABASE_URL: *database-url
+      REDIS_URL: *redis-url
+    ports:
+      - "127.0.0.1:18081:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  load-postgres-data:

@@ -1,0 +1,35 @@
+# Signs in once, then reads what the fleet pages read. Needs LOAD_API_URL, SEED_USER_PASSWORD and
+# the db:seed fixture (FARM01, TURB001, January 2026).
+# The token header is on each request: Artillery templates `config` before the `before` hook runs,
+# so {{ token }} under config.defaults.headers would render empty (401).
+config:
+  target: "{{ $env.LOAD_API_URL }}"
+  processor: ./processor.js
+  phases:
+    - name: smoke
+      duration: 15
+      arrivalRate: 2
+  plugins:
+    ensure: {}
+  ensure:
+    conditions:
+      - expression: "http.codes.200 == http.requests"
+        strict: true
+before:
+  flow:
+    - function: signIn
+scenarios:
+  - name: fleet reads
+    flow:
+      - get:
+          url: /api/farms
+          headers:
+            authorization: "Bearer {{ token }}"
+      - get:
+          url: /api/turbines/TURB001/telemetry?from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z&limit=288
+          headers:
+            authorization: "Bearer {{ token }}"
+      - get:
+          url: /api/farms/FARM01/telemetry/daily?from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z
+          headers:
+            authorization: "Bearer {{ token }}"
