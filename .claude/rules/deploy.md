@@ -45,6 +45,8 @@ Pushes to `main` deploy automatically: when **CI** succeeds on `main`, `.github/
 
 **API URL of the web app:** runtime config, not build-time. Terraform sets `API_BASE_URL` (`api_url` output + `/api`) on `nextera-web`. At startup `apps/web/docker/40-runtime-config.sh` validates it (https, ends in `/api`, not an `example.*` placeholder) and writes `/config.json`, which `src/main.ts` fetches before bootstrapping. A bad value stops the container, so Cloud Run keeps serving the previous revision. Changing `api_domain` only needs `tf apply`, no rebuild.
 
+Until the six repository variables (`GCP_PROJECT_ID`, `GCP_REGION`, `GCP_REGISTRY`, `CLOUDSQL_INSTANCE`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`) are set, `deploy.yml` skips the deploy and shows a "Deploy skipped (GCP not configured)" notice instead of failing; with only some of them set it still fails at "Check repository variables".
+
 The workflow-level `concurrency` group `deploy-production` makes sure two deploys (and two migrations) never overlap. Re-run a deploy with **Actions → Deploy → Run workflow** on `main`.
 
 ### One-time setup

@@ -10,6 +10,8 @@
 #      WEATHER_SYNC_JOB is set (Terraform weather_sync_enabled).
 #   7. `gcloud run jobs update` the farm rollup job (ingestion image), only if the repository variable
 #      FARM_ROLLUP_JOB is set (Terraform farm_rollup_enabled).
+# Without any of the six required repository variables (an unconfigured repo) the deploy is skipped
+# with a notice instead of failing; with only some of them it fails at the variables check.
 # Authenticates with Workload Identity Federation (no keys). One-time setup: CLAUDE.md, "Deploying".
 # Repository variables come from `terraform output github_actions_variables`.
 name: Deploy
@@ -33,16 +35,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Build, migrate, deploy
-    # Only successful CI runs for pushes to main of this repository (not PRs, not forks),
-    # or a manual run on main.
+  # Unconfigured repository (no GCP variables yet, e.g. the interview demo): say so instead of a red X.
+  # Same trust guard as `deploy`, no permissions, no environment, no credentials.
+  not-configured:
+    name: Deploy skipped (GCP not configured)
     if: >-
-      (github.event_name == 'workflow_run'
+      ((github.event_name == 'workflow_run'
         && github.event.workflow_run.conclusion == 'success'
         && github.event.workflow_run.event == 'push'
         && github.event.workflow_run.head_repository.full_name == github.repository)
-      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+      && vars.GCP_PROJECT_ID == '' && vars.GCP_REGION == '' && vars.GCP_REGISTRY == ''
+      && vars.CLOUDSQL_INSTANCE == '' && vars.GCP_WIF_PROVIDER == '' && vars.GCP_DEPLOYER_SA == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Explain the skip
+        run: |
+          echo "::notice title=Deploy skipped::None of the GCP repository variables are set, so nothing was deployed. See CLAUDE.md, Deploying, One-time setup."
+          {
+            echo "### Deploy skipped"
+            echo "None of the repository variables (GCP_PROJECT_ID, GCP_REGION, GCP_REGISTRY, CLOUDSQL_INSTANCE, GCP_WIF_PROVIDER, GCP_DEPLOYER_SA) are set, so this repository is not configured for GCP and nothing was deployed."
+            echo "Set them from the Terraform output \`github_actions_variables\` to enable deploys (CLAUDE.md, Deploying, One-time setup)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Build, migrate, deploy
+    # Only successful CI runs for pushes to main of this repository (not PRs, not forks),
+    # or a manual run on main, and only once the repository is configured for GCP: with none of the
+    # six required variables set the job is skipped (see `not-configured`). With some set it runs
+    # and fails at "Check repository variables": a half-configured repo is a mistake.
+    if: >-
+      ((github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_repository.full_name == github.repository)
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+      && (vars.GCP_PROJECT_ID != '' || vars.GCP_REGION != '' || vars.GCP_REGISTRY != ''
+        || vars.CLOUDSQL_INSTANCE != '' || vars.GCP_WIF_PROVIDER != '' || vars.GCP_DEPLOYER_SA != '')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # The deployer service account trusts only jobs in this environment (infra/terraform/github.tf).
