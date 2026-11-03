@@ -43,6 +43,12 @@ These decisions were made to keep the proof of concept reasonably simple, with a
 - **Storage:** 30-minute buckets, grouped into days when read. That lets one table answer for UTC or local days, including days when the clocks change.
 - **Business effect:** six months of history stays fast without slowing the path that matters most.
 
+### Anomaly checks calculated when read, not stored
+- **Why:** static thresholds miss faults that depend on context. Two checks cover that: low power in strong wind, and a sensor stuck on one value for at least an hour while the turbine's power keeps changing. Each low-power episode gets an estimated lost output, so faults can be ranked by cost.
+- **Cost:** the 7-day query takes about 2 seconds on 400,000 readings, measured on a laptop. The limits were tuned on generated data.
+- **Noise was the main risk:** the first version of the stuck-sensor rule produced about 15,000 false alarms in 7 days on demo data. Requiring an hour and changing power brought that to zero on that data.
+- **Business effect:** operators see which faults cost the most generation, not just which values crossed a line.
+
 ### Weather per farm, not per turbine
 - **Why:** Open-Meteo's model grid is 9–25 km, and a farm's turbines sit within a few km, so per-turbine calls would mostly return duplicates. It's stored every 30 minutes from 15-minute model data.
 - **Cost:** it's model data at 80 m, not a measurement at each turbine.
@@ -77,17 +83,18 @@ These are proof-of-concept choices I'd change before production.
 |---|---|---|
 | Token kept in localStorage | Readable by a cross-site scripting attack | Short-lived tokens with an httpOnly refresh cookie |
 | SSE token in the URL | Appears in request logs | A short-lived, single-use stream ticket |
-| No login rate limiting | Password guessing | Rate limit at the edge and per account |
+| Login limit is per IP and email, in Redis, and fails open | No limit during a Redis outage; 20 wrong attempts lock an email out for up to 15 minutes; IPv6 clients can rotate addresses past the IP limits | Edge rate limiting too, group IPv6 by /64, alert on limiter warnings |
 | Tokens can't be revoked individually (24 h life) | A stolen token works until it expires, unless the user is deactivated | Shorter life and refresh tokens |
 | Free Open-Meteo API | Non-commercial use only | Paid key; the app already supports `OPEN_METEO_API_KEY` |
-| Alerts are static thresholds | Misses a stuck sensor, or low output in strong wind | See below |
+| Demo accounts are listed on the login page | Reveals which accounts exist | Remove it, or enable it only in demo environments |
+| Anomaly limits are tuned on demo data | The 50 kW and 1-hour stuck-sensor limits come from generated data, so real turbines may need different values | Tune them against real readings, per turbine model if needed |
+| Lost output is a rough estimate | It compares against the fleet's median at the same wind speed, not a power curve for each turbine | Use manufacturer power curves |
 
 ## With another week
 
 1. **Run the load test** at the planned rates against a deployed environment, and fix the first real bottleneck.
-2. **Better anomaly detection:** a value that stops changing, and low power for the measured wind speed.
-3. **Estimate lost output** from those anomalies, so a fault has a cost attached and operators can prioritise.
-4. **Keyboard focus:** make focus visible on Material controls, and keep it on the tab after switching tabs (a known bug, recorded as an expected-failure test).
+2. **Tune anomaly detection against real data,** and store the results if the roughly 2-second query on each fleet page load becomes a problem.
+3. **Keyboard focus:** make focus visible on Material controls, and keep it on the tab after switching tabs (a known bug, recorded as an expected-failure test).
 
 ## How I used AI
 

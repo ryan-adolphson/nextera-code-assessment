@@ -4,6 +4,8 @@ import { Component, computed, inject } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { MapPlaceholder } from '../map/map-placeholder';
 import { MapView } from '../map/map-view';
+import { anomalyLoad } from '../alerting/anomaly-load';
+import { formatEnergy } from '../alerting/anomaly.model';
 import { FarmPill } from '../ui/farm-pill';
 import { StatTile } from '../ui/stat-tile';
 import { TABLE_IMPORTS } from '../ui/table';
@@ -28,6 +30,12 @@ import { FarmSummary, FleetStore } from './fleet.store';
 export class FleetOverview {
   protected readonly store = inject(FleetStore);
   private readonly router = inject(Router);
+  /** The last 7 days' anomalies, for the lost-output tile only: a failure shows "–" there. */
+  private readonly anomalies = anomalyLoad();
+  protected readonly lostOutput = computed(() => {
+    const kwh = this.anomalies.value()?.estimatedLostKwh;
+    return kwh === undefined ? '–' : formatEnergy(kwh);
+  });
   protected readonly markers = computed(() => farmMarkers(this.store.farms()));
   protected readonly columns = ['farm', 'location', 'turbines', 'reporting', 'power', 'wind'];
   protected readonly trackById = (_: number, farm: FarmSummary) => farm.id;

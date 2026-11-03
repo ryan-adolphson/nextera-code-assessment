@@ -1,3 +1,4 @@
+import { STUCK_SENSOR_MIN_POWER_RANGE_KW } from '../wind/anomalies.js';
 import { DEMO_SEED, DEMO_TURBINES } from './demo-fleet.js';
 import { DEMO_UNALLOCATED } from './demo-unallocated.js';
 import {
@@ -100,20 +101,22 @@ describe('generateTelemetry', () => {
     expect(Math.max(...winds) - Math.min(...winds)).toBeGreaterThan(4);
   });
 
-  it('freezes TURB001 at 0 kW in 15.8 m/s wind for 3 identical readings ~50 h before end', () => {
-    const { turbineId, offsetMinutes, values } = DEMO_ANOMALIES.frozenPower;
+  it('freezes TURB001 at 0 kW in 15.8 m/s wind for 72 identical readings (6 h) from ~50 h before end', () => {
+    const { turbineId, offsetMinutes, readings, values } =
+      DEMO_ANOMALIES.frozenPower;
     expect(turbineId).toBe('TURB001');
     expect(offsetMinutes).toBe(50 * 60);
-    for (const m of [offsetMinutes, offsetMinutes - 5, offsetMinutes - 10]) {
-      expect(metrics(at(turbineId, m))).toEqual(values);
+    expect(readings).toBe(72);
+    for (let i = 0; i < readings; i++) {
+      expect(metrics(at(turbineId, offsetMinutes - i * 5))).toEqual(values);
     }
     expect(values).toMatchObject({ power_output_kw: 0, wind_speed_ms: 15.8 });
     expect(at(turbineId, offsetMinutes + 5)?.power_output_kw).toBeGreaterThan(
       100,
     );
-    expect(at(turbineId, offsetMinutes - 15)?.power_output_kw).toBeGreaterThan(
-      100,
-    );
+    expect(
+      at(turbineId, offsetMinutes - readings * 5)?.power_output_kw,
+    ).toBeGreaterThan(100);
   });
 
   it('spikes TURB002 blade pitch to 44° once ~30 h before end', () => {
@@ -122,13 +125,18 @@ describe('generateTelemetry', () => {
     expect(of(turbineId).filter((r) => r.blade_pitch_deg > 30)).toHaveLength(1);
   });
 
-  it('sticks TURB002 gearbox at 126.5 °C for 3 readings ~6 h before end', () => {
-    const { turbineId, offsetMinutes } = DEMO_ANOMALIES.gearboxStuck;
+  it('sticks TURB002 gearbox at 126.5 °C for 18 readings (90 min) from ~6 h before end, power still moving', () => {
+    const { turbineId, offsetMinutes, readings } = DEMO_ANOMALIES.gearboxStuck;
+    expect(readings).toBe(18);
     const hot = of(turbineId).filter((r) => r.gearbox_temp_c > 100);
     expect(hot.map((r) => r.timestamp)).toEqual(
-      [offsetMinutes, offsetMinutes - 5, offsetMinutes - 10].map((m) =>
-        new Date(END.getTime() - m * MIN).toISOString(),
+      Array.from({ length: readings }, (_, i) =>
+        new Date(END.getTime() - (offsetMinutes - i * 5) * MIN).toISOString(),
       ),
+    );
+    const power = hot.map((r) => r.power_output_kw);
+    expect(Math.max(...power) - Math.min(...power)).toBeGreaterThan(
+      STUCK_SENSOR_MIN_POWER_RANGE_KW,
     );
     expect(hot.every((r) => r.gearbox_temp_c === 126.5)).toBe(true);
   });

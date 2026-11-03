@@ -11,6 +11,18 @@
     >{{ store.fleet().reporting }} / {{ store.fleet().turbines }}</app-stat-tile
   >
   <app-stat-tile label="Wind farms">{{ store.fleet().farms }}</app-stat-tile>
+  <app-stat-tile label="Est. lost output (7 days)" testId="fleet-lost-output"
+    ><a
+      routerLink="/alerting/anomalies"
+      class="underline decoration-1 underline-offset-4"
+      [attr.aria-label]="
+        lostOutput() === '–'
+          ? 'Estimated lost output, last 7 days: unavailable. Open Anomalies'
+          : 'Estimated lost output, last 7 days: ' + lostOutput() + '. Open Anomalies'
+      "
+      >{{ lostOutput() }}</a
+    ></app-stat-tile
+  >
   <app-stat-tile label="Data as of" [small]="true">{{
     store.fleetTime() | appTime: 'MMM d, HH:mm' : true
   }}</app-stat-tile>

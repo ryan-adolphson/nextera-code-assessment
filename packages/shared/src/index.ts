@@ -41,6 +41,8 @@ export {
   TELEMETRY_METRICS,
   TELEMETRY_METRIC_COLUMNS,
   TELEMETRY_RECEIVED,
+  toAnomaliesResponse,
+  toAnomalyResponse,
   toFarmResponse,
   toTelemetryResponse,
   toTelemetryStatsResponse,
@@ -50,6 +52,9 @@ export {
   toFarmDayResponse,
 } from './wind/responses.js';
 export type {
+  AnomaliesResponse,
+  AnomalyResponse,
+  AnomalyRow,
   FarmDailyHistoryResponse,
   FarmDayResponse,
   FarmDayRow,
@@ -82,6 +87,19 @@ export {
   storeAlerts,
 } from './wind/store-telemetry.js';
 
+// Anomaly detection rules (listAnomalies)
+export {
+  ANOMALY_MIN_READINGS,
+  ANOMALY_STEP_MINUTES,
+  EXPECTED_POWER_MIN_BIN_READINGS,
+  LOW_POWER_FALLBACK_KW,
+  LOW_POWER_MAX_RATIO,
+  LOW_POWER_MIN_WIND_MS,
+  STUCK_SENSOR_MIN_POWER_RANGE_KW,
+  STUCK_SENSOR_MIN_READINGS,
+} from './wind/anomalies.js';
+export type { AnomalyKind, AnomalyMetric } from './wind/anomalies.js';
+
 // Read queries (API + MCP server): fleet overview, telemetry windows and stats, alerts, reports
 export {
   ALERT_RULE_ORDER,
@@ -100,6 +118,7 @@ export {
   getTurbine,
   getUnallocated,
   heldReadings,
+  listAnomalies,
   listAlertRules,
   listUnallocated,
   listFarms,

@@ -37,6 +37,8 @@ turbines → Pub/Sub "telemetry" ─push→ Ingestion Worker ─→ Postgres + R
 4. **Tests:** web tests after the UI. Backend tests stay with the backend lane.
 5. **Verify:** the main session runs the full checks once.
 
+**Split large backend tasks:** every call re-reads the whole context, so give separable phases one spawn each (e.g. query and calibration, then API, MCP and tests), with the first phase's result pinned in the second prompt.
+
 **Parallel rules:**
 - **One writer for hot files:** agents never edit `CLAUDE.md` or `.claude/rules/` (they return proposed lines; the main session applies them). Only Web UI edits `styles.css`, only Backend edits `schema.prisma`, only Web logic edits `app.routes.ts`, and only one agent per run changes dependencies.
 - **Scoped checks:** agents run only their own specs and trim output, because another agent's half-finished edit can fail a repo-wide check. The main session runs the full suite and Testcontainers e2e.
@@ -57,6 +59,7 @@ apps/
                         #                     from the 30-minute farm rollups, ≤ 183 days; ETag/304, Cache-Control: private, no-cache),
                         #                     CRUD /api/alert-configs (alert thresholds; writes need owner),
                         #                     GET /api/alerts?from=&to= (flagged readings + their rules, by turbine; ≤ 31 days),
+                        #                     GET /api/anomalies?from=&to= (anomaly episodes computed on read: low_power_in_wind and stuck_sensor, with estimated lost kWh; ≤ 31 days),
                         #                     GET /api/reports/telemetry?farmId=|turbineId=&from=&to= (all readings + alerts; ≤ 31 days),
                         #                     /api/unallocated-turbines (owner: list ?status=pending|blocked, :id/readings,
                         #                     POST :id/assign|keep|move|block|unblock),
@@ -70,7 +73,7 @@ apps/
     scripts/            #   publish-sample.ts (npm run ingest:publish), demo-feed.ts (npm run demo:feed), weather-sync.ts (npm run weather:sync)
   mcp/                  # @nextera/mcp       Local stdio MCP server (plain Node, @modelcontextprotocol/sdk), read-only fleet tools
                         #                     for Claude: list_farms, get_turbine, get_telemetry, get_telemetry_stats,
-                        #                     list_alerts, list_alert_rules, get_report_summary, get_weather, list_unallocated,
+                        #                     list_alerts, list_anomalies, list_alert_rules, get_report_summary, get_weather, list_unallocated,
                         #                     get_unallocated_readings. Registered in .mcp.json; no image
   web/                  # Angular 22 app (separate npm project, NOT a workspace). Dockerfile (context apps/web) -> image "web":
                         #                     nginx + runtime /config.json (docker/: nginx template, API_BASE_URL check + tests)
@@ -132,6 +135,7 @@ There is exactly one local database (the compose Postgres) and one Prisma schema
   - `demo-data.md`: the demo seed, anomalies, feed and reset.
   - `weather-rollups.md`: farm weather and farm rollups (every e2e `TRUNCATE` of `farms` must also list `farm_weather` and `farm_telemetry_rollups`).
   - `deploy.md`: containers, CI/CD, image and Terraform commands, deploying, runbooks.
+- **Plans:** every plan includes an estimate of time (agent runs + full checks) and tokens (per agent: context at end of run and output, plus any main-session work), as ranges based on similar past runs where possible. Repeat it in the message that presents the plan.
 - **Infrastructure:** change GCP only through `infra/terraform`. Run `terraform fmt -check` + `validate` before committing.
 - **Never commit:** secrets, `.env`, `*.tfvars` or Terraform state.
 - **Tests:** every change includes tests.

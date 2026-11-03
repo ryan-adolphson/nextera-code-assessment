@@ -16,6 +16,17 @@ describe('validateEnv', () => {
     expect(env.CORS_ORIGINS).toBe('');
     expect(env.JWT_ISSUER).toBe('nextera-api');
     expect(env.JWT_AUDIENCE).toBe('nextera-web');
+    expect(env.LOGIN_RATE_LIMIT_ENABLED).toBe('true');
+  });
+
+  it('keeps LOGIN_RATE_LIMIT_ENABLED=false as false, and refuses anything else', () => {
+    expect(
+      validateEnv({ ...valid, LOGIN_RATE_LIMIT_ENABLED: 'false' })
+        .LOGIN_RATE_LIMIT_ENABLED,
+    ).toBe('false');
+    expect(() =>
+      validateEnv({ ...valid, LOGIN_RATE_LIMIT_ENABLED: 'no' }),
+    ).toThrow(/LOGIN_RATE_LIMIT_ENABLED/);
   });
 
   it.each([

@@ -1,5 +1,7 @@
 import { TestRequest } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
+import { MatAutocompleteHarness } from '@angular/material/autocomplete/testing';
 import { Router } from '@angular/router';
 import { TEST_API_BASE_URL, openFleet } from '../../fleet/testing';
 import { AuthStore, SESSION_STORAGE_KEY } from './auth.store';
@@ -71,6 +73,47 @@ describe('auth routes and role-based UI', () => {
       expect(app.root().querySelector(`label[for="${password.id}"]`)?.textContent).toContain(
         'Password',
       );
+    });
+
+    it('suggests the demo accounts, filters as you type, fills the email and focuses the password', async () => {
+      await open('/login', null);
+      const box = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+        MatAutocompleteHarness,
+      );
+      await box.focus();
+      const options = async () => (await box.getOptions()).map((o) => o.getText());
+      expect(await Promise.all(await options())).toEqual([
+        'viewer@nextera.local',
+        'owner@nextera.local',
+        'admin@nextera.local',
+      ]);
+      expect(document.querySelectorAll('[data-testid=login-email-option]').length).toBe(3);
+      await box.enterText('OWN');
+      expect(await Promise.all(await options())).toEqual(['owner@nextera.local']);
+      const focus = vi.spyOn(q<HTMLInputElement>('login-password')!, 'focus');
+      await box.selectOption({ text: 'owner@nextera.local' });
+      await app.stable();
+      expect(q<HTMLInputElement>('login-email')!.value).toBe('owner@nextera.local');
+      expect(focus).toHaveBeenCalledOnce();
+    });
+
+    it('still accepts and validates a typed email that is not a suggestion', async () => {
+      await open('/login', null);
+      const box = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+        MatAutocompleteHarness,
+      );
+      await box.enterText('someone@example.com');
+      expect(await box.isOpen()).toBe(false);
+      type('login-email', 'nope');
+      await settle();
+      expect(app.text(q('login-email-error'))).toBe('Enter a valid email address.');
+      type('login-email', 'someone@example.com');
+      type('login-password', 'pw');
+      await submit();
+      await settle();
+      app.http.expectOne(LOGIN_URL).flush({}, { status: 401, statusText: 'Unauthorized' });
+      await settle();
+      expect(q<HTMLInputElement>('login-email')!.value).toBe('someone@example.com');
     });
 
     it('validates before sending anything', async () => {
@@ -154,7 +197,7 @@ describe('auth routes and role-based UI', () => {
         [
           'rate limiting (429)',
           (req) => req.flush(null, { status: 429, statusText: 'Too Many Requests' }),
-          'Too many attempts. Wait a minute and try again.',
+          'Too many attempts. Wait a few minutes and try again.',
         ],
         [
           'a server error (500)',

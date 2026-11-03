@@ -6,6 +6,7 @@ import { getTurbineTool } from './get-turbine.js';
 import { getWeatherTool } from './get-weather.js';
 import { listAlertRulesTool } from './list-alert-rules.js';
 import { listAlertsTool } from './list-alerts.js';
+import { listAnomaliesTool } from './list-anomalies.js';
 import { listFarmsTool } from './list-farms.js';
 import type { Tool } from './tool.js';
 import {
@@ -21,6 +22,7 @@ export const TOOLS: readonly Tool[] = [
   getTelemetryStatsTool,
   listAlertsTool,
   listAlertRulesTool,
+  listAnomaliesTool,
   getReportSummaryTool,
   getWeatherTool,
   getFarmDailyTool,

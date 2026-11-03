@@ -64,6 +64,11 @@ export const routes: Routes = [
         loadComponent: () => import('./alerting/alert-rules-page').then((m) => m.AlertRulesPage),
       },
       {
+        path: 'alerting/anomalies',
+        title: 'Anomalies · Nextera',
+        loadComponent: () => import('./alerting/anomalies-page').then((m) => m.AnomaliesPage),
+      },
+      {
         path: 'alerting/history',
         title: 'Alert history · Nextera',
         // Range and table in one window-high view: only the table rows scroll.

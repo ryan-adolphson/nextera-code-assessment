@@ -9,6 +9,7 @@ import {
   checkTimeZone,
   farmWeather,
   getTurbine,
+  listAnomalies,
   listAlertRules,
   listUnallocated,
   parseRange,
@@ -207,6 +208,23 @@ describe('read queries', () => {
         new QueryNotFoundError('Turbine TURB999 not found'),
       );
       expect(prisma.telemetry.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listAnomalies', () => {
+    it.each([
+      ['to', RANGE.from, RANGE.from, 'to must be after from'],
+      [
+        'long',
+        '2026-01-01T00:00:00Z',
+        '2026-02-01T00:00:01Z',
+        'The range may span at most 31 days',
+      ],
+    ])('rejects a bad range (%s) without querying', async (_, from, to, m) => {
+      await expect(listAnomalies(prisma, { from, to })).rejects.toThrow(
+        new QueryInputError(m),
+      );
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
 

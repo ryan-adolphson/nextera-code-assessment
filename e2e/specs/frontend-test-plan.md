@@ -8,7 +8,7 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 ## Automation status
 
-199 tests in 26 files (read-only project 155, data project 44; `npx playwright test --list`). Every scenario below has a **Status** line. Wall time for both projects locally: about 90 s.
+213 tests in 27 files (read-only project 169, data project 44; `npx playwright test --list`). Every scenario below has a **Status** line. Wall time for both projects locally: about 90 s.
 
 | Area | Files |
 |---|---|
@@ -26,6 +26,7 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 | 13 Weather | `tests/weather/weather.spec.ts`, `tests/weather/weather-history.spec.ts` |
 | 14 Farm History | `tests/farms/history.spec.ts`, `tests/data/farm-history.spec.ts` |
 | 15 Section tabs (keyboard, 320 px) | `tests/farms/tabs.spec.ts` |
+| 16 Anomalies and the lost-output tile | `tests/alerting/anomalies.spec.ts` |
 
 Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `clock.ts` (`fixBrowserDate`, `shortTimeIn`), `fleet.ts` (GET /api/farms from the page's own response, `mainNav`, `createTurbine`: held upload + assign, `setCommissioned`), `rules.ts` (`ensureRule` / `removeRules`), `telemetry.ts`, `unallocated.ts`, `weather.ts`, `farm-history.ts` (the daily response shape, a recorder for the page's daily requests, the chart's texts derived from a response, `runRollup`: `npm run rollup` at the repo root against DATABASE_URL).
 
@@ -158,7 +159,7 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
   1. Signed out. Abort /api/auth/login via page.route and submit valid-looking credentials.
     - expect: login-error 'Could not reach the API. Check your connection and try again.'
   2. Mock status 429.
-    - expect: 'Too many attempts. Wait a minute and try again.'
+    - expect: 'Too many attempts. Wait a few minutes and try again.'
 
 ### 2. 2. Roles and permissions
 
@@ -1824,4 +1825,76 @@ The farm, Alerting and Unallocated tabs are the shared `PageTabs` (`ui/page-tabs
   4. On /farms/FARM01, focus Overview and press End.
     - expect: focus on Weather history, scrolled fully into view
   5. Open /alerting/history.
-    - expect: tabs History and Rules fit, so no pagination arrows; no page overflow
+    - expect: tabs History, Rules and Anomalies fit, so no pagination arrows; no page overflow. **Actual (known bug, `test.fail`):** with Anomalies the bar overflows at 320 px and Material's pagination arrows appear
+
+### 16. 16. Anomalies (Alerting tab) and the fleet "Est. lost output" tile
+
+Real `GET /api/anomalies` for the fixture's TURB001 run (0 kW in 15.8 m/s, Jan 1 13:40-13:50Z, inside the 7 days before the fixed clock); expectations come from the response the page rendered. Served responses only where the fixture can't reach the state (stuck sensor, empty, 500, MWh, wide table). Read-only. Spec: `tests/alerting/anomalies.spec.ts`.
+
+#### 16.1. Tab and note
+
+**Status:** Automated.
+
+**Steps:**
+  1. As viewer, open Alerting and click the Anomalies tab.
+    - expect: URL /alerting/anomalies; `alerting-tab-anomalies` selected; `anomalies-note` explains the estimate
+
+#### 16.2. Fixture low-power run
+
+**Status:** Automated.
+
+**Steps:**
+  1. Open /alerting/anomalies; read the response.
+    - expect: one TURB001 `low_power_in_wind` row: kind label, farm, "Mean wind 15.8 m/s", start in UTC, duration, lost output "–" or the response's kWh/MWh; `anomalies-total` matches the response
+  2. Click the turbine link.
+    - expect: /farms/<farm>/turbines/TURB001
+
+#### 16.3. Request bounds
+
+**Status:** Automated.
+
+**Steps:**
+  1. Open the tab with the clock at 2026-01-03T00:00Z.
+    - expect: exactly one request, `to` = the clock, `from` = 7 days earlier, no other params
+
+#### 16.4. Served states
+
+**Status:** Automated.
+
+**Steps:**
+  1. Serve a `stuck_sensor` row with `estimatedLostKwh: null`.
+    - expect: "Stuck sensor", "Gearbox temperature stuck at 126.5 °C", lost "–", duration "1 h 5 min"; total and note visible
+  2. Serve no anomalies.
+    - expect: `anomalies-empty`, no table or total
+  3. Serve a 500, then a success; click Retry.
+    - expect: `anomalies-error` with Retry; after Retry the row shows and the error is gone (2 requests)
+  4. Inject a live reading over SSE (stream fulfilled, browser reconnects).
+    - expect: no new anomalies request
+
+#### 16.5. Fleet tile
+
+**Status:** Automated.
+
+**Steps:**
+  1. Open /farms.
+    - expect: `fleet-lost-output` equals the response total (label "Est. lost output (7 days)"); its link opens the Anomalies tab
+  2. Serve 1234.5 and 999.4 kWh.
+    - expect: "1.2 MWh" and "999 kWh"
+  3. Serve a 500.
+    - expect: the tile shows "–"; reporting tile and farm table still render
+
+#### 16.6. Layout (browser only)
+
+**Status:** Automated.
+
+**Steps:**
+  1. Serve 12 rows of both kinds; viewport 1280 and 360 px.
+    - expect: no sideways page overflow. Measured: the scroll region scrolls sideways at both widths (scrollWidth 1083 vs clientWidth 990 at 1280, 326 at 360); at 360 it is asserted
+
+#### 16.7. Local time zone
+
+**Status:** Automated (browser in America/Chicago, `fixBrowserDate`).
+
+**Steps:**
+  1. Settings -> Local, then the Anomalies tab.
+    - expect: start "Jan 1, 07:40 CST" for 13:40Z

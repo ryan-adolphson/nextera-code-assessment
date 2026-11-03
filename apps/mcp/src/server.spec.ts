@@ -44,7 +44,7 @@ describe('MCP server (mocked Prisma)', () => {
     await mcp.close();
   });
 
-  it('lists the 11 read-only tools with their input schemas', async () => {
+  it('lists the 12 read-only tools with their input schemas', async () => {
     const { tools } = await mcp.client.listTools();
 
     expect(tools.map((t) => t.name)).toEqual([
@@ -54,6 +54,7 @@ describe('MCP server (mocked Prisma)', () => {
       'get_telemetry_stats',
       'list_alerts',
       'list_alert_rules',
+      'list_anomalies',
       'get_report_summary',
       'get_weather',
       'get_farm_daily',
@@ -263,6 +264,7 @@ describe('MCP server (mocked Prisma)', () => {
       ['get_telemetry_stats', { turbineId: 'TURB001', since: 'x' }, 'since'],
       ['list_alerts', { ...RANGE, turbineId: 'TURB001' }, 'turbineId'],
       ['list_alert_rules', { enabled: true }, 'enabled'],
+      ['list_anomalies', { ...RANGE, turbineId: 'TURB001' }, 'turbineId'],
       ['get_report_summary', { farmId: 'FARM01', ...RANGE, limit: 5 }, 'limit'],
       ['get_weather', { farmId: 'FARM01', ...RANGE, zone: 'UTC' }, 'zone'],
       [
@@ -289,6 +291,7 @@ describe('MCP server (mocked Prisma)', () => {
 
     it.each([
       ['list_alerts', RANGE],
+      ['list_anomalies', RANGE],
       ['get_report_summary', { farmId: 'FARM01', ...RANGE }],
       ['get_weather', { farmId: 'FARM01', ...RANGE }],
     ])(
@@ -511,6 +514,62 @@ describe('MCP server (mocked Prisma)', () => {
     expect(prisma.alertConfig.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { enabled: true } }),
     );
+  });
+
+  describe('list_anomalies', () => {
+    const episode = (i: number) => ({
+      kind: 'stuck_sensor',
+      metric: 'gearboxTempC',
+      turbine_id: `TURB${String(i).padStart(3, '0')}`,
+      farm_id: 'FARM01',
+      episode_start: new Date('2026-01-02T03:20:00Z'),
+      episode_end: new Date(Date.parse('2026-01-02T03:30:00Z') - i * 60_000),
+      readings: 3,
+      value: 126.5,
+      wind_speed_ms: null,
+      lost_kwh: null,
+    });
+
+    it('returns the shared query result with totals, read-only', async () => {
+      prisma.$queryRaw.mockResolvedValue([episode(1)] as never);
+
+      const result = (await mcp.call('list_anomalies', RANGE)).json();
+
+      expect(result).toMatchObject({
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-01-03T00:00:00.000Z',
+        estimatedLostKwh: 0,
+        totalEpisodes: 1,
+        omittedEpisodes: 0,
+        anomalies: [
+          {
+            turbineId: 'TURB001',
+            kind: 'stuck_sensor',
+            metric: 'gearboxTempC',
+            value: 126.5,
+            estimatedLostKwh: null,
+          },
+        ],
+      });
+    });
+
+    it('lists only the newest 100 episodes and counts the rest', async () => {
+      prisma.$queryRaw.mockResolvedValue(
+        Array.from({ length: 103 }, (_, i) => episode(i + 1)) as never,
+      );
+
+      const result = (await mcp.call('list_anomalies', RANGE)).json();
+
+      expect(result.totalEpisodes).toBe(103);
+      expect(result.omittedEpisodes).toBe(3);
+      expect(result.anomalies).toHaveLength(100);
+    });
+
+    it('reports a database failure as an error result', async () => {
+      prisma.$queryRaw.mockRejectedValue(new Error('connection lost'));
+      const result = await mcp.call('list_anomalies', RANGE);
+      expect(result.isError).toBe(true);
+    });
   });
 
   describe('get_weather', () => {

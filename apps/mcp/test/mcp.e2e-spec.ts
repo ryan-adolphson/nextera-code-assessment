@@ -152,7 +152,7 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     }
   });
 
-  it('tools/list lists the 11 tools', async () => {
+  it('tools/list lists the 12 tools', async () => {
     const { tools } = await mcp.client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'get_farm_daily',
@@ -164,6 +164,7 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
       'get_weather',
       'list_alert_rules',
       'list_alerts',
+      'list_anomalies',
       'list_farms',
       'list_unallocated',
     ]);
@@ -464,6 +465,29 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
       isError: true,
       text: `Unallocated turbine ${missing} not found`,
     });
+  });
+
+  it('list_anomalies finds the fixture TURB001 stop (the short TURB002 gearbox fault is too short to be stuck)', async () => {
+    const result = (
+      await mcp.call('list_anomalies', {
+        from: '2026-01-01T00:00:00Z',
+        to: '2026-01-03T00:00:00Z',
+      })
+    ).json();
+
+    expect(result.anomalies).toContainEqual(
+      expect.objectContaining({
+        turbineId: 'TURB001',
+        kind: 'low_power_in_wind',
+        start: '2026-01-01T13:40:00.000Z',
+        end: '2026-01-01T13:50:00.000Z',
+        readings: 3,
+      }),
+    );
+    // TURB002's 3-reading stuck gearbox is under the 12 readings a stuck sensor needs.
+    expect(result.anomalies).toHaveLength(1);
+    expect(result.totalEpisodes).toBe(result.anomalies.length);
+    expect(result.estimatedLostKwh).toBeGreaterThan(0);
   });
 
   it('list_alerts finds the fixture anomalies the rules flag', async () => {

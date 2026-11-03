@@ -187,12 +187,12 @@ describe('seedDemo', () => {
     // Only the readings that trigger a rule go through createManyAndReturn (+ telemetry_alerts).
     const flagged = prisma.telemetry.createManyAndReturn.mock.calls;
     expect(flagged.every(([a]) => a?.skipDuplicates === true)).toBe(true);
-    expect(flagged.flatMap(([a]) => a!.data as unknown[])).toHaveLength(7);
+    expect(flagged.flatMap(([a]) => a!.data as unknown[])).toHaveLength(91);
     expect(result).toMatchObject({
       rows: DEMO_TURBINES.length * 72 * 12 - missingReadings(),
       inserted: result.rows,
       skipped: 0,
-      alerts: 7,
+      alerts: 91, // 72 frozen (warn) + 18 stuck gearbox (error) + 1 pitch (info)
       from: '2026-10-05T12:05:00.000Z',
       to: '2026-10-08T12:00:00.000Z',
     });
@@ -201,18 +201,22 @@ describe('seedDemo', () => {
       `${turbineId}@${new Date(Date.parse('2026-10-08T12:00:00Z') - minutesBeforeEnd * 60_000).toISOString()}`;
     const { frozenPower, pitchSpike, gearboxStuck } = DEMO_ANOMALIES;
     const expected = [
-      ...[0, 5, 10].map((m) => ({
-        telemetryId: at('TURB001', frozenPower.offsetMinutes - m),
-        alertId: 'rule-1', // power below 100 → warn
-      })),
+      ...Array.from({ length: frozenPower.readings }, (_, i) => i * 5).map(
+        (m) => ({
+          telemetryId: at('TURB001', frozenPower.offsetMinutes - m),
+          alertId: 'rule-1', // power below 100 → warn
+        }),
+      ),
       {
         telemetryId: at('TURB002', pitchSpike.offsetMinutes),
         alertId: 'rule-2', // pitch above 30 → info
       },
-      ...[0, 5, 10].map((m) => ({
-        telemetryId: at('TURB002', gearboxStuck.offsetMinutes - m),
-        alertId: 'rule-0', // gearbox above 100 → error
-      })),
+      ...Array.from({ length: gearboxStuck.readings }, (_, i) => i * 5).map(
+        (m) => ({
+          telemetryId: at('TURB002', gearboxStuck.offsetMinutes - m),
+          alertId: 'rule-0', // gearbox above 100 → error
+        }),
+      ),
     ];
     expect(links()).toHaveLength(expected.length);
     expect(links()).toEqual(expect.arrayContaining(expected));

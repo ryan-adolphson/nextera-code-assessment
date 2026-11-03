@@ -5,6 +5,7 @@ import { PageTab, PageTabs } from '../ui/page-tabs';
 export const ALERTING_TABS = [
   { id: 'history', link: '/alerting/history', label: 'History' },
   { id: 'rules', link: '/alerting/rules', label: 'Rules' },
+  { id: 'anomalies', link: '/alerting/anomalies', label: 'Anomalies' },
 ] as const satisfies readonly PageTab[];
 
 /**

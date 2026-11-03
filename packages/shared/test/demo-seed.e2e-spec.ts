@@ -10,11 +10,16 @@ import {
   demoReportingLagMinutes,
   generateTelemetry,
 } from '../src/seed/generate-telemetry.js';
+import { listAnomalies } from '../src/wind/queries.js';
 import { importHeld, lockUnallocated } from '../src/wind/unallocated.js';
 import { openMigrationDb, type MigrationDb } from './migration-db.js';
 
 const SHARED_DIR = fileURLToPath(new URL('..', import.meta.url));
 const SEED_NOW = '2026-10-08T12:00:00Z';
+
+/** 0, 5, 10, … minutes after an anomaly's first reading. */
+const steps = (readings: number) =>
+  Array.from({ length: readings }, (_, i) => i * 5);
 
 /**
  * `npm run db:seed:demo` (the real prisma/seed-demo.ts) against a fully migrated database of its
@@ -99,7 +104,7 @@ describe('demo seed (e2e)', () => {
       farms: 10,
       turbines: DEMO_TURBINES.length,
       telemetry: rows.length,
-      alerts: 7,
+      alerts: 91, // 72 frozen + 18 stuck gearbox + 1 pitch spike
       users: 3,
     });
 
@@ -137,13 +142,13 @@ describe('demo seed (e2e)', () => {
     expect(
       flagged.map((f) => [f.turbine_id, minutesBefore(f.timestamp), f.metric]),
     ).toEqual([
-      ...[0, 5, 10].map((m) => [
+      ...steps(DEMO_ANOMALIES.frozenPower.readings).map((m) => [
         'TURB001',
         DEMO_ANOMALIES.frozenPower.offsetMinutes - m,
         'power_output_kw',
       ]),
       ['TURB002', DEMO_ANOMALIES.pitchSpike.offsetMinutes, 'blade_pitch_deg'],
-      ...[0, 5, 10].map((m) => [
+      ...steps(DEMO_ANOMALIES.gearboxStuck.readings).map((m) => [
         'TURB002',
         DEMO_ANOMALIES.gearboxStuck.offsetMinutes - m,
         'gearbox_temp_c',
@@ -165,6 +170,45 @@ describe('demo seed (e2e)', () => {
     expect(behind.filter((min) => min > 30 && min <= 60)).toHaveLength(6);
     expect(behind.filter((min) => min > 60)).toHaveLength(6);
     expect(behind.filter((min) => min === 0)).toHaveLength(180);
+  });
+
+  it('detects exactly the two seeded faults and no false positives across the 200-turbine fleet', async () => {
+    const prisma = new PrismaClient({
+      adapter: new PrismaPg({ connectionString: m.url }),
+    });
+    try {
+      const end = Date.parse(SEED_NOW);
+      const result = await listAnomalies(prisma, {
+        from: new Date(end - 72 * 3_600_000).toISOString(),
+        to: new Date(end + 3_600_000).toISOString(),
+      });
+      const { frozenPower, gearboxStuck } = DEMO_ANOMALIES;
+      const at = (minutesBefore: number) =>
+        new Date(end - minutesBefore * 60_000).toISOString();
+      expect(result.anomalies).toEqual([
+        expect.objectContaining({
+          turbineId: gearboxStuck.turbineId,
+          kind: 'stuck_sensor',
+          metric: 'gearboxTempC',
+          value: gearboxStuck.gearboxTempC,
+          readings: gearboxStuck.readings,
+          start: at(gearboxStuck.offsetMinutes),
+          end: at(gearboxStuck.offsetMinutes - (gearboxStuck.readings - 1) * 5),
+        }),
+        expect.objectContaining({
+          turbineId: frozenPower.turbineId,
+          kind: 'low_power_in_wind',
+          readings: frozenPower.readings,
+          windSpeedMs: frozenPower.values.wind_speed_ms,
+          start: at(frozenPower.offsetMinutes),
+          end: at(frozenPower.offsetMinutes - (frozenPower.readings - 1) * 5),
+        }),
+      ]);
+      // 72 readings x rated 3,500 kW x 5/60 h: the fleet median in the 15 m/s bin is rated output.
+      expect(result.estimatedLostKwh).toBe(21000);
+    } finally {
+      await prisma.$disconnect();
+    }
   });
 
   it('inserts nothing on a second run with the same SEED_NOW', async () => {

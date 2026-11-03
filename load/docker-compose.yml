@@ -59,6 +59,8 @@ services:
       DATABASE_URL: *database-url
       REDIS_URL: *redis-url
       JWT_SECRET: ${LOAD_JWT_SECRET:?Set LOAD_JWT_SECRET}
+      # load/processor.js signIn calls this service, and all load traffic has one source IP.
+      LOGIN_RATE_LIMIT_ENABLED: "false"
     ports:
       - "127.0.0.1:18080:8080"
     depends_on:

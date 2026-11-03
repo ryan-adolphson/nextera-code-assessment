@@ -1,5 +1,8 @@
 import { Prisma } from '../generated/prisma/client.js';
 import {
+  toAnomaliesResponse,
+  toAnomalyResponse,
+  type AnomalyRow,
   toTelemetryResponse,
   toTelemetryStatsResponse,
   toTurbineResponse,
@@ -252,5 +255,69 @@ describe('toWeatherHalfHourResponse', () => {
       samples: 2,
       precipitationMm: null,
     });
+  });
+});
+
+describe('anomaly mappers', () => {
+  const row = (over: Partial<AnomalyRow> = {}): AnomalyRow => ({
+    kind: 'low_power_in_wind',
+    metric: null,
+    turbine_id: 'TURB001',
+    farm_id: 'FARM01',
+    episode_start: new Date('2026-01-01T13:40:00Z'),
+    episode_end: new Date('2026-01-01T13:50:00Z'),
+    readings: 3n,
+    value: null,
+    wind_speed_ms: '15.8',
+    lost_kwh: '0.1',
+    ...over,
+  });
+
+  it('maps a row: ISO times, numbers from strings/bigints, nulls kept', () => {
+    expect(toAnomalyResponse(row())).toEqual({
+      turbineId: 'TURB001',
+      farmId: 'FARM01',
+      kind: 'low_power_in_wind',
+      metric: null,
+      start: '2026-01-01T13:40:00.000Z',
+      end: '2026-01-01T13:50:00.000Z',
+      readings: 3,
+      value: null,
+      windSpeedMs: 15.8,
+      estimatedLostKwh: 0.1,
+    });
+    expect(
+      toAnomalyResponse(
+        row({
+          kind: 'stuck_sensor',
+          metric: 'gearboxTempC',
+          value: 126.5,
+          wind_speed_ms: null,
+          lost_kwh: null,
+        }),
+      ),
+    ).toMatchObject({
+      metric: 'gearboxTempC',
+      value: 126.5,
+      windSpeedMs: null,
+      estimatedLostKwh: null,
+    });
+  });
+
+  it('sums the non-null estimates, rounded to one decimal', () => {
+    const result = toAnomaliesResponse(
+      new Date('2026-01-01T00:00:00Z'),
+      new Date('2026-01-02T00:00:00Z'),
+      [row({ lost_kwh: 0.1 }), row({ lost_kwh: 0.2 }), row({ lost_kwh: null })],
+    );
+    expect(result.estimatedLostKwh).toBe(0.3); // not 0.30000000000000004
+    expect(result.from).toBe('2026-01-01T00:00:00.000Z');
+    expect(result.to).toBe('2026-01-02T00:00:00.000Z');
+  });
+
+  it('totals 0 for no episodes', () => {
+    expect(
+      toAnomaliesResponse(new Date(0), new Date(1), []).estimatedLostKwh,
+    ).toBe(0);
   });
 });

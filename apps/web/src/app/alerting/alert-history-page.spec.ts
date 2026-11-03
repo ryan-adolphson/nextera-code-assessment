@@ -151,6 +151,7 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     expect(await Promise.all((await tabs.getLinks()).map((l) => l.getLabel()))).toEqual([
       'History',
       'Rules',
+      'Anomalies',
     ]);
     expect(await (await tabs.getActiveLink()).getLabel()).toBe('History');
     expect(await (await tabs.getPanel()).getTextContent()).toContain('No alerts in this range.');

@@ -1,4 +1,13 @@
 import { ROLES, type Role } from '@nextera/shared';
+import { Redis } from 'ioredis';
+import {
+  LOGIN_LIMIT_EMAIL,
+  LOGIN_LIMIT_EMAIL_IP,
+  LOGIN_LIMIT_IP,
+  LOGIN_LIMIT_KEY_PREFIX,
+  LoginLimiterService,
+  loginLimitKeys,
+} from '../src/auth/login-limiter.service.js';
 import { TokenService } from '../src/auth/token.service.js';
 import {
   TEST_PASSWORD,
@@ -15,13 +24,16 @@ const DAY = 'from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z';
 /** Sign-in, the access matrix per role, and SSE authentication. */
 describe('Auth (e2e)', () => {
   let t: TestApp;
+  let redis: Redis;
 
   beforeAll(async () => {
     t = await createTestApp();
+    redis = new Redis(process.env.REDIS_URL!);
   });
 
   afterAll(async () => {
     await t.prisma.user.updateMany({ data: { active: true } });
+    await redis.quit();
     await t.app.close();
   });
 
@@ -33,6 +45,11 @@ describe('Auth (e2e)', () => {
     });
 
   describe('POST /api/auth/login', () => {
+    beforeEach(async () => {
+      const keys = await redis.keys(`${LOGIN_LIMIT_KEY_PREFIX}*`);
+      if (keys.length > 0) await redis.del(keys);
+    });
+
     it.each(ROLES)(
       'signs in the seeded %s and the token works',
       async (role) => {
@@ -111,6 +128,188 @@ describe('Auth (e2e)', () => {
       });
       expect(res.status).toBe(400);
     });
+
+    describe('attempt limit', () => {
+      const OWNER = 'owner@nextera.local';
+      const WRONG = 'not-the-password';
+      const CLIENT = '203.0.113.1';
+
+      /** A sign-in as the Cloud Run front end forwards it: the client is the last entry. */
+      const attempt = (
+        email: string,
+        password: string,
+        forwardedFor: string = CLIENT,
+      ) =>
+        fetch(`${t.url}/api/auth/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Forwarded-For': forwardedFor,
+          },
+          body: JSON.stringify({ email, password }),
+        });
+
+      /** `count` wrong passwords one after another, each expected to be a plain 401. */
+      const fail = async (
+        count: number,
+        email: string = OWNER,
+        forwardedFor: string = CLIENT,
+      ) => {
+        for (let i = 0; i < count; i++) {
+          expect((await attempt(email, WRONG, forwardedFor)).status).toBe(401);
+        }
+      };
+
+      const expectLimited = async (res: Response) => {
+        expect(res.status).toBe(429);
+        const retryAfter = Number(res.headers.get('retry-after'));
+        expect(Number.isInteger(retryAfter)).toBe(true);
+        expect(retryAfter).toBeGreaterThan(0);
+        expect(retryAfter).toBeLessThanOrEqual(900);
+        expect(await res.json()).toEqual({
+          statusCode: 429,
+          message: 'Too many attempts',
+        });
+      };
+
+      it('answers the 6th attempt with 429 + Retry-After, even with the correct password', async () => {
+        await fail(LOGIN_LIMIT_EMAIL_IP);
+
+        await expectLimited(await attempt(OWNER, WRONG));
+        await expectLimited(await attempt(OWNER, TEST_PASSWORD));
+      });
+
+      it('treats an unknown email exactly like a real one', async () => {
+        await fail(LOGIN_LIMIT_EMAIL_IP, 'nobody@nextera.local');
+
+        await expectLimited(await attempt('nobody@nextera.local', WRONG));
+      });
+
+      it('counts an email however it is written', async () => {
+        await fail(LOGIN_LIMIT_EMAIL_IP, 'OWNER@nextera.local');
+
+        await expectLimited(await attempt(OWNER, WRONG));
+      });
+
+      it('leaves another IP unaffected until the email limit', async () => {
+        await fail(LOGIN_LIMIT_EMAIL_IP);
+        await expectLimited(await attempt(OWNER, TEST_PASSWORD));
+
+        // Another IP still gets in; its success gives back its own reservation only.
+        const other = await attempt(OWNER, TEST_PASSWORD, '203.0.113.2');
+        expect(other.status).toBe(200);
+
+        // Up to the email limit from more addresses, none over its own limit of 5.
+        for (
+          let used = LOGIN_LIMIT_EMAIL_IP, i = 3;
+          used < LOGIN_LIMIT_EMAIL;
+          i++
+        ) {
+          await fail(LOGIN_LIMIT_EMAIL_IP, OWNER, `203.0.113.${i}`);
+          used += LOGIN_LIMIT_EMAIL_IP;
+        }
+
+        await expectLimited(
+          await attempt(OWNER, TEST_PASSWORD, '203.0.113.200'),
+        );
+      });
+
+      it('holds the IP limit across emails', async () => {
+        for (let i = 0; i < LOGIN_LIMIT_IP; i++) {
+          await fail(1, `nobody${i}@nextera.local`);
+        }
+
+        await expectLimited(await attempt('fresh@nextera.local', WRONG));
+        await expectLimited(await attempt(OWNER, TEST_PASSWORD));
+      });
+
+      it('a success clears the email + IP count and gives back its reservation on the others', async () => {
+        await fail(LOGIN_LIMIT_EMAIL_IP - 1);
+        const [emailIpKey, emailKey, ipKey] = loginLimitKeys(OWNER, CLIENT);
+
+        expect((await attempt(OWNER, TEST_PASSWORD)).status).toBe(200);
+
+        expect(await redis.exists(emailIpKey)).toBe(0);
+        // The earlier failures still count on these two; the success itself doesn't.
+        expect(await redis.get(emailKey)).toBe(
+          String(LOGIN_LIMIT_EMAIL_IP - 1),
+        );
+        expect(await redis.get(ipKey)).toBe(String(LOGIN_LIMIT_EMAIL_IP - 1));
+
+        await fail(LOGIN_LIMIT_EMAIL_IP);
+        await expectLimited(await attempt(OWNER, WRONG));
+      });
+
+      it('refused attempts use up nothing: only failures count', async () => {
+        await fail(LOGIN_LIMIT_EMAIL_IP);
+        for (let i = 0; i < LOGIN_LIMIT_IP; i++) {
+          expect((await attempt(OWNER, WRONG)).status).toBe(429);
+        }
+        const [, emailKey, ipKey] = loginLimitKeys(OWNER, CLIENT);
+
+        expect(await redis.get(emailKey)).toBe(String(LOGIN_LIMIT_EMAIL_IP));
+        expect(await redis.get(ipKey)).toBe(String(LOGIN_LIMIT_EMAIL_IP));
+        expect(
+          (await attempt(OWNER, TEST_PASSWORD, '203.0.113.2')).status,
+        ).toBe(200);
+      });
+
+      it('lets no more than the limit through a parallel burst', async () => {
+        const burst = await Promise.all(
+          Array.from({ length: 20 }, () => attempt(OWNER, WRONG)),
+        );
+
+        const statuses = burst.map((res) => res.status);
+        expect(statuses.filter((s) => s === 401)).toHaveLength(
+          LOGIN_LIMIT_EMAIL_IP,
+        );
+        expect(statuses.filter((s) => s === 429)).toHaveLength(
+          20 - LOGIN_LIMIT_EMAIL_IP,
+        );
+      });
+
+      it('ignores the leftmost X-Forwarded-For entry, which the client controls', async () => {
+        for (let i = 0; i < LOGIN_LIMIT_EMAIL_IP; i++) {
+          await fail(1, OWNER, `198.51.100.${i}, ${CLIENT}`);
+        }
+
+        await expectLimited(
+          await attempt(OWNER, TEST_PASSWORD, `198.51.100.99, ${CLIENT}`),
+        );
+      });
+
+      it('never extends a window, even on a key given back down to 0', async () => {
+        const limiter = t.app.get(LoginLimiterService);
+        const keys = loginLimitKeys(OWNER, CLIENT);
+        const first = await limiter.reserve(OWNER, CLIENT);
+        if (first.limited) throw new Error('expected a reservation');
+        // An older window, then a give-back: every key is still there, at 0.
+        await Promise.all(keys.map((key) => redis.pexpire(key, 60_000)));
+        await first.cancel();
+        expect(await redis.mget(keys)).toEqual(['0', '0', '0']);
+
+        await limiter.reserve(OWNER, CLIENT);
+
+        for (const key of keys) {
+          const ttl = await redis.pttl(key);
+          expect(ttl).toBeGreaterThan(0);
+          expect(ttl).toBeLessThanOrEqual(60_000);
+        }
+      });
+
+      it('sets the 15-minute expiry on new keys, and stores no email', async () => {
+        await fail(1);
+
+        const keys = await redis.keys(`${LOGIN_LIMIT_KEY_PREFIX}*`);
+        expect(keys).toHaveLength(3);
+        expect(keys.join()).not.toContain('owner');
+        for (const key of keys) {
+          const ttl = await redis.pttl(key);
+          expect(ttl).toBeGreaterThan(890_000);
+          expect(ttl).toBeLessThanOrEqual(900_000);
+        }
+      });
+    });
   });
 
   describe('access matrix', () => {
@@ -132,6 +331,7 @@ describe('Auth (e2e)', () => {
       ['GET', '/api/turbines/TURB001/telemetry', 'viewer'],
       ['GET', '/api/turbines/TURB001/telemetry/stats', 'viewer'],
       ['GET', `/api/alerts?${DAY}`, 'viewer'],
+      ['GET', `/api/anomalies?${DAY}`, 'viewer'],
       ['GET', '/api/alert-configs', 'viewer'],
       ['GET', `/api/alert-configs/${UNKNOWN_ID}`, 'viewer'],
       ['GET', `/api/reports/telemetry?turbineId=TURB001&${DAY}`, 'owner'],

@@ -58,6 +58,7 @@ describe('FleetShell navigation', () => {
     ['/alerting', 'nav-alerting'], // redirects to /alerting/history
     ['/alerting/history', 'nav-alerting'],
     ['/alerting/rules', 'nav-alerting'],
+    ['/alerting/anomalies', 'nav-alerting'],
     ['/unallocated', 'nav-unallocated'], // redirects to /unallocated/pending
     ['/unallocated/blocked', 'nav-unallocated'],
     ['/reporting', 'nav-reporting'],
@@ -98,6 +99,7 @@ describe('FleetShell navigation', () => {
     ['/turbines', 'Turbines · Nextera'],
     ['/alerting', 'Alert history · Nextera'], // opens on the History tab
     ['/alerting/rules', 'Alert rules · Nextera'],
+    ['/alerting/anomalies', 'Anomalies · Nextera'],
     ['/unallocated', 'Unallocated turbines · Nextera'], // opens on the Pending tab
     ['/unallocated/blocked', 'Blocked turbines · Nextera'],
     ['/reporting', 'Reporting · Nextera'],

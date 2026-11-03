@@ -2,15 +2,20 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { Component, DestroyRef, computed, inject, input, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormField, FormRoot, email, form, required } from '@angular/forms/signals';
+import { MatAutocomplete, MatAutocompleteTrigger } from '@angular/material/autocomplete';
 import { MatButton } from '@angular/material/button';
 import { MatError, MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
+import { MatOption } from '@angular/material/core';
 import { Router } from '@angular/router';
 import { safeReturnUrl } from './auth.guards';
 import { AuthStore } from './auth.store';
 
 /** The API's one message for every failed sign-in (it never says which part was wrong). */
 export const INVALID_CREDENTIALS = 'Invalid email or password.';
+
+/** The seeded demo accounts offered as suggestions on the email field (any email can still be typed). */
+export const DEMO_ACCOUNTS = ['viewer@nextera.local', 'owner@nextera.local', 'admin@nextera.local'];
 
 interface LoginModel {
   email: string;
@@ -25,7 +30,18 @@ interface LoginModel {
  */
 @Component({
   selector: 'app-login-page',
-  imports: [FormField, FormRoot, MatButton, MatError, MatFormField, MatInput, MatLabel],
+  imports: [
+    FormField,
+    FormRoot,
+    MatAutocomplete,
+    MatAutocompleteTrigger,
+    MatButton,
+    MatError,
+    MatFormField,
+    MatInput,
+    MatLabel,
+    MatOption,
+  ],
   templateUrl: './login-page.html',
 })
 export class LoginPage {
@@ -51,6 +67,12 @@ export class LoginPage {
       },
     },
   );
+
+  /** Demo accounts containing what is typed (all of them when empty). */
+  protected readonly matchingAccounts = computed(() => {
+    const typed = this.loginForm.email().value().trim().toLowerCase();
+    return DEMO_ACCOUNTS.filter((account) => account.includes(typed));
+  });
 
   protected readonly busy = computed(() => this.loginForm().submitting());
   protected readonly error = signal<string | null>(null);
@@ -87,7 +109,7 @@ export function loginErrorMessage(error: unknown): string {
   if (error instanceof HttpErrorResponse) {
     if (error.status === 401 || error.status === 400) return INVALID_CREDENTIALS;
     if (error.status === 0) return 'Could not reach the API. Check your connection and try again.';
-    if (error.status === 429) return 'Too many attempts. Wait a minute and try again.';
+    if (error.status === 429) return 'Too many attempts. Wait a few minutes and try again.';
   }
   return 'Could not sign in. Try again.';
 }

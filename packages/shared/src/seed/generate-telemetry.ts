@@ -46,11 +46,14 @@ export interface GenerateTelemetryOptions {
 
 /** Minutes before `end` of each anomaly's first reading (later readings follow every 5 min). */
 export const DEMO_ANOMALIES = {
-  /** TURB001 stops: 0 kW in 15.8 m/s wind, identical values (the fixture's 13:40–13:50 values). */
+  /**
+   * TURB001 stops: 0 kW in 15.8 m/s wind, identical values (the fixture's 13:40–13:50 values) for
+   * 6 hours, from 50 h to 44 h before `end`.
+   */
   frozenPower: {
     turbineId: 'TURB001',
     offsetMinutes: 50 * 60,
-    readings: 3,
+    readings: 72,
     values: {
       power_output_kw: 0,
       wind_speed_ms: 15.8,
@@ -66,11 +69,14 @@ export const DEMO_ANOMALIES = {
     readings: 1,
     bladePitchDeg: 44,
   },
-  /** TURB002: the gearbox sensor stuck at 126.5 °C for 15 min (the other values stay normal). */
+  /**
+   * TURB002: the gearbox sensor stuck at 126.5 °C for 90 min, from 6 h to 4.5 h before `end` (the
+   * other values stay normal, so its power keeps changing).
+   */
   gearboxStuck: {
     turbineId: 'TURB002',
     offsetMinutes: 6 * 60,
-    readings: 3,
+    readings: 18,
     gearboxTempC: 126.5,
   },
   /**

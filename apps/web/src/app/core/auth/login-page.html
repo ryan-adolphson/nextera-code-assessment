@@ -15,7 +15,15 @@
           inputmode="email"
           data-testid="login-email"
           [formField]="loginForm.email"
+          [matAutocomplete]="accounts"
         />
+        <mat-autocomplete #accounts="matAutocomplete" (optionSelected)="password.focus()">
+          @for (account of matchingAccounts(); track account) {
+            <mat-option [value]="account" data-testid="login-email-option">{{
+              account
+            }}</mat-option>
+          }
+        </mat-autocomplete>
         <mat-error data-testid="login-email-error">{{ messageOf('email') }}</mat-error>
       </mat-form-field>
 
@@ -23,6 +31,7 @@
         <mat-label>Password</mat-label>
         <input
           matInput
+          #password
           type="password"
           autocomplete="current-password"
           data-testid="login-password"

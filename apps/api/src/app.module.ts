@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { AlertConfigsModule } from './alert-configs/alert-configs.module.js';
+import { AnomaliesModule } from './anomalies/anomalies.module.js';
 import { AlertsModule } from './alerts/alerts.module.js';
 import { ReportsModule } from './reports/reports.module.js';
 import { UnallocatedTurbinesModule } from './unallocated-turbines/unallocated-turbines.module.js';
@@ -30,6 +31,7 @@ import { RolesGuard } from './auth/roles.guard.js';
     FleetModule,
     AlertConfigsModule,
     AlertsModule,
+    AnomaliesModule,
     ReportsModule,
     UnallocatedTurbinesModule,
     HealthModule,

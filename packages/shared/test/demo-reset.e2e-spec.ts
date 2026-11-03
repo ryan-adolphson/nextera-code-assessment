@@ -14,6 +14,10 @@ const FIRST_SEED = '2026-10-08T12:00:00Z';
 const RESET_NOW = '2026-10-09T12:00:00Z';
 const PASSWORD = 'demo-reset-e2e-password';
 
+/** 0, 5, 10, … minutes after an anomaly's first reading. */
+const steps = (readings: number) =>
+  Array.from({ length: readings }, (_, i) => i * 5);
+
 /**
  * `npm run demo:reset` (the real prisma/demo-reset.ts, without weather and feed) against a fully
  * migrated database of its own: it deletes the readings (telemetry, alerts, held readings,
@@ -148,7 +152,7 @@ describe('demo reset (e2e)', () => {
     expect(stdout).toMatch(/Target database: .*\/migration_\w+ \(local\)/);
     expect(stdout).not.toContain(PASSWORD);
     expect(stdout).toMatch(
-      /Deleted \d+ telemetry rows, 7 telemetry_alerts, \d+ held readings, 6 unallocated entries, 1 weather rows, \d+ farm rollup rows/,
+      /Deleted \d+ telemetry rows, 91 telemetry_alerts, \d+ held readings, 6 unallocated entries, 1 weather rows, \d+ farm rollup rows/,
     );
     expect(stdout).toMatch(/farm rollup: \d+ rows for 10 farms in \d+ ms/);
     expect(stdout).toMatch(/Live feed: skipped \(--no-feed\)/);
@@ -182,7 +186,7 @@ describe('demo reset (e2e)', () => {
     const c = await counts();
     expect(c).toMatchObject({
       telemetry: expected.length,
-      alerts: 7,
+      alerts: 91, // 72 frozen + 18 stuck gearbox + 1 pitch spike
       weather: 0,
       old_rollups: 0, // the deleted reading's bucket is gone with it
     });
@@ -201,12 +205,12 @@ describe('demo reset (e2e)', () => {
     expect(
       flagged.map((f) => [f.turbine_id, minutesBefore(f.timestamp)]),
     ).toEqual([
-      ...[0, 5, 10].map((x) => [
+      ...steps(DEMO_ANOMALIES.frozenPower.readings).map((x) => [
         'TURB001',
         DEMO_ANOMALIES.frozenPower.offsetMinutes - x,
       ]),
       ['TURB002', DEMO_ANOMALIES.pitchSpike.offsetMinutes],
-      ...[0, 5, 10].map((x) => [
+      ...steps(DEMO_ANOMALIES.gearboxStuck.readings).map((x) => [
         'TURB002',
         DEMO_ANOMALIES.gearboxStuck.offsetMinutes - x,
       ]),

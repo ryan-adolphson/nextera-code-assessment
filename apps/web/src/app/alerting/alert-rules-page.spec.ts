@@ -151,7 +151,7 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     // The Active tab is gone: History and Rules only.
     expect(
       [...app.root().querySelectorAll('nav[aria-label=Alerting] a')].map((a) => app.text(a)),
-    ).toEqual(['History', 'Rules']);
+    ).toEqual(['History', 'Rules', 'Anomalies']);
     expect(q('nav-alerting')!.getAttribute('aria-current')).toBe('page');
     // Material table, 25 rules per page.
     expect(q('rules')!.classList).toContain('mat-mdc-table');

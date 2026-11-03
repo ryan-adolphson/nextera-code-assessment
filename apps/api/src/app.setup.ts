@@ -15,7 +15,9 @@ export const CORS_ALLOWED_HEADERS = [
 export function configureApp(
   app: NestExpressApplication,
 ): NestExpressApplication {
-  app.set('trust proxy', true); // behind the Cloud Run front end
+  // One proxy (the Cloud Run front end), so req.ip is the last X-Forwarded-For entry, the address it
+  // saw. `true` would make req.ip the leftmost entry, which the client controls.
+  app.set('trust proxy', 1);
   // The Angular app (Cloud Run nextera-web) is on another origin, so resources must be cross-origin readable.
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.enableCors({

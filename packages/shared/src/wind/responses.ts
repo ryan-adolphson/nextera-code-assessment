@@ -10,6 +10,7 @@ import {
   toAlertConfigResponse,
   type AlertConfigResponse,
 } from './alert-config.js';
+import type { AnomalyKind, AnomalyMetric } from './anomalies.js';
 import { compareAlertsWorstFirst } from './evaluate-alerts.js';
 import { FARM_ROLLUP_METRICS } from './farm-rollup.js';
 
@@ -403,5 +404,86 @@ export function toFarmDayResponse(row: FarmDayRow): FarmDayResponse {
     rotorRpm: ohlc('rotorRpm'),
     bladePitchDeg: ohlc('bladePitchDeg'),
     gearboxTempC: ohlc('gearboxTempC'),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Anomalies (listAnomalies)
+
+export interface AnomalyResponse {
+  turbineId: string;
+  farmId: string;
+  kind: AnomalyKind;
+  /** The stuck sensor's metric; null for low_power_in_wind. */
+  metric: AnomalyMetric | null;
+  /** The first and last reading of the episode (ISO, UTC). */
+  start: string;
+  end: string;
+  readings: number;
+  /** The stuck value; null for low_power_in_wind. */
+  value: number | null;
+  /** Mean wind over the episode; null for stuck_sensor. */
+  windSpeedMs: number | null;
+  /** Output lost against the fleet's median power at that wind (kWh); null when not estimable. */
+  estimatedLostKwh: number | null;
+}
+
+export interface AnomaliesResponse {
+  from: string;
+  to: string;
+  /** Sum of the non-null episode estimates. */
+  estimatedLostKwh: number;
+  /** Newest `end` first. */
+  anomalies: AnomalyResponse[];
+}
+
+/** One episode row of the anomaly query (snake_case; numerics may arrive as strings/bigints). */
+export interface AnomalyRow {
+  kind: AnomalyKind;
+  metric: AnomalyMetric | null;
+  turbine_id: string;
+  farm_id: string;
+  episode_start: Date;
+  episode_end: Date;
+  readings: number | bigint;
+  value: number | string | null;
+  wind_speed_ms: number | string | null;
+  lost_kwh: number | string | null;
+  [column: string]: unknown;
+}
+
+const orNull = (value: unknown): number | null =>
+  value === null || value === undefined ? null : Number(value);
+const round1 = (value: number): number => Math.round(value * 10) / 10;
+
+export function toAnomalyResponse(row: AnomalyRow): AnomalyResponse {
+  return {
+    turbineId: row.turbine_id,
+    farmId: row.farm_id,
+    kind: row.kind,
+    metric: row.metric,
+    start: row.episode_start.toISOString(),
+    end: row.episode_end.toISOString(),
+    readings: Number(row.readings),
+    value: orNull(row.value),
+    windSpeedMs: orNull(row.wind_speed_ms),
+    estimatedLostKwh: orNull(row.lost_kwh),
+  };
+}
+
+export function toAnomaliesResponse(
+  from: Date,
+  to: Date,
+  rows: AnomalyRow[],
+): AnomaliesResponse {
+  const anomalies = rows.map(toAnomalyResponse);
+  return {
+    from: from.toISOString(),
+    to: to.toISOString(),
+    // Summed unrounded-per-episode values, rounded once (0.1 + 0.2 stays 0.3).
+    estimatedLostKwh: round1(
+      anomalies.reduce((sum, a) => sum + (a.estimatedLostKwh ?? 0), 0),
+    ),
+    anomalies,
   };
 }

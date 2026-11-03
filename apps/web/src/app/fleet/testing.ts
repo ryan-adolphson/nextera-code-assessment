@@ -12,6 +12,8 @@ import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { Observable, Subject, of } from 'rxjs';
+import { AnomaliesApi } from '../alerting/anomalies-api.service';
+import { AnomalyReport } from '../alerting/anomaly.model';
 import { routes } from '../app.routes';
 import { API_BASE_URL } from '../core/api-base-url';
 import { authInterceptor } from '../core/auth/auth.interceptor';
@@ -300,6 +302,7 @@ export const weatherResponse = <I extends WeatherInterval>(
 
 export type FakeFleetApi = ReturnType<typeof fakes>['api'];
 export type FakeWeatherApi = ReturnType<typeof fakes>['weather'];
+export type FakeAnomaliesApi = ReturnType<typeof fakes>['anomalies'];
 export type FakeSse = ReturnType<typeof fakes>['sse'];
 
 /** CDK's interactivity checks without layout: every element counts as visible (jsdom). */
@@ -350,7 +353,13 @@ export function fakes(farms: FarmOverview[] = farmsFixture()) {
         of(weatherResponse(farmId, query)) as Observable<WeatherResponse<I>>,
     ),
   };
-  return { api, sse, weather };
+  /** AnomaliesApi: no anomalies, unless a spec sets the mock. */
+  const anomalies = {
+    list: vi.fn((from: string, to: string): Observable<AnomalyReport> =>
+      of({ from, to, estimatedLostKwh: 0, anomalies: [] }),
+    ),
+  };
+  return { api, sse, weather, anomalies };
 }
 
 /** A stored session for `role`, signed in at `now` and valid for 24 h (what AuthStore keeps). */
@@ -416,7 +425,12 @@ export async function openFleet(
   url: string,
   clock: () => number,
   farms?: FarmOverview[],
-  beforeOpen?: (fakes: { api: FakeFleetApi; sse: FakeSse; weather: FakeWeatherApi }) => void,
+  beforeOpen?: (fakes: {
+    api: FakeFleetApi;
+    sse: FakeSse;
+    weather: FakeWeatherApi;
+    anomalies: FakeAnomaliesApi;
+  }) => void,
   role: Role | null = 'admin',
   {
     timeZone = 'utc',
@@ -426,10 +440,10 @@ export async function openFleet(
   }: TimeZoneOptions = {},
 ) {
   await preloadDeferredViews();
-  const { api, sse, weather } = fakes(farms);
+  const { api, sse, weather, anomalies } = fakes(farms);
   clearTimeZoneSettings();
   if (role && timeZone === 'local') storeTimeZone(role, 'local');
-  beforeOpen?.({ api, sse, weather });
+  beforeOpen?.({ api, sse, weather, anomalies });
   storeSession(role && testSession(role, clock()));
   TestBed.configureTestingModule({
     deferBlockBehavior,
@@ -442,6 +456,7 @@ export async function openFleet(
       { provide: API_BASE_URL, useValue: TEST_API_BASE_URL },
       { provide: FleetApi, useValue: api },
       { provide: SseService, useValue: sse },
+      { provide: AnomaliesApi, useValue: anomalies },
       { provide: NOW, useValue: clock },
       { provide: BROWSER_TIME_ZONE, useValue: browserZone },
       ...(weatherHttp ? [] : [{ provide: WeatherApi, useValue: weather }]),
@@ -458,7 +473,7 @@ export async function openFleet(
   const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s+/g, ' ').trim();
   const stable = () => settle(harness.fixture);
   const http = TestBed.inject(HttpTestingController);
-  return { harness, api, sse, weather, http, root, text, stable };
+  return { harness, api, sse, weather, anomalies, http, root, text, stable };
 }
 
 /**

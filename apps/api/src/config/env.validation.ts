@@ -2,7 +2,7 @@ import {
   CommonEnvironmentVariables,
   validateEnvironment,
 } from '@nextera/shared';
-import { IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsIn, IsNotEmpty, IsString, MinLength } from 'class-validator';
 
 /** NODE_ENV, DATABASE_URL, DB_POOL_MAX and REDIS_URL are the common ones (`@nextera/shared`). */
 export class EnvironmentVariables extends CommonEnvironmentVariables {
@@ -34,6 +34,13 @@ export class EnvironmentVariables extends CommonEnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   JWT_AUDIENCE: string = 'nextera-web';
+
+  /**
+   * The login attempt limit (LoginLimiterService). A string, not a boolean: the implicit conversion
+   * in validateEnvironment would read "false" as true. Off only in the load test stack.
+   */
+  @IsIn(['true', 'false'])
+  LOGIN_RATE_LIMIT_ENABLED: 'true' | 'false' = 'true';
 }
 
 /** Fails fast at startup with every invalid variable listed. */

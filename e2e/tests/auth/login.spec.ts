@@ -103,7 +103,7 @@ test.describe('Login', () => {
     await page.getByLabel('Password').fill('whatever');
     await submit(page);
     await expect(page.getByTestId('login-error')).toHaveText(
-      'Too many attempts. Wait a minute and try again.',
+      'Too many attempts. Wait a few minutes and try again.',
     );
   });
 
