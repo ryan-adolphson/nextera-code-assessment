@@ -182,7 +182,7 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
       reading({ turbineId: 'TURB001', farmId: 'FARM01', timestamp: '2026-01-03T00:00:00.000Z' }),
     );
     await app.stable();
-    expect(ids()).toEqual(['TURB006', 'TURB002', 'TURB007']); // TURB006 moved up, newest first
+    expect(ids()).toEqual(['TURB002', 'TURB006', 'TURB007']); // the order follows when it settles
   });
 });
 

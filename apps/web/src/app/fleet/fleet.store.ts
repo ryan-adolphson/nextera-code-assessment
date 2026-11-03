@@ -65,6 +65,9 @@ export function reconnectDelayMs(failures: number, random = Math.random()): numb
   return Math.round(capped * (1 - random / 2));
 }
 
+/** How long a turbine counts as just updated: the row's flash (`--animate-flash` in styles.css). */
+export const FLASH_MS = secondsToMilliseconds(2);
+
 /** A turbine with its farm's name, its latest reading (by measurement time) and staleness. */
 export interface FleetTurbine extends TurbineOverview {
   farmName: string;
@@ -148,7 +151,12 @@ export class FleetStore {
    * from it really doesn't exist. After a failed load the list is just empty.
    */
   readonly fleetLoadedOk = computed(() => !this.loading() && !this.error());
-  readonly recentlyUpdated = signal<string | null>(null);
+  /**
+   * The turbines a live reading updated in the last `FLASH_MS`, so every row of a burst flashes for
+   * its full length. Another reading for a turbine in the set restarts its time.
+   */
+  readonly recentlyUpdated = signal<ReadonlySet<string>>(new Set());
+  private readonly flashTimers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly selectedTurbineId = signal<string | null>(null);
   readonly historyLoading = signal(false);
   readonly historyRangeMs = signal(DEFAULT_HISTORY_RANGE_MS);
@@ -177,7 +185,10 @@ export class FleetStore {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((stats) => this.stats.set(stats));
-    this.destroyRef.onDestroy(() => this.stopTicking());
+    this.destroyRef.onDestroy(() => {
+      this.stopTicking();
+      this.flashTimers.forEach((timer) => clearTimeout(timer));
+    });
   }
 
   /** Newest measurement time across the fleet ("data as of"; staleness uses the client clock). */
@@ -484,7 +495,7 @@ export class FleetStore {
       }
       return;
     }
-    if (this.applyLatest(reading)) this.recentlyUpdated.set(reading.turbineId);
+    if (this.applyLatest(reading)) this.markUpdated(reading.turbineId);
     if (reading.turbineId !== this.selectedTurbineId()) return;
     this.now.set(this.clock());
     // A late reading older than the window is not charted and cannot change the range's stats.
@@ -544,6 +555,24 @@ export class FleetStore {
   private stopTicking(): void {
     clearTimeout(this.tickTimer);
     this.tickTimer = undefined;
+  }
+
+  private markUpdated(turbineId: string): void {
+    clearTimeout(this.flashTimers.get(turbineId));
+    this.flashTimers.set(
+      turbineId,
+      setTimeout(() => {
+        this.flashTimers.delete(turbineId);
+        this.recentlyUpdated.update((ids) => {
+          const rest = new Set(ids);
+          rest.delete(turbineId);
+          return rest;
+        });
+      }, FLASH_MS),
+    );
+    if (!this.recentlyUpdated().has(turbineId)) {
+      this.recentlyUpdated.update((ids) => new Set(ids).add(turbineId));
+    }
   }
 
   /** Returns true if the reading became the turbine's latest. */

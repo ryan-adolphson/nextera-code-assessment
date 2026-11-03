@@ -10,6 +10,10 @@ globalThis.ResizeObserver ??= class {
 // null falls back to its built-in width table, so returning null quietly changes nothing else.
 HTMLCanvasElement.prototype.getContext = (() => null) as HTMLCanvasElement['getContext'];
 
+// jsdom has no Web Animations API (RowGlide). Specs that check a glide spy on `animate`.
+Element.prototype.getAnimations ??= () => [];
+Element.prototype.animate ??= (() => ({ cancel() {} })) as unknown as Element['animate'];
+
 // jsdom has no IntersectionObserver, which `@defer (on viewport)` needs. Report every observed
 // element as visible (a microtask later: Angular registers its listener after calling observe()),
 // so viewport-triggered blocks render like `on immediate` in the default Playthrough mode. Specs

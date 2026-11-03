@@ -10,7 +10,7 @@ import { NOW as NOW_TOKEN } from '../core/clock';
 import { SseService } from '../core/sse.service';
 import { FleetApi } from './fleet-api.service';
 import { FarmOverview, LIVE_FUTURE_TOLERANCE_MS, Telemetry, TelemetryStats } from './fleet.model';
-import { FleetStore, reconnectDelayMs } from './fleet.store';
+import { FLASH_MS, FleetStore, reconnectDelayMs } from './fleet.store';
 import { fakes, farmsFixture, reading, statsFixture } from './testing';
 
 /** The part of AuthStore the FleetStore reads: whether to keep retrying the live connection. */
@@ -139,7 +139,7 @@ describe('FleetStore', () => {
       sse.pushEvent('fleet.changed', { turbineId: 'TURB990' });
       sse.push(imported({ id: 'imp-2', timestamp: '2026-01-03T00:00:00.000Z' }));
       expect(warn).not.toHaveBeenCalled();
-      expect(store.recentlyUpdated()).toBe('TURB990');
+      expect([...store.recentlyUpdated()]).toEqual(['TURB990']);
 
       // The reload predates nothing newer: its latest (23:55) is older than the live one.
       farms.next(withAssigned(imported()));
@@ -156,7 +156,7 @@ describe('FleetStore', () => {
       sse.push(imported({ timestamp: '2026-01-03T00:00:00.000Z' }));
 
       expect(store.turbines().map((t) => t.id)).toEqual(['TURB001', 'TURB002']);
-      expect(store.recentlyUpdated()).toBeNull();
+      expect(store.recentlyUpdated().size).toBe(0);
       expect(warn).toHaveBeenCalledOnce();
     });
 
@@ -212,7 +212,50 @@ describe('FleetStore', () => {
     sse.push(reading({ timestamp: '2026-01-03T00:00:00.000Z', powerOutputKw: 3000 }));
 
     expect(store.turbines()[0].latest?.powerOutputKw).toBe(3000);
-    expect(store.recentlyUpdated()).toBe('TURB001');
+    expect([...store.recentlyUpdated()]).toEqual(['TURB001']);
+  });
+
+  describe('recentlyUpdated', () => {
+    const push = (sse: ReturnType<typeof setup>['sse'], turbineId: string, timestamp: string) =>
+      sse.push(reading({ id: `${turbineId}-${timestamp}`, turbineId, timestamp }));
+
+    it('keeps every turbine of a burst for the whole flash', () => {
+      const { store, sse } = setup();
+
+      push(sse, 'TURB001', '2026-01-03T00:00:00.000Z');
+      vi.advanceTimersByTime(500);
+      push(sse, 'TURB002', '2026-01-03T00:00:00.000Z');
+      expect([...store.recentlyUpdated()]).toEqual(['TURB001', 'TURB002']);
+
+      vi.advanceTimersByTime(FLASH_MS - 501);
+      expect(store.recentlyUpdated().has('TURB001')).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect([...store.recentlyUpdated()]).toEqual(['TURB002']);
+      vi.advanceTimersByTime(500);
+      expect(store.recentlyUpdated().size).toBe(0);
+    });
+
+    it('restarts the time on another reading for the same turbine', () => {
+      const { store, sse } = setup();
+
+      push(sse, 'TURB001', '2026-01-02T23:58:00.000Z');
+      vi.advanceTimersByTime(FLASH_MS - 1);
+      push(sse, 'TURB001', '2026-01-03T00:00:00.000Z');
+      vi.advanceTimersByTime(FLASH_MS - 1);
+      expect(store.recentlyUpdated().has('TURB001')).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(store.recentlyUpdated().size).toBe(0);
+    });
+
+    it('clears its timers when destroyed', () => {
+      const { sse } = setup();
+      push(sse, 'TURB001', '2026-01-03T00:00:00.000Z');
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+      TestBed.resetTestingModule(); // destroys the store
+
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 
   it('ignores a late reading for an older instant (latest is by measurement time)', () => {
@@ -227,7 +270,7 @@ describe('FleetStore', () => {
     );
 
     expect(store.turbines()[0].latest?.powerOutputKw).toBe(1960.5);
-    expect(store.recentlyUpdated()).toBeNull();
+    expect(store.recentlyUpdated().size).toBe(0);
   });
 
   it('dates the fleet ("data as of") by its newest reading, or not at all before any', () => {
@@ -248,7 +291,7 @@ describe('FleetStore', () => {
     sse.push({ ...latest });
 
     expect(store.turbines()[0].latest).toEqual(latest);
-    expect(store.recentlyUpdated()).toBeNull();
+    expect(store.recentlyUpdated().size).toBe(0);
   });
 
   it('keeps the first reading for an instant when another arrives later for the same timestamp', () => {
@@ -263,7 +306,7 @@ describe('FleetStore', () => {
     );
 
     expect(store.turbines()[0].latest?.powerOutputKw).toBe(1960.5);
-    expect(store.recentlyUpdated()).toBeNull();
+    expect(store.recentlyUpdated().size).toBe(0);
   });
 
   describe('a reading for a turbine the fleet does not list (e.g. added since the load)', () => {
@@ -295,7 +338,7 @@ describe('FleetStore', () => {
       sse.push(unknown({ id: 'new-2', timestamp: '2026-01-03T00:05:00.000Z' }));
 
       expect(store.fleetTime()).toBe(before.fleetTime);
-      expect(store.recentlyUpdated()).toBeNull();
+      expect(store.recentlyUpdated().size).toBe(0);
       expect(store.fleet()).toEqual(before.fleet);
       expect(store.farms()).toEqual(before.farms);
       expect(store.turbines()).toEqual(before.turbines);
@@ -344,7 +387,7 @@ describe('FleetStore', () => {
       // Now listed: its live readings apply.
       sse.push(unknown({ id: 'new-3', timestamp: '2026-01-03T00:05:00.000Z' }));
       expect(store.turbines().find((t) => t.id === 'TURB999')?.latest?.id).toBe('new-3');
-      expect(store.recentlyUpdated()).toBe('TURB999');
+      expect([...store.recentlyUpdated()]).toEqual(['TURB999']);
     });
 
     describe('before the first fleet load finishes (the listed turbines are not known yet)', () => {
@@ -415,7 +458,7 @@ describe('FleetStore', () => {
 
       expect(store.turbines()[0].latest?.id).toBe(`ahead-${ms}`);
       expect(store.fleetTime()).toBe(NOW + ms);
-      expect(store.recentlyUpdated()).toBe('TURB001');
+      expect([...store.recentlyUpdated()]).toEqual(['TURB001']);
       expect(warn).not.toHaveBeenCalled();
     });
 
@@ -427,7 +470,7 @@ describe('FleetStore', () => {
 
       expect(store.fleetTime()).toBe(before.fleetTime);
       expect(store.turbines()[0].latest).toEqual(before.latest);
-      expect(store.recentlyUpdated()).toBeNull();
+      expect(store.recentlyUpdated().size).toBe(0);
       expect(warn).toHaveBeenCalledOnce();
       expect(warn.mock.calls[0].join(' ')).toMatch(/TURB001.*2026-01-03T00:10:01\.000Z/);
     });

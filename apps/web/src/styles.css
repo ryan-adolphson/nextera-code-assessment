@@ -79,8 +79,8 @@
 
 @theme {
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  /* Brief highlight when a live reading updates something (animate-flash). */
-  --animate-flash: flash 1.5s ease-out;
+  /* Brief highlight when a live reading updates something (animate-flash; FLASH_MS in fleet.store.ts). */
+  --animate-flash: flash 2s ease-out;
 
   @keyframes flash {
     from {

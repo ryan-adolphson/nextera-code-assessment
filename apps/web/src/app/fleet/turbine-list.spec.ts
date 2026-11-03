@@ -278,7 +278,7 @@ describe('TurbineList (/turbines)', () => {
         reading({ turbineId: 'TURB004', farmId: 'FARM02', timestamp: '2026-01-03T00:00:00.000Z' }),
       );
       await app.stable();
-      expect(ids()[0]).toBe('TURB004');
+      expect(ids()).toContain('TURB004'); // its place follows (turbine-table-live.spec.ts)
       expect(count()).toBe('7 of 7 turbines');
     });
   });

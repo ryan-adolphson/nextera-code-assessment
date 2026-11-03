@@ -85,10 +85,12 @@
   scrollTestId="turbines-scroll"
 >
   <!-- Sorting: MatSort (two states, aria-sort on the header) drives the `sort` signal; the
-       order itself (no reading last, ties by id) is computed in the component. -->
+       order itself (no reading last, ties by id) is computed in the component. appRowGlide
+       animates the live re-orders only. -->
   <table
     mat-table
     matSort
+    appRowGlide
     matSortDisableClear
     data-testid="turbines"
     [dataSource]="paging.page()"
@@ -182,7 +184,7 @@
       *matRowDef="let t; columns: columnKeys()"
       class="data-updated:animate-flash"
       [attr.data-turbine-id]="t.id"
-      [attr.data-updated]="t.id === store.recentlyUpdated() ? '' : null"
+      [attr.data-updated]="store.recentlyUpdated().has(t.id) ? '' : null"
     ></tr>
     <tr class="mat-mdc-no-data-row" *matNoDataRow>
       <td
