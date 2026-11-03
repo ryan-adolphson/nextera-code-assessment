@@ -1,36 +1,59 @@
 import { expect, test, type Page } from '@playwright/test';
-import { farmsFrom, farmsResponse, mainNav, turbinesOf } from '../support/fleet.js';
+import {
+  farmsFrom,
+  farmsResponse,
+  mainNav,
+  turbinesOf,
+  type FleetTurbine,
+} from '../support/fleet.js';
 import { SEED_NOW, logIn } from '../support/session.js';
 
 // Plan 5.2–5.3: staleness follows the client clock (FleetStore ticks every minute) across the
-// 15/30/60-minute boundaries. The clock is installed (page.clock: timers run only when told) and,
-// once the page has rendered GET /api/farms, set relative to TURB001's latest reading there
-// (Jan 2 23:55 with the fixture; a later demo reading locally). Live stream aborted, so no reading
-// arrives mid-test. Read-only.
+// 15/30/60-minute boundaries. page.clock is installed before the page opens and, once the page has
+// rendered GET /api/farms, moved relative to TURB001's latest reading there (Jan 2 23:55 with the
+// fixture; a later demo reading locally). Live stream aborted, so no reading arrives mid-test.
+// Read-only.
+//
+// The clock only ever moves forward (tickAt). Moving it back while Leaflet animates makes the test
+// time out: its pan and tile-fade loops compare `+new Date()` with a start time now in the future,
+// so they request a frame every 16 fake ms until the clock catches up, and runFor spends 30+ real
+// seconds on them.
 
 const MIN = 60_000;
 
-async function setup(page: Page): Promise<number> {
-  await page.clock.install({ time: SEED_NOW });
+/** Before TURB001's latest reading on any seeded database, so every tickAt is a forward move. */
+const CLOCK_START = new Date(SEED_NOW.getTime() - 60 * MIN);
+
+async function setup(page: Page): Promise<{ latest: number; turbines: FleetTurbine[] }> {
+  await page.clock.install({ time: CLOCK_START });
   await page.route('**/api/events**', (route) => route.abort());
   const farms = farmsResponse(page);
   await logIn(page, 'viewer');
-  const latest = turbinesOf(await farmsFrom(farms)).find((t) => t.id === 'TURB001')?.latest;
+  const turbines = turbinesOf(await farmsFrom(farms));
+  const latest = turbines.find((t) => t.id === 'TURB001')?.latest;
   expect(latest, 'TURB001 has readings (npm run db:seed)').toBeTruthy();
-  return Date.parse(latest!.timestamp);
+  return { latest: Date.parse(latest!.timestamp), turbines };
 }
 
-/** Moves the clock to `at` and lets the minute tick run, so the store reads the new time. */
+/**
+ * Jumps the clock to `at`, firing each due timer once: the store's minute tick reads exactly `at`.
+ * pauseAt fails rather than move back. resume is required: Angular's scheduler runs on the faked
+ * setTimeout and requestAnimationFrame, so a paused clock would never render the new time.
+ */
 async function tickAt(page: Page, at: number): Promise<void> {
-  await page.clock.setSystemTime(at - MIN);
-  await page.clock.runFor(MIN);
+  await page.clock.pauseAt(at);
+  await page.clock.resume();
 }
+
+/** Reporting at client time `at`: latest reading at most 15 min old (or ahead of the clock). */
+const reportingAt = (turbines: FleetTurbine[], at: number) =>
+  turbines.filter((t) => !!t.latest && at - Date.parse(t.latest.timestamp) <= 15 * MIN).length;
 
 test.describe('Staleness', () => {
   test('the Turbines pill goes Reporting → 15 → 30 → 60 min exactly after each boundary', async ({
     page,
   }) => {
-    const latest = await setup(page);
+    const { latest } = await setup(page);
     await mainNav(page).getByRole('link', { name: 'Turbines' }).click();
     await page.getByRole('searchbox', { name: 'Turbine or farm' }).fill('TURB001');
     const pill = page.locator('tr[data-turbine-id="TURB001"]').getByRole('cell').nth(2);
@@ -52,17 +75,19 @@ test.describe('Staleness', () => {
   });
 
   test('the turbine page pill and the overview count follow the clock', async ({ page }) => {
-    const latest = await setup(page);
+    const { latest, turbines } = await setup(page);
     const reporting = page.getByTestId('fleet-reporting');
-    await tickAt(page, latest + 5 * MIN);
-    const before = Number(/(\d+) \//.exec((await reporting.textContent()) ?? '')![1]);
+    const countAt = async (at: number) => {
+      await tickAt(page, at);
+      const count = reportingAt(turbines, at);
+      await expect(reporting).toHaveText(`${count} / ${turbines.length}`);
+      return count;
+    };
 
-    // Only TURB001's latest is known here; every turbine with an older-or-equal latest also goes
-    // stale, so the count can only drop (by at least TURB001).
-    await tickAt(page, latest + 40 * MIN);
-    await expect
-      .poll(async () => Number(/(\d+) \//.exec((await reporting.textContent()) ?? '')![1]))
-      .toBeLessThan(before);
+    // TURB001 reports at 5 min and is stale at 40, so the count has to drop by at least that one.
+    const before = await countAt(latest + 5 * MIN);
+    const after = await countAt(latest + 40 * MIN);
+    expect(after).toBeLessThan(before);
 
     await page.getByRole('link', { name: 'Prairie Ridge' }).first().click();
     await page.getByTestId('turbines').getByRole('link', { name: 'TURB001', exact: true }).click();

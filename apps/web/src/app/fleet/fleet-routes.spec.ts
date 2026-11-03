@@ -159,6 +159,18 @@ describe('Fleet routes', () => {
 
       expect(text('h1')).toBe('High Plains FARM02');
     });
+
+    it('shows each farm id as a chip that opens the farm like the rest of its row', async () => {
+      const pills = [
+        ...el().querySelectorAll<HTMLElement>('[data-testid=farms] [data-testid=farm-pill]'),
+      ];
+      expect(pills.map((pill) => pill.textContent?.trim())).toEqual(['FARM01', 'FARM02', 'FARM03']);
+
+      pills[2].click();
+      await stable();
+
+      expect(text('h1')).toBe('Red Canyon FARM03');
+    });
   });
 
   describe('farm page (/farms/:farmId)', () => {
@@ -173,7 +185,7 @@ describe('Fleet routes', () => {
       expect(cells(rows()[0])).toEqual([
         'TURB002',
         'Reporting',
-        'Not commissioned',
+        '', // an admin's switch: its name and state are on the control, not in the text
         '2,259',
         '8.5',
         '80.0',

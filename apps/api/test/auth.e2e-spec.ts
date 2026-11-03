@@ -135,6 +135,7 @@ describe('Auth (e2e)', () => {
       ['GET', '/api/alert-configs', 'viewer'],
       ['GET', `/api/alert-configs/${UNKNOWN_ID}`, 'viewer'],
       ['GET', `/api/reports/telemetry?turbineId=TURB001&${DAY}`, 'owner'],
+      ['PATCH', '/api/turbines/TURB001', 'owner', { commissioned: false }],
       ['POST', '/api/alert-configs', 'owner', rule],
       [
         'PATCH',

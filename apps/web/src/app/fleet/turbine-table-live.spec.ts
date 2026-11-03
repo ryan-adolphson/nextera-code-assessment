@@ -131,7 +131,7 @@ describe('TurbineTable live updates', () => {
 
     expect(ids()[0]).toBe('TURB007');
     await wait(ORDER_MAX_HOLD_MS);
-    expect(reorder).not.toHaveBeenCalled(); // the timer finds the order already applied
+    expect(reorder).not.toHaveBeenCalled(); // the sort already applied the order: no timer left
   });
 
   it('applies a filter at once during a burst, in the newest order', async () => {
@@ -150,7 +150,6 @@ describe('TurbineTable live updates', () => {
   it('cancels a glide in flight when the sort changes', async () => {
     await open('/turbines');
     const cancel = vi.spyOn(RowGlide.prototype, 'cancel');
-    cancel.mockClear();
 
     clickSort('power');
 
@@ -190,16 +189,17 @@ describe('TurbineTable live updates', () => {
     const button = (label: string) =>
       app.root().querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
     const onPage: string[][] = [];
+    const disabled = (label: string) => button(label).getAttribute('aria-disabled') === 'true';
     const walk = () => {
       onPage.length = 0;
-      while (!button('Previous page').disabled) {
-        button('Previous page').click();
-        TestBed.tick();
-      }
-      for (;;) {
-        onPage.push(ids());
-        if (button('Next page').disabled) break;
+      onPage.push(ids());
+      while (!disabled('Next page')) {
         button('Next page').click();
+        TestBed.tick();
+        onPage.push(ids());
+      }
+      while (!disabled('Previous page')) {
+        button('Previous page').click();
         TestBed.tick();
       }
       return onPage.flat();

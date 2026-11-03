@@ -147,6 +147,10 @@ Vitest 4 + jsdom through `@angular/build:unit-test` (`angular.json`). The setup 
   - A fulfilled body ends the stream, so the browser reconnects. Make assertions tolerant of that, or count requests.
   - A 401 or 503 fulfil makes the browser give up, which exercises the app's own backoff.
 - **Clock:** `setFixedTime` freezes `Date.now` but timers still run. For backoff or staleness over time, use `page.clock.install({ time: SEED_NOW })` and `page.clock.runFor(ms)` / `fastForward`. Don't mix the two in one test.
+- **Moving an installed clock:**
+  - Only move it forward. Leaflet's pan and tile-fade loops compare `+new Date()` with a start time, so moving the clock back during an animation keeps them requesting frames until it catches up. A 60 s `setSystemTime` back plus `runFor` took 37 s, and the OSM tile requests ran into the hundreds.
+  - To land on an exact time, use `pauseAt(at)` then `resume()`. Each due timer fires once, at exactly `at`. Skip `resume()` and nothing renders, because Angular's zoneless scheduler runs on the faked `setTimeout` and `requestAnimationFrame`.
+  - `runFor` fires every frame in the range, one real macrotask each, so avoid long `runFor`s on pages that animate.
 - The access token is in the events URL (`?access_token=`). Match routes with a glob that ignores the query.
 
 **Run:** `cd e2e && npx playwright test` (`--project read-only`, `--list`, `--ui`), and `npm run typecheck` in `e2e/`. CI's `browser-e2e` job runs the same thing against a fresh compose stack.

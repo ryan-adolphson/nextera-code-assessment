@@ -383,6 +383,38 @@ test.describe('Turbines table', () => {
   });
 });
 
+test.describe('Commissioned cell by role', () => {
+  // Reads only: the switch itself is in tests/data/commissioned.spec.ts.
+  test('a viewer sees the icon and its words, and no switch', async ({ page }) => {
+    await openTurbines(page);
+    const row = page.locator('tr[data-turbine-id="TURB001"]');
+    await expect(row.getByTestId('commissioned-icon')).toBeVisible();
+    await expect(row.getByTestId('commissioned-cell')).toHaveText(/^\s*(Not commissioned|Commissioned)\s*$/);
+    await expect(page.getByTestId('commissioned-toggle')).toHaveCount(0);
+    await expect(page.getByRole('switch', { name: /^Mark .* as commissioned$/ })).toHaveCount(0);
+  });
+
+  for (const role of ['owner', 'admin'] as const) {
+    test(`an ${role} gets a switch in the cell on /turbines and the farm page, not the icon or its words`, async ({
+      page,
+    }) => {
+      await page.clock.setFixedTime(SEED_NOW);
+      await page.route('**/api/events**', (route) => route.abort());
+      await logIn(page, role);
+      await mainNav(page).getByRole('link', { name: 'Turbines' }).click();
+      const row = page.locator('tr[data-turbine-id="TURB001"]');
+      await expect(row.getByRole('switch', { name: 'Mark TURB001 as commissioned' })).toBeVisible();
+      await expect(row.getByTestId('commissioned-toggle')).toBeVisible();
+      await expect(row.getByTestId('commissioned-icon')).toHaveCount(0);
+      await expect(row.getByTestId('commissioned-cell')).not.toContainText('ommissioned');
+
+      await row.getByRole('link', { name: 'Prairie Ridge' }).click();
+      await expect(page).toHaveURL(/\/farms\/FARM01$/);
+      await expect(page.getByRole('switch', { name: 'Mark TURB001 as commissioned' })).toBeVisible();
+    });
+  }
+});
+
 test.describe('Hide turbines with no data', () => {
   test('is on by default: never-reported turbines are hidden and the count says how many', async ({
     page,

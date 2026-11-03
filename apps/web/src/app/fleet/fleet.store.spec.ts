@@ -1,4 +1,4 @@
-import { provideHttpClient } from '@angular/common/http';
+import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { WritableSignal, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
@@ -180,6 +180,219 @@ describe('FleetStore', () => {
 
       expect(api.farms).toHaveBeenCalledTimes(2);
       expect(store.turbines().find((t) => t.id === 'TURB990')?.staleness).toBe('empty');
+    });
+  });
+
+  describe('setCommissioned', () => {
+    const answer = (commissioned: boolean, id = 'TURB002') => ({
+      id,
+      farmId: 'FARM02',
+      latitude: 39.741,
+      longitude: -101.207,
+      commissioned,
+    });
+    /** The fleet as the server has it, with TURB002's value. */
+    const fleetWith = (commissioned: boolean) => {
+      const fleet = farmsFixture();
+      fleet[1].turbines[0].commissioned = commissioned;
+      return fleet;
+    };
+    const value = (store: FleetStore, id = 'TURB002') =>
+      store.turbines().find((t) => t.id === id)!.commissioned;
+    /** A store whose PATCH answers only when the spec says so. */
+    function saving() {
+      const app = setup();
+      const patch = new Subject<ReturnType<typeof answer>>();
+      app.api.setCommissioned.mockReturnValue(patch);
+      return { ...app, patch };
+    }
+
+    it('shows the new value at once and is pending until the answer, without another load', () => {
+      const { store, api, patch } = saving();
+
+      store.setCommissioned('TURB002', true);
+
+      expect(api.setCommissioned).toHaveBeenCalledWith('TURB002', true);
+      expect(value(store)).toBe(true);
+      expect(store.commissionedPending()).toEqual(new Set(['TURB002']));
+
+      patch.next(answer(true));
+
+      expect(value(store)).toBe(true);
+      expect(store.commissionedPending().size).toBe(0);
+      expect(store.commissionedError()).toBeNull();
+      expect(api.farms).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the API's answer once it arrives", () => {
+      const { store, patch } = saving();
+
+      store.setCommissioned('TURB002', true);
+      patch.next(answer(false));
+
+      expect(value(store)).toBe(false);
+    });
+
+    it('sends one request per turbine at a time, and tracks turbines separately', () => {
+      const { store, api } = saving();
+
+      store.setCommissioned('TURB002', true);
+      store.setCommissioned('TURB002', false);
+      expect(api.setCommissioned).toHaveBeenCalledTimes(1);
+      expect(value(store)).toBe(true);
+
+      store.setCommissioned('TURB001', false);
+      expect(store.commissionedPending()).toEqual(new Set(['TURB001', 'TURB002']));
+      expect(value(store, 'TURB001')).toBe(false);
+    });
+
+    it('rolls back on failure, says why, reloads, and can be tried again', () => {
+      const { store, api, patch } = saving();
+
+      store.setCommissioned('TURB002', true);
+      patch.error(
+        new HttpErrorResponse({
+          status: 400,
+          error: { message: 'commissioned must be a boolean' },
+        }),
+      );
+
+      expect(value(store)).toBe(false);
+      expect(store.commissionedPending().size).toBe(0);
+      expect(store.commissionedError()).toBe(
+        'Could not mark TURB002 as commissioned. commissioned must be a boolean.',
+      );
+      expect(api.farms).toHaveBeenCalledTimes(2);
+
+      api.setCommissioned.mockReturnValue(of(answer(true)));
+      store.setCommissioned('TURB002', true);
+
+      expect(store.commissionedError()).toBeNull();
+      expect(value(store)).toBe(true);
+    });
+
+    it('words a 404, which never says why, and an un-commissioning', () => {
+      const { store, api } = setup();
+      api.setCommissioned.mockReturnValue(
+        throwError(
+          () => new HttpErrorResponse({ status: 404, error: { message: 'Cannot PATCH' } }),
+        ),
+      );
+
+      store.setCommissioned('TURB001', false);
+
+      expect(value(store, 'TURB001')).toBe(true);
+      expect(store.commissionedError()).toBe(
+        'Could not mark TURB001 as not commissioned. The turbine no longer exists, or your account can no longer change it.',
+      );
+    });
+
+    it('does not reload after a failure that signed the user out', () => {
+      const { store, api, patch } = saving();
+      const auth = TestBed.inject(AuthStore) as unknown as ReturnType<typeof fakeAuth>;
+
+      store.setCommissioned('TURB002', true);
+      auth.isAuthenticated.set(false);
+      patch.error(new HttpErrorResponse({ status: 401 }));
+
+      expect(value(store)).toBe(false);
+      expect(api.farms).toHaveBeenCalledTimes(1);
+    });
+
+    it('is not flipped back by a reload answered while the request is pending', () => {
+      const { store, api, sse, patch } = saving();
+      store.setCommissioned('TURB002', true);
+
+      api.farms.mockReturnValue(of(fleetWith(false))); // read before the commit
+      sse.pushEvent('fleet.changed', { turbineId: 'TURB001' });
+
+      expect(api.farms).toHaveBeenCalledTimes(2);
+      expect(value(store)).toBe(true);
+      expect(store.commissionedPending().has('TURB002')).toBe(true);
+
+      api.farms.mockReturnValue(of(fleetWith(true)));
+      patch.next(answer(true));
+
+      expect(value(store)).toBe(true);
+      expect(store.commissionedPending().size).toBe(0);
+    });
+
+    it('replaces a load still in flight at the answer: its old value can never show', () => {
+      const { store, api, sse, patch } = saving();
+      const stale = new Subject<FarmOverview[]>();
+      const fresh = new Subject<FarmOverview[]>();
+      api.farms.mockReturnValue(stale);
+      sse.pushEvent('fleet.changed', { turbineId: 'TURB001' });
+      store.setCommissioned('TURB002', true);
+
+      api.farms.mockReturnValue(fresh);
+      patch.next(answer(true));
+
+      expect(api.farms).toHaveBeenCalledTimes(3);
+      expect(stale.observed).toBe(false);
+      fresh.next(fleetWith(true));
+      expect(value(store)).toBe(true);
+    });
+
+    it("after a load sent meanwhile, loads again: someone else's newer change wins", () => {
+      const { store, api, sse, patch } = saving();
+      store.setCommissioned('TURB002', true);
+      // Ours commits, then another user's; their event's load has already been answered.
+      api.farms.mockReturnValue(of(fleetWith(false)));
+      sse.pushEvent('fleet.changed', { turbineId: 'TURB002' });
+
+      patch.next(answer(true));
+
+      expect(api.farms).toHaveBeenCalledTimes(3);
+      expect(value(store)).toBe(false);
+    });
+
+    it('rolls back to what a reload meanwhile said, not to the value before the click', () => {
+      const { store, api, sse, patch } = saving();
+      store.setCommissioned('TURB002', true);
+      api.farms.mockReturnValue(of(fleetWith(true))); // it committed; the answer gets lost
+      sse.pushEvent('fleet.changed', { turbineId: 'TURB002' });
+
+      patch.error(new HttpErrorResponse({ status: 0 }));
+
+      expect(value(store)).toBe(true);
+      expect(store.commissionedError()).toContain('Could not reach the API');
+    });
+
+    it('is not a reading: no flash, and the latest readings stay', () => {
+      const { store, patch } = saving();
+      const latest = store.turbines().map((t) => t.latest);
+
+      store.setCommissioned('TURB002', true);
+      patch.next(answer(true));
+
+      expect(store.recentlyUpdated().size).toBe(0);
+      expect(store.turbines().map((t) => t.latest)).toEqual(latest);
+    });
+
+    it('merges only the value: the answer has no latest reading, and a later reload keeps it', () => {
+      const { store, patch } = saving();
+      const before = store.turbines().find((t) => t.id === 'TURB002')!;
+
+      store.setCommissioned('TURB002', true);
+      patch.next(answer(true)); // { id, farmId, latitude, longitude, commissioned }
+
+      expect(store.turbines().find((t) => t.id === 'TURB002')).toEqual({
+        ...before,
+        commissioned: true,
+      });
+      expect(before.latest).not.toBeNull();
+      expect(before.staleness).toBe('ok');
+    });
+
+    it('ignores an answer once the store is destroyed', () => {
+      const { store, patch } = saving();
+      store.setCommissioned('TURB002', true);
+
+      TestBed.resetTestingModule();
+
+      expect(patch.observed).toBe(false);
+      expect(store.commissionedError()).toBeNull();
     });
   });
 

@@ -98,6 +98,11 @@ export function farmLabel(farm: FarmRef | null, id: string): string {
   return farm ? `${farm.name} (${farm.id})` : `Unknown farm ${id}`;
 }
 
+/** The name beside a farm's id pill in the tables: "Prairie Ridge", or "Unknown farm". */
+export function farmName(farm: FarmRef | null): string {
+  return farm?.name ?? 'Unknown farm';
+}
+
 /** "12 readings imported" (+ ", 2 already stored"). */
 export function importedText({ imported, duplicates }: UnallocatedResolution): string {
   const text = `${imported} ${imported === 1 ? 'reading' : 'readings'} imported`;

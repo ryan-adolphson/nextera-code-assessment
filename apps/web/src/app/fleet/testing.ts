@@ -22,7 +22,13 @@ import { BROWSER_TIME_ZONE, TIME_ZONE_STORAGE_PREFIX, TimeZoneMode } from '../co
 import { SseEvent, SseService } from '../core/sse.service';
 import { provideIcons } from '../ui/icons';
 import { FleetApi } from './fleet-api.service';
-import { FarmOverview, MetricStats, Telemetry, TelemetryStats } from './fleet.model';
+import {
+  FarmOverview,
+  MetricStats,
+  Telemetry,
+  TelemetryStats,
+  TurbineResponse,
+} from './fleet.model';
 import { WeatherApi } from '../weather/weather-api.service';
 import {
   WeatherDay,
@@ -314,6 +320,10 @@ export function fakes(farms: FarmOverview[] = farmsFixture()) {
     telemetry: vi.fn((): Observable<Telemetry[]> => of([])),
     telemetryStats: vi.fn((): Observable<TelemetryStats> =>
       of(statsFixture({ from: null, to: null }, null)),
+    ),
+    /** Answers at once with the requested value; specs pass a Subject to hold the answer back. */
+    setCommissioned: vi.fn((id: string, commissioned: boolean): Observable<TurbineResponse> =>
+      of({ id, farmId: 'FARM01', latitude: 40, longitude: -100, commissioned }),
     ),
   };
   const sse = {

@@ -31,7 +31,7 @@ const id = (suffix: string) => `E2E-${RUN}-${suffix}`;
 const ours = (entry: UnallocatedEntry) =>
   entry.turbineId.startsWith(`E2E-${RUN}-`) ||
   (entry.turbineId === 'TURB001' && entry.reportedFarmId === 'FARM02') ||
-  (entry.turbineId === 'TURB002' && ['FARM01', 'FARM99'].includes(entry.reportedFarmId));
+  (entry.turbineId === 'TURB002' && ['FARM01', 'FARM07', 'FARM99'].includes(entry.reportedFarmId));
 
 /** A unique, whole-second measurement time in 2020 for this run. */
 const MISMATCH_AT = new Date(
@@ -49,7 +49,7 @@ function pendingRow(page: Page, turbineId: string, reportedFarmId?: string) {
   const row = page.locator(`[data-testid="unallocated-row"][data-turbine-id="${turbineId}"]`);
   return reportedFarmId
     ? row.filter({
-        // "Prairie Ridge (FARM01)", or "Unknown farm FARM99" when the farm doesn't exist.
+        // "Prairie Ridge FARM01" (the id in a pill), or "Unknown farm FARM99" when the farm doesn't exist.
         has: page.getByTestId('reported-farm').filter({ hasText: new RegExp(`\\b${reportedFarmId}\\b`) }),
       })
     : row;
@@ -147,7 +147,7 @@ test.describe('[DATA] Unallocated turbines', () => {
     await expect(row).toBeVisible();
     expect(await page.evaluate(() => (window as { e2eNoReload?: boolean }).e2eNoReload)).toBe(true);
     await expect(row.getByTestId('kind')).toHaveText('Unknown turbine');
-    await expect(row.getByTestId('reported-farm')).toHaveText('Prairie Ridge (FARM01)');
+    await expect(row.getByTestId('reported-farm')).toHaveText('Prairie Ridge FARM01');
     await expect(row.getByTestId('current-farm')).toHaveText('Not in the fleet');
     await expect(row.getByTestId('held')).toHaveText('3');
     // The row has no latest values: the newest held reading (expanded below) carries them.
@@ -208,7 +208,10 @@ test.describe('[DATA] Unallocated turbines', () => {
     await expect(turbineRow).toContainText('Prairie Ridge');
     await expect(turbineRow.getByTestId('staleness')).toHaveText('Reporting');
     await expect(turbineRow).toContainText('Jan 2, 23:55');
-    await expect(turbineRow.getByTestId('commissioned-icon')).toHaveAttribute('data-icon', 'x');
+    // An owner gets the switch instead of the icon: a new turbine isn't commissioned.
+    await expect(
+      turbineRow.getByRole('switch', { name: `Mark ${turbineId} as commissioned` }),
+    ).not.toBeChecked();
 
     // Its imported readings are on the turbine page.
     await turbineRow.getByRole('link', { name: turbineId }).click();
@@ -239,8 +242,8 @@ test.describe('[DATA] Unallocated turbines', () => {
     await openPending(page);
     const row = pendingRow(page, 'TURB001');
     await expect(row.getByTestId('kind')).toHaveText('Farm mismatch');
-    await expect(row.getByTestId('reported-farm')).toHaveText('High Plains (FARM02)');
-    await expect(row.getByTestId('current-farm')).toHaveText('Prairie Ridge (FARM01)');
+    await expect(row.getByTestId('reported-farm')).toHaveText('High Plains FARM02');
+    await expect(row.getByTestId('current-farm')).toHaveText('Prairie Ridge FARM01');
     // Keep is the row's button; Move is in its "More actions" menu, enabled (FARM02 exists).
     const { trigger, menu } = await openMoreActions(page, row, 'TURB001');
     await expect(menu.getByRole('menuitem', { name: 'Move TURB001 to FARM02…' })).toBeEnabled();
@@ -290,7 +293,7 @@ test.describe('[DATA] Unallocated turbines', () => {
     await openPending(page);
     const row = pendingRow(page, turbineId);
     await expect(row.getByTestId('kind')).toHaveText('Farm mismatch');
-    await expect(row.getByTestId('current-farm')).toHaveText('Prairie Ridge (FARM01)');
+    await expect(row.getByTestId('current-farm')).toHaveText('Prairie Ridge FARM01');
     const { menu } = await openMoreActions(page, row, turbineId);
     await menu.getByRole('menuitem', { name: `Move ${turbineId} to FARM03…` }).click();
 
@@ -372,7 +375,7 @@ test.describe('[DATA] Unallocated turbines', () => {
     await page.getByTestId('unallocated-tabs').getByRole('tab', { name: 'Blocked' }).click();
     await expect(page).toHaveURL(/\/unallocated\/blocked$/);
     const blocked = page.locator(`[data-testid="blocked-row"][data-turbine-id="${turbineId}"]`);
-    await expect(blocked).toContainText('Blue Sky (FARM05)');
+    await expect(blocked.getByTestId('reported-farm')).toHaveText('Blue Sky FARM05');
     await expect(blocked.getByTestId('kind')).toHaveText('Unknown turbine');
     await expect(blocked.getByTestId('blocked-by')).toHaveText('owner@nextera.local');
     await expect(blocked.getByTestId('blocked-at')).not.toHaveText('–');
@@ -390,6 +393,67 @@ test.describe('[DATA] Unallocated turbines', () => {
       ...(await listUnallocated(request, token, 'blocked')),
     ];
     expect(all.filter((e) => e.turbineId === turbineId)).toEqual([]);
+  });
+
+  test('[DATA] Pending and Blocked show each farm id in a pill, for known and unknown farms', async ({
+    page,
+    request,
+  }) => {
+    const unknownFarm = id('PILLU');
+    const knownFarm = id('PILLK');
+    const blockedKnown = id('PILLBK');
+    const blockedUnknown = id('PILLBU');
+    const at = '2026-01-02T23:30:00Z';
+    await uploadTelemetry(request, [
+      { turbineId: unknownFarm, farmId: 'FARM99', timestamp: at },
+      { turbineId: knownFarm, farmId: 'FARM06', timestamp: at },
+      { turbineId: 'TURB002', farmId: 'FARM07', timestamp: ROW_MISMATCH_AT },
+      { turbineId: blockedKnown, farmId: 'FARM05', timestamp: at },
+      { turbineId: blockedUnknown, farmId: 'FARM98', timestamp: at },
+    ]);
+    const token = await apiToken(request, 'owner');
+    for (const entry of (await listUnallocated(request, token, 'pending')).filter((e) =>
+      [blockedKnown, blockedUnknown].includes(e.turbineId),
+    )) {
+      const blocked = await request.post(`${API_URL}/unallocated-turbines/${entry.id}/block`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(blocked.status()).toBe(200);
+    }
+
+    await openPending(page);
+    // An unknown farm: the id is in a pill after the words, marked as not existing.
+    const unknown = pendingRow(page, unknownFarm).getByTestId('reported-farm');
+    await expect(unknown).toHaveText('Unknown farm FARM99');
+    await expect(unknown).toHaveAttribute('data-exists', 'false');
+    await expect(unknown.getByTestId('farm-pill')).toHaveText('FARM99');
+    // An unknown turbine has no current farm, so no pill there.
+    const notInFleet = pendingRow(page, unknownFarm).getByTestId('current-farm');
+    await expect(notInFleet).toHaveText('Not in the fleet');
+    await expect(notInFleet.getByTestId('farm-pill')).toHaveCount(0);
+
+    const known = pendingRow(page, knownFarm).getByTestId('reported-farm');
+    await expect(known).toHaveText('Cedar Valley FARM06');
+    await expect(known).toHaveAttribute('data-exists', 'true');
+    await expect(known.getByTestId('farm-pill')).toHaveText('FARM06');
+
+    // A farm mismatch has both, each in its own pill.
+    const mismatch = pendingRow(page, 'TURB002', 'FARM07');
+    await expect(mismatch.getByTestId('reported-farm').getByTestId('farm-pill')).toHaveText('FARM07');
+    await expect(mismatch.getByTestId('current-farm')).toHaveText('High Plains FARM02');
+    await expect(mismatch.getByTestId('current-farm').getByTestId('farm-pill')).toHaveText('FARM02');
+
+    await page.getByTestId('unallocated-tabs').getByRole('tab', { name: 'Blocked' }).click();
+    const blockedRow = (turbineId: string) =>
+      page.locator(`[data-testid="blocked-row"][data-turbine-id="${turbineId}"]`);
+    const blockedFarm = blockedRow(blockedKnown).getByTestId('reported-farm');
+    await expect(blockedFarm).toHaveText('Blue Sky FARM05');
+    await expect(blockedFarm).toHaveAttribute('data-exists', 'true');
+    await expect(blockedFarm.getByTestId('farm-pill')).toHaveText('FARM05');
+    const blockedNoFarm = blockedRow(blockedUnknown).getByTestId('reported-farm');
+    await expect(blockedNoFarm).toHaveText('Unknown farm FARM98');
+    await expect(blockedNoFarm).toHaveAttribute('data-exists', 'false');
+    await expect(blockedNoFarm.getByTestId('farm-pill')).toHaveText('FARM98');
   });
 
   test.describe('row actions in a real browser (layout, keyboard)', () => {

@@ -114,13 +114,16 @@
                 data-testid="reported-farm"
                 [attr.data-exists]="row.entry.reportedFarm !== null"
                 [class.text-muted]="row.entry.reportedFarm === null"
-                >{{ row.reported }}</span
-              >
+                >{{ farmName(row.entry.reportedFarm) }}
+                <app-farm-pill [farmId]="row.entry.reportedFarmId"
+              /></span>
             </span>
             <span class="block">
-              @if (row.current; as current) {
+              @if (row.entry.currentFarm; as current) {
                 <span class="sr-only">Current: </span>
-                <span class="text-muted" data-testid="current-farm">{{ current }}</span>
+                <span class="text-muted" data-testid="current-farm"
+                  >{{ current.name }} <app-farm-pill [farmId]="current.id"
+                /></span>
               } @else {
                 <span class="text-muted" data-testid="current-farm">Not in the fleet</span>
               }

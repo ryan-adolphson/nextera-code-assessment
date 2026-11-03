@@ -41,8 +41,8 @@
     <ng-container matColumnDef="farm">
       <th mat-header-cell *matHeaderCellDef>Farm</th>
       <td mat-cell *matCellDef="let farm">
-        <a [routerLink]="['/farms', farm.id]" (click)="$event.stopPropagation()">{{ farm.name }}</a>
-        <span class="text-muted"> {{ farm.id }}</span>
+        <a [routerLink]="['/farms', farm.id]" (click)="$event.stopPropagation()">{{ farm.name }}</a
+        >&ngsp;<app-farm-pill [farmId]="farm.id" />
       </td>
     </ng-container>
     <ng-container matColumnDef="location">

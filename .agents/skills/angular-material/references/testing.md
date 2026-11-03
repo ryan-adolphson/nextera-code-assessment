@@ -43,7 +43,7 @@ const pages = await loader.getHarness(MatPaginatorHarness.with({ selector: '[dat
 | `MatCalendarHarness`, `MatCalendarCellHarness` | `getCells`, `selectCell`, `next`, `previous`, `changeView`, `getCurrentView`, `getCurrentViewLabel`; cell `select`, `getText`, `getAriaLabel`, `isSelected`, `isDisabled`, `isToday`, `isRangeStart`, `isRangeEnd`, `isInRange` |
 | `MatSlideToggleHarness` | `check`, `uncheck`, `toggle`, `isChecked`, `isDisabled`, `isRequired`, `isValid`, `getLabelText`, `getAriaLabel`, `getName`, `focus`, `blur` |
 | `MatCheckboxHarness`, `MatRadioGroupHarness`/`MatRadioButtonHarness` | `check`/`uncheck`/`toggle`, `isChecked`, …; group `checkRadioButton`, `getCheckedValue`, `getRadioButtons` |
-| `MatChipSetHarness`, `MatChipHarness` | `getChips`; chip `getText`, `isDisabled`, `remove`, `getRemoveButton`, `getAvatar` (edit button getter: `geEditButton`, sic) |
+| `MatChipSetHarness`, `MatChipHarness` (also finds a bare `mat-chip` without a set) | `getChips`; chip `getText`, `isDisabled`, `remove`, `getRemoveButton`, `getAvatar` (edit button getter: `geEditButton`, sic) |
 | `MatTableHarness`, `MatRowHarness`, `MatCellHarness` | `getRows`, `getHeaderRows`, `getFooterRows`, `getNoDataRow`, `getCellTextByIndex`, `getCellTextByColumnName`; row `getCells`; cell `getText`, `getColumnName` |
 | `MatSortHarness`, `MatSortHeaderHarness` | `getSortHeaders`, `getActiveHeader`; header `click`, `getLabel`, `getSortDirection`, `isActive`, `isDisabled` |
 | `MatPaginatorHarness` | `goToNextPage`, `goToPreviousPage`, `goToFirstPage`, `goToLastPage`, `isNextPageDisabled`, `isPreviousPageDisabled`, `setPageSize`, `getPageSize`, `getRangeLabel` |

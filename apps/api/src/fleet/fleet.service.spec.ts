@@ -1,6 +1,11 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { Prisma, PrismaService } from '@nextera/shared';
+import {
+  EventStore,
+  FLEET_CHANGED,
+  Prisma,
+  PrismaService,
+} from '@nextera/shared';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { FleetService } from './fleet.service.js';
 import { WeatherQueryDto } from './dto/weather-query.dto.js';
@@ -38,13 +43,140 @@ const row = (turbineId: string, farmId: string) => ({
 describe('FleetService', () => {
   let service: FleetService;
   let prisma: DeepMockProxy<PrismaService>;
+  let events: DeepMockProxy<EventStore>;
 
   beforeEach(async () => {
     prisma = mockDeep<PrismaService>();
+    events = mockDeep<EventStore>();
     const moduleRef = await Test.createTestingModule({
-      providers: [FleetService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        FleetService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EventStore, useValue: events },
+      ],
     }).compile();
     service = moduleRef.get(FleetService);
+  });
+
+  describe('setCommissioned', () => {
+    const turbine = (commissioned: boolean) => ({
+      id: '00000000-0000-4000-8000-000000000001', // internal UUID, never exposed
+      turbineId: 'TURB001',
+      farmId: 'FARM01',
+      latitude: new Prisma.Decimal('41.263'),
+      longitude: new Prisma.Decimal('-96.518'),
+      commissioned,
+    });
+    const response = (commissioned: boolean) => ({
+      id: 'TURB001',
+      farmId: 'FARM01',
+      latitude: 41.263,
+      longitude: -96.518,
+      commissioned,
+    });
+
+    it('updates only a row whose value differs, returns the turbine and publishes fleet.changed', async () => {
+      prisma.turbine.updateManyAndReturn.mockResolvedValue([
+        turbine(true),
+      ] as never);
+
+      await expect(service.setCommissioned('TURB001', true)).resolves.toEqual(
+        response(true),
+      );
+
+      expect(prisma.turbine.updateManyAndReturn).toHaveBeenCalledWith({
+        where: { turbineId: 'TURB001', commissioned: { not: true } },
+        data: { commissioned: true },
+      });
+      expect(prisma.turbine.findUnique).not.toHaveBeenCalled();
+      expect(events.publish).toHaveBeenCalledTimes(1);
+      expect(events.publish).toHaveBeenCalledWith(FLEET_CHANGED, {
+        turbineId: 'TURB001',
+      });
+    });
+
+    it('un-commissions a turbine the same way', async () => {
+      prisma.turbine.updateManyAndReturn.mockResolvedValue([
+        turbine(false),
+      ] as never);
+
+      await expect(service.setCommissioned('TURB001', false)).resolves.toEqual(
+        response(false),
+      );
+
+      expect(prisma.turbine.updateManyAndReturn).toHaveBeenCalledWith({
+        where: { turbineId: 'TURB001', commissioned: { not: false } },
+        data: { commissioned: false },
+      });
+    });
+
+    it('answers an unknown turbine with 404 and no event', async () => {
+      prisma.turbine.updateManyAndReturn.mockResolvedValue([] as never);
+      prisma.turbine.findUnique.mockResolvedValue(null);
+
+      const error = await service
+        .setCommissioned('TURB404', true)
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(NotFoundException);
+      expect((error as NotFoundException).message).toBe(
+        'Turbine TURB404 not found',
+      );
+      expect(events.publish).not.toHaveBeenCalled();
+    });
+
+    it('returns the turbine without an event when the value is already set', async () => {
+      prisma.turbine.updateManyAndReturn.mockResolvedValue([] as never);
+      prisma.turbine.findUnique.mockResolvedValue(turbine(true) as never);
+
+      await expect(service.setCommissioned('TURB001', true)).resolves.toEqual(
+        response(true),
+      );
+
+      expect(events.publish).not.toHaveBeenCalled();
+    });
+
+    it('publishes only after the write has committed', async () => {
+      let commit!: (rows: unknown) => void;
+      prisma.turbine.updateManyAndReturn.mockReturnValue(
+        new Promise((resolve) => {
+          commit = resolve;
+        }) as never,
+      );
+
+      const result = service.setCommissioned('TURB001', true);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(events.publish).not.toHaveBeenCalled();
+
+      commit([turbine(true)]);
+      await result;
+      expect(events.publish).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not publish when the write fails, and lets the error reach the global filter', async () => {
+      const failure = new Error('database down');
+      prisma.turbine.updateManyAndReturn.mockRejectedValue(failure);
+
+      await expect(service.setCommissioned('TURB001', true)).rejects.toBe(
+        failure,
+      );
+
+      expect(events.publish).not.toHaveBeenCalled();
+    });
+
+    it('still returns 200 when Redis fails after the commit', async () => {
+      prisma.turbine.updateManyAndReturn.mockResolvedValue([
+        turbine(true),
+      ] as never);
+      events.publish.mockRejectedValue(new Error('redis down'));
+      vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      await expect(service.setCommissioned('TURB001', true)).resolves.toEqual(
+        response(true),
+      );
+
+      expect(Logger.prototype.error).toHaveBeenCalledOnce();
+    });
   });
 
   describe('overview', () => {

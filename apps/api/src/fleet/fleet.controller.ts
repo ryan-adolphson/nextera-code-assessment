@@ -1,10 +1,19 @@
-import { Controller, Get, Param, Query, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Query,
+  Res,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import type {
   FarmDailyHistoryResponse,
   FarmWeatherResponse,
   TelemetryResponse,
   TelemetryStatsResponse,
+  TurbineResponse,
   TurbineWeatherResponse,
 } from '@nextera/shared';
 import { Roles } from '../auth/auth.decorators.js';
@@ -12,6 +21,7 @@ import { jsonEtag } from '../common/etag.js';
 import { FarmDailyQueryDto } from './dto/farm-daily-query.dto.js';
 import { WeatherQueryDto } from './dto/weather-query.dto.js';
 import { TelemetryQueryDto } from './dto/telemetry-query.dto.js';
+import { UpdateTurbineDto } from './dto/update-turbine.dto.js';
 import { FarmOverview, FleetService } from './fleet.service.js';
 
 @Roles('viewer')
@@ -56,6 +66,19 @@ export class FleetController {
     @Query() query: WeatherQueryDto,
   ): Promise<FarmWeatherResponse> {
     return this.fleet.weather(farmId, query);
+  }
+
+  /**
+   * PATCH /api/turbines/:id { commissioned }: marks a turbine commissioned or not. Owner and up
+   * (the handler's @Roles overrides the controller's). Returns the updated turbine.
+   */
+  @Roles('owner')
+  @Patch('turbines/:id')
+  updateTurbine(
+    @Param('id') id: string,
+    @Body() dto: UpdateTurbineDto,
+  ): Promise<TurbineResponse> {
+    return this.fleet.setCommissioned(id, dto.commissioned);
   }
 
   /**

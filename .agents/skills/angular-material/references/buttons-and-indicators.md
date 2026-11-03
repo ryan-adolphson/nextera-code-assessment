@@ -68,6 +68,8 @@ Repo pattern (`alerting/alert-chips.ts`, a local component so the History page c
 </mat-chip-set>
 ```
 
+**A single read-only chip (`ui/farm-pill.ts`, `FarmPill`):** a bare `<mat-chip disableRipple>` without a `mat-chip-set`, for one id next to a name (`Prairie Ridge` + `FARM01`). A `MatChip` doesn't need the set; with no actions it has no role, no `tabindex` and no click handler, so screen readers read plain text and a click reaches the row around it. Its `.farm-pill` tokens are in `styles.css`. The chip's text is `user-select: none`, its padding is fixed at 12px and its presentational part has `cursor: auto`; none has a token, so `.farm-pill` overrides those internal classes (raise the specificity with `.mat-mdc-standard-chip.farm-pill`: component styles load after `styles.css`). Whitespace-only text between two elements is dropped by the compiler, so write `</a>&ngsp;<app-farm-pill />`, or text before it. Keep it outside the name's link. Cost: `@angular/material/chips` adds about 36 KB raw, 6 KB transfer, to the first route that uses it (a shared lazy chunk, also used by `AlertChips`).
+
 Colours by level come from `.alert-chip[data-level=…]` rules in `styles.css` that set `--mat-chip-elevated-container-color`, `--mat-chip-label-text-color`, `--mat-chip-outline-color` and `--mat-chip-container-height`; the text names the level too ("Error: …"), so colour is never the only cue.
 
 ## Status pills and badges

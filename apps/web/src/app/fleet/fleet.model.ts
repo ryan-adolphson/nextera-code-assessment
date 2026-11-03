@@ -60,6 +60,9 @@ export interface TurbineOverview {
   latest: Telemetry | null;
 }
 
+/** Mirrors TurbineResponse from PATCH /api/turbines/:id: a turbine without its latest reading. */
+export type TurbineResponse = Omit<TurbineOverview, 'latest'>;
+
 export interface FarmOverview {
   id: string;
   name: string;

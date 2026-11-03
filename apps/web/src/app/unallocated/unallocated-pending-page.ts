@@ -9,6 +9,7 @@ import { StalenessBadge } from '../fleet/staleness-badge';
 import { stalenessOf } from '../fleet/staleness';
 import { AppTimePipe } from '../core/app-time.pipe';
 import { TimeZoneSettings } from '../core/time-zone';
+import { FarmPill } from '../ui/farm-pill';
 import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
 import { AssignDialog } from './assign-dialog';
@@ -18,13 +19,11 @@ import { UnallocatedActions } from './unallocated-actions';
 import { UnallocatedApi } from './unallocated-api.service';
 import { UnallocatedTabs } from './unallocated-tabs';
 import { UNALLOCATED_STATUS, UnallocatedStore } from './unallocated.store';
-import { KIND_LABELS, UnallocatedKind, UnallocatedTurbine, farmLabel } from './unallocated.model';
+import { KIND_LABELS, UnallocatedKind, UnallocatedTurbine, farmName } from './unallocated.model';
 
 /** A table row: the entry and what the cells show. */
 interface PendingRow {
   entry: UnallocatedTurbine;
-  reported: string;
-  current: string | null;
   staleness: ReturnType<typeof stalenessOf>;
 }
 
@@ -47,6 +46,7 @@ interface PendingRow {
   imports: [
     AppTimePipe,
     DecimalPipe,
+    FarmPill,
     HeldReadings,
     MatButton,
     MatIcon,
@@ -71,25 +71,17 @@ export class UnallocatedPendingPage {
 
   protected readonly kindLabel = (kind: UnallocatedKind) => KIND_LABELS[kind];
   protected readonly tz = inject(TimeZoneSettings);
+  protected readonly farmName = farmName;
 
   protected readonly rows = computed<PendingRow[]>(() =>
     this.store.entries().map((entry) => ({
       entry,
-      reported: farmLabel(entry.reportedFarm, entry.reportedFarmId),
-      current: entry.currentFarm && farmLabel(entry.currentFarm, entry.currentFarm.id),
       // How long since its newest held reading was measured (on the shell's minute clock).
       staleness: stalenessOf(entry.latest, this.fleet.now()),
     })),
   );
   protected readonly paging = paginate(this.rows, 25);
-  protected readonly columns = [
-    'expand',
-    'turbine',
-    'farms',
-    'seen',
-    'held',
-    'actions',
-  ];
+  protected readonly columns = ['expand', 'turbine', 'farms', 'seen', 'held', 'actions'];
   protected readonly trackById = (_: number, row: PendingRow) => row.entry.id;
   /** The entries whose rows are expanded (any number at once). */
   protected readonly expanded = signal<ReadonlySet<string>>(new Set());

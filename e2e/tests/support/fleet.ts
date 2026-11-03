@@ -54,6 +54,20 @@ export async function fetchFarms(request: APIRequestContext, token: string): Pro
   return (await response.json()) as FleetFarm[];
 }
 
+/** PATCH /api/turbines/:id through the API (setup and cleanup): expects 200. */
+export async function setCommissioned(
+  request: APIRequestContext,
+  token: string,
+  turbineId: string,
+  commissioned: boolean,
+): Promise<void> {
+  const response = await request.patch(`${API_URL}/turbines/${turbineId}`, {
+    data: { commissioned },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(response.status(), await response.text()).toBe(200);
+}
+
 /** Every turbine with its farm. */
 export function turbinesOf(farms: FleetFarm[]): (FleetTurbine & { farm: FleetFarm })[] {
   return farms.flatMap((farm) => farm.turbines.map((t) => ({ ...t, farm })));

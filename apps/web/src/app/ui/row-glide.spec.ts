@@ -10,7 +10,9 @@ import { ROW_GLIDE_MS, RowGlide } from './row-glide';
       <tbody>
         @for (id of ids(); track id) {
           <tr [attr.data-id]="id">
-            <td><a href="#">{{ id }}</a></td>
+            <td>
+              <a href="#">{{ id }}</a>
+            </td>
           </tr>
         }
       </tbody>
@@ -41,7 +43,13 @@ describe('RowGlide', () => {
       providers: [
         {
           provide: MediaMatcher,
-          useValue: { matchMedia: () => ({ get matches() { return reducedMotion; } }) },
+          useValue: {
+            matchMedia: () => ({
+              get matches() {
+                return reducedMotion;
+              },
+            }),
+          },
         },
       ],
     });
@@ -53,7 +61,8 @@ describe('RowGlide', () => {
     document.body.append(fixture.nativeElement);
     await fixture.whenStable();
     const host = fixture.componentInstance;
-    const row = (id: string) => fixture.nativeElement.querySelector(`[data-id=${id}]`) as HTMLElement;
+    const row = (id: string) =>
+      fixture.nativeElement.querySelector(`[data-id=${id}]`) as HTMLElement;
     const reorder = async (ids: string[]) => {
       host.glide().reorder(() => host.ids.set(ids));
       await fixture.whenStable();
@@ -83,13 +92,28 @@ describe('RowGlide', () => {
     expect(ROW_GLIDE_MS).toBe(500);
   });
 
+  it('keeps the browser from moving the scroll position when rows re-order', async () => {
+    // The class is the behaviour here: scroll anchoring moved scrollTop on a re-order, and every
+    // row jumped by that much before gliding. jsdom has no layout or scroll anchoring, so
+    // e2e/tests/turbines/live-burst.spec.ts checks the effect in a real browser.
+    const { fixture } = await setup();
+
+    const { classList } = fixture.nativeElement.querySelector('table');
+    expect(classList).toContain('[overflow-anchor:none]');
+    expect(classList).toContain('[&_*]:[overflow-anchor:none]');
+  });
+
   it('lets rows entering the page just appear', async () => {
     const { reorder } = await setup();
 
     await reorder(['d', 'a', 'b']);
 
     // a and b moved down one place; c left; d is new.
-    expect(glides().map(([id]) => id).sort()).toEqual(['a', 'b']);
+    expect(
+      glides()
+        .map(([id]) => id)
+        .sort(),
+    ).toEqual(['a', 'b']);
   });
 
   it('does not animate with prefers-reduced-motion, but still applies the change', async () => {
@@ -143,6 +167,21 @@ describe('RowGlide', () => {
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     await reorder(['a', 'b', 'c']);
     expect(document.activeElement).toBe(link);
+  });
+
+  it('does not take the focus back from where the user moved it', async () => {
+    const outside = document.body.appendChild(document.createElement('button'));
+    const { fixture, host, row } = await setup();
+    row('c').querySelector('a')!.focus();
+
+    host.glide().reorder(() => {
+      host.ids.set(['c', 'b', 'a']);
+      outside.focus(); // before the next render
+    });
+    await fixture.whenStable();
+
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
   });
 
   it('leaves the focus alone when it is outside the table or its row left', async () => {

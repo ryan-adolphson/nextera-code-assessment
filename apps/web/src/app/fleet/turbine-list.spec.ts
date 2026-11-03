@@ -17,7 +17,8 @@ describe('TurbineList (/turbines)', () => {
   const CLOCK = Date.parse('2026-01-03T00:00:00.000Z');
   let app: Awaited<ReturnType<typeof openFleet>>;
   beforeEach(async () => {
-    app = await openFleet('/turbines', () => CLOCK, mixedFleetFixture());
+    // Viewers see the Commissioned check mark or X (owners get a switch: turbine-table-commissioned.spec).
+    app = await openFleet('/turbines', () => CLOCK, mixedFleetFixture(), undefined, 'viewer');
   });
   afterEach(() => app.http.verify());
 

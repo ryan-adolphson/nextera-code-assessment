@@ -210,11 +210,19 @@ describe('Unallocated turbines (/unallocated)', () => {
         'Farm mismatch',
       ]);
       expect(q('kind', unknown)!.dataset['kind']).toBe('unknown_turbine');
-      expect(cell(unknown, 'reported-farm')).toBe('Prairie Ridge (FARM01)');
+      expect(cell(unknown, 'reported-farm')).toBe('Prairie Ridge FARM01');
       expect(cell(orph, 'reported-farm')).toBe('Unknown farm FARM99');
       expect(q('reported-farm', orph)!.dataset['exists']).toBe('false');
       expect(cell(unknown, 'current-farm')).toBe('Not in the fleet');
-      expect(cell(mis, 'current-farm')).toBe('Prairie Ridge (FARM01)');
+      expect(cell(mis, 'current-farm')).toBe('Prairie Ridge FARM01');
+      // Every id is a read-only Material chip; "Not in the fleet" has none.
+      const pills = (row: HTMLElement) =>
+        [...row.querySelectorAll('[data-testid=farm-pill]')].map((pill) => app.text(pill));
+      expect(pills(unknown)).toEqual(['FARM01']);
+      expect(pills(mis)).toEqual(['FARM02', 'FARM01']);
+      expect(pills(orph)).toEqual(['FARM99', 'FARM02']);
+      expect(q('reported-farm', orph)!.className).toContain('text-muted');
+      expect(q('reported-farm', mis)!.className).not.toContain('text-muted');
       expect(cell(unknown, 'last-seen')).toBe('Last Jan 2, 23:56');
       expect(cell(unknown, 'first-seen')).toBe('First Jan 2, 21:00');
       // Staleness of the newest held reading on the client clock.
@@ -241,10 +249,10 @@ describe('Unallocated turbines (/unallocated)', () => {
       expect(actionsCell.style.right).toBe('0px');
       // Screen readers hear which farm is which; sighted users read it from the header.
       expect(app.text(q('reported-farm', mis)!.parentElement)).toBe(
-        'Reported: High Plains (FARM02)',
+        'Reported: High Plains FARM02',
       );
       expect(app.text(q('current-farm', mis)!.parentElement)).toBe(
-        'Current: Prairie Ridge (FARM01)',
+        'Current: Prairie Ridge FARM01',
       );
 
       // One primary action by kind, named with the turbine for screen readers; the rest are in
@@ -870,7 +878,7 @@ describe('Unallocated turbines (/unallocated)', () => {
         [
           'TURB998',
           'Unknown turbine',
-          'Prairie Ridge (FARM01)',
+          'Prairie Ridge FARM01',
           '–',
           'Unknown user',
           'Unblock TURB998 from FARM01',

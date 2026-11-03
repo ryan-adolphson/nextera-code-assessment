@@ -2,6 +2,9 @@ import { DecimalPipe } from '@angular/common';
 import {
   Component,
   DestroyRef,
+  ElementRef,
+  Injector,
+  afterNextRender,
   computed,
   effect,
   inject,
@@ -20,9 +23,11 @@ import { MatSort, MatSortHeader, Sort } from '@angular/material/sort';
 import { RouterLink } from '@angular/router';
 import { secondsToMilliseconds } from 'date-fns';
 import { AppTimePipe } from '../core/app-time.pipe';
+import { AuthStore } from '../core/auth/auth.store';
 import { TimeZoneSettings } from '../core/time-zone';
 import { FleetStore, FleetTurbine } from './fleet.store';
 import { STALENESS_LABELS, STALENESS_ORDER, Staleness } from './staleness';
+import { FarmPill } from '../ui/farm-pill';
 import { paginate } from '../ui/paging';
 import { RowGlide } from '../ui/row-glide';
 import { TABLE_IMPORTS } from '../ui/table';
@@ -94,14 +99,18 @@ const COLUMNS: Column[] = [
  * The turbines table shared by /turbines (every turbine) and the farm page (one farm's turbines,
  * without the Farm column): filters (text, status, commissioning, a "Hide turbines with no data"
  * switch, on by default, for turbines that have never reported) with the match count, then a
- * Material table in a `TableFrame` with the status pill, Commissioned check mark or X, the latest
- * values and the last reading time; sortable by any column (default: last reading, newest first;
+ * Material table in a `TableFrame` with the farm's id pill, the status pill, Commissioned (a switch
+ * for owners and admins, a check mark or X for viewers), the latest values and the last reading time; sortable by any column (default: last reading, newest first;
  * turbines without readings last; ties by id), 25 rows per page, live (`data-updated` flash on the
  * updated rows). Each turbine id links to its turbine page.
  *
  * Live updates stay calm: the cells and the filters follow every reading, but the rows keep their
  * order during a burst and glide to the new one once it settles (`ORDER_QUIET_MS`,
  * `ORDER_MAX_HOLD_MS`, `RowGlide`). A change of sort, filter or turbine list applies at once.
+ *
+ * Owners and admins can change a turbine's commissioned state in its cell (optimistic, through
+ * `FleetStore.setCommissioned`). That is not a live reading: no flash and no glide. If it moves the
+ * row, focus follows to the row's switch; if the row leaves the page, to the match count.
  */
 @Component({
   selector: 'app-turbine-table',
@@ -111,6 +120,7 @@ const COLUMNS: Column[] = [
   imports: [
     AppTimePipe,
     DecimalPipe,
+    FarmPill,
     MatFormField,
     MatIcon,
     MatIconButton,
@@ -138,6 +148,9 @@ export class TurbineTable {
 
   protected readonly store = inject(FleetStore);
   protected readonly tz = inject(TimeZoneSettings);
+  private readonly auth = inject(AuthStore);
+  /** Hides the commissioned control from viewers; the API enforces the role too. */
+  protected readonly canCommission = computed(() => this.auth.can('owner'));
   protected readonly columnKeys = computed(() =>
     COLUMNS.map((c) => c.key).filter((key) => !this.hiddenColumns().includes(key)),
   );
@@ -190,10 +203,15 @@ export class TurbineTable {
   /**
    * What the user chose to see. When it changes, the order applies at once; the turbine ids are part
    * of it (another farm, a fleet reload), so the order always ranks every turbine in `turbines`.
+   * So are the commissioned values while the sort or a filter looks at them: a change there acts
+   * like a filter change, at once and without a glide. Otherwise it can't move a row.
    */
   private readonly listKey = computed(() =>
     JSON.stringify([
       this.turbines().map((t) => t.id),
+      this.sort().key === 'commissioned' || this.commissionedFilter() !== 'all'
+        ? this.turbines().map((t) => t.commissioned)
+        : null,
       this.sort(),
       this.query(),
       this.status(),
@@ -220,6 +238,9 @@ export class TurbineTable {
   });
 
   private readonly glide = viewChild.required(RowGlide);
+  private readonly matchCount = viewChild.required<ElementRef<HTMLElement>>('matchCount');
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+  private readonly injector = inject(Injector);
   private quietTimer?: ReturnType<typeof setTimeout>;
   private maxHoldTimer?: ReturnType<typeof setTimeout>;
 
@@ -229,12 +250,20 @@ export class TurbineTable {
       this.turbines();
       untracked(() => this.settleOrderSoon());
     });
-    // A glide in flight must not run on into a sort or filter change, which is instant.
+    // A list change just applied the order (nothing left to settle; this also covers the first
+    // render), and a glide in flight must not run on into it: sorting and filtering are instant.
     effect(() => {
       this.listKey();
-      untracked(() => this.glide().cancel());
+      untracked(() => {
+        this.clearOrderTimers();
+        this.glide().cancel();
+        this.keepSwitchFocus();
+      });
     });
-    inject(DestroyRef).onDestroy(() => this.clearOrderTimers());
+    inject(DestroyRef).onDestroy(() => {
+      this.clearOrderTimers();
+      this.store.commissionedError.set(null); // about this table's control: not for the next page
+    });
   }
 
   /** The empty table's message: says when it is only the switch that hides the turbines. */
@@ -258,6 +287,29 @@ export class TurbineTable {
       (a, b) => compare(value(a), value(b), dir) || a.id.localeCompare(b.id),
     );
     return new Map(sorted.map((t, position) => [t.id, position]));
+  }
+
+  /**
+   * Called before a list change renders. Moving or removing a row drops the focus inside it to the
+   * body, so a focused switch gets it back after the render, scrolled into view. If its row left
+   * the page (filtered out, or sorted onto another page) focus goes to the match count, which says
+   * what changed: inert, so a held or repeated key can't toggle another turbine.
+   */
+  private keepSwitchFocus(): void {
+    const doc = this.host.ownerDocument;
+    const row = doc.activeElement?.closest('[data-testid=commissioned-toggle]')?.closest('tr');
+    if (!row) return;
+    afterNextRender(
+      () => {
+        // Only if the change dropped it, not if the row stayed where it was.
+        if (doc.activeElement !== doc.body) return;
+        const target = row.isConnected
+          ? row.querySelector<HTMLElement>('[role=switch]')!
+          : this.matchCount().nativeElement;
+        target.focus();
+      },
+      { injector: this.injector },
+    );
   }
 
   private settleOrderSoon(): void {
@@ -310,6 +362,16 @@ export class TurbineTable {
   protected onCommissionedFilter(event: Event): void {
     this.commissionedFilter.set((event.target as HTMLSelectElement).value as CommissionedFilter);
     this.paging.reset();
+  }
+
+  /**
+   * The switch asks for the opposite value; the store decides what it shows. So the switch goes
+   * back to the store's value first, and follows it through its binding (also on a rollback).
+   */
+  protected onCommissionedToggle(turbine: FleetTurbine, event: MatSlideToggleChange): void {
+    const commissioned = event.checked;
+    event.source.checked = turbine.commissioned;
+    this.store.setCommissioned(turbine.id, commissioned);
   }
 
   protected onHideNoData(event: MatSlideToggleChange): void {

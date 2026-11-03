@@ -49,8 +49,9 @@ export const UNALLOCATED_EVENT_INTERVAL_MS = 60_000;
 export const UNALLOCATED_CHANGED = 'unallocated-turbine.changed';
 
 /**
- * SSE event: the fleet's turbines changed (a turbine was created by an assign, or moved to another
- * farm), so clients reload the farm list. Published after the commit.
+ * SSE event: the fleet's turbines changed (a turbine was created by an assign, moved to another
+ * farm, or its commissioned flag changed), so clients reload the farm list. Published after the
+ * commit.
  */
 export const FLEET_CHANGED = 'fleet.changed';
 

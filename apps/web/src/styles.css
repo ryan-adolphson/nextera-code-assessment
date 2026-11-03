@@ -226,7 +226,7 @@
   --mat-tab-pagination-icon-color: var(--text);
 
   /*
-   * Slide toggle (rule Enabled switch): on = --accent track with an --on-accent handle; off =
+   * Slide toggle (rule Enabled switch, turbine Commissioned switch): on = --accent track with an --on-accent handle; off =
    * a --surface track with a --muted outline and handle (Material's surface-variant has no
    * counterpart here, so the off-state tokens are set directly).
    */
@@ -308,6 +308,32 @@
   --mat-chip-elevated-container-color: var(--danger);
   --mat-chip-label-text-color: var(--on-danger);
   --mat-chip-outline-color: var(--danger);
+}
+
+/*
+ * Farm id pills (ui/farm-pill.ts): neutral, not a status. A --bg pill with a hairline, --text on it
+ * 17.4:1 light, 15.6:1 dark, and 22px tall so a row of them stays within the tables' row heights.
+ * Read-only: no hover layer. The padding, cursor and text selection have no tokens: chips set
+ * 12px, `auto` (over the row's pointer) and `none` (the id should stay copyable).
+ */
+.farm-pill {
+  --mat-chip-container-height: 1.375rem;
+  --mat-chip-container-shape-radius: 9999px;
+  --mat-chip-elevated-container-color: var(--bg);
+  --mat-chip-outline-color: var(--border);
+  --mat-chip-label-text-color: var(--text);
+  --mat-chip-label-text-size: 0.75rem;
+  --mat-chip-label-text-line-height: 1rem;
+  --mat-chip-label-text-weight: 500;
+  --mat-chip-label-text-tracking: normal;
+  --mat-chip-hover-state-layer-opacity: 0;
+}
+.mat-mdc-standard-chip.farm-pill .mdc-evolution-chip__action--primary {
+  padding-inline: 8px;
+  cursor: inherit;
+}
+.farm-pill .mdc-evolution-chip__text-label {
+  user-select: text;
 }
 
 /* Expandable table rows (alert history, unallocated turbines): the detail row sizes to its

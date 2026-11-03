@@ -13,7 +13,8 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
   const CLOCK = Date.parse('2026-01-03T00:00:00.000Z');
   let app: Awaited<ReturnType<typeof openFleet>>;
   beforeEach(async () => {
-    app = await openFleet('/farms/FARM02', () => CLOCK, mixedFleetFixture());
+    // Viewers see the Commissioned check mark or X (owners get a switch: turbine-table-commissioned.spec).
+    app = await openFleet('/farms/FARM02', () => CLOCK, mixedFleetFixture(), undefined, 'viewer');
     await app.stable(); // the deferred map renders
   });
   afterEach(() => app.http.verify()); // no other requests (e.g. no alert rules)

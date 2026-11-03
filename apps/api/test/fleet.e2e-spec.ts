@@ -5,7 +5,13 @@ import {
   type WeatherBucketRow,
 } from '@nextera/shared';
 import { SEED_DATA_DIR } from '@nextera/testing/seed-data';
-import { createTestApp, type TestApp } from './helpers.js';
+import {
+  createTestApp,
+  eventsUrl,
+  openSse,
+  publishReading,
+  type TestApp,
+} from './helpers.js';
 
 /** Runs against the provided CSV dataset (10 farms, 2 turbines, 2 days of telemetry). */
 describe('Fleet API (e2e, CSV seed data)', () => {
@@ -26,6 +32,226 @@ describe('Fleet API (e2e, CSV seed data)', () => {
     fetch(`${t.url}/api${path}`, {
       headers: { ...t.auth('viewer'), ...headers },
     });
+
+  describe('PATCH /api/turbines/:id', () => {
+    const patch = (
+      id: string,
+      body: unknown,
+      headers: Record<string, string> = t.auth('owner'),
+    ) =>
+      fetch(`${t.url}/api/turbines/${id}`, {
+        method: 'PATCH',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    const stored = async (turbineId: string) =>
+      (await t.prisma.turbine.findUniqueOrThrow({ where: { turbineId } }))
+        .commissioned;
+
+    /**
+     * The fleet.changed events on `sse` until now: a marker published through the same stream
+     * arrives after anything published before it, so "none" needs no timeout.
+     */
+    const fleetEventsUntilNow = async (
+      sse: Awaited<ReturnType<typeof openSse>>,
+    ) => {
+      const marker = await publishReading(t);
+      const seen: unknown[] = [];
+      for (;;) {
+        const message = await sse.nextEvent();
+        if (message.event === 'fleet.changed') {
+          seen.push(JSON.parse(message.data));
+        } else if (JSON.parse(message.data).id === marker.id) {
+          return seen;
+        }
+      }
+    };
+
+    afterEach(async () => {
+      await t.prisma.turbine.updateMany({ data: { commissioned: false } });
+    });
+
+    it.each(['owner', 'admin'] as const)(
+      '%s: 200 with the updated turbine, and the value persists',
+      async (role) => {
+        for (const commissioned of [true, false]) {
+          const res = await patch('TURB001', { commissioned }, t.auth(role));
+
+          expect(res.status).toBe(200);
+          expect(await res.json()).toEqual({
+            id: 'TURB001',
+            farmId: 'FARM01',
+            latitude: 41.263,
+            longitude: -96.518,
+            commissioned,
+          });
+          expect(await stored('TURB001')).toBe(commissioned);
+        }
+      },
+    );
+
+    it('shows the new value on GET /api/farms and leaves the other turbine alone', async () => {
+      await patch('TURB002', { commissioned: true });
+
+      const farms = await (await get('/farms')).json();
+      const turbines = farms.flatMap(
+        (f: { turbines: { id: string; commissioned: boolean }[] }) =>
+          f.turbines,
+      );
+      expect(
+        turbines.map((x: { id: string; commissioned: boolean }) => [
+          x.id,
+          x.commissioned,
+        ]),
+      ).toEqual([
+        ['TURB001', false],
+        ['TURB002', true],
+      ]);
+    });
+
+    it('viewer: 404 with the body of an unknown route, before validation, and nothing changes', async () => {
+      for (const body of [{ commissioned: true }, {}]) {
+        const res = await patch('TURB001', body, t.auth('viewer'));
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({
+          statusCode: 404,
+          error: 'Not Found',
+          message: 'Cannot PATCH /api/turbines/TURB001',
+        });
+      }
+      expect(await stored('TURB001')).toBe(false);
+    });
+
+    it('no token: 401 with WWW-Authenticate', async () => {
+      const res = await patch('TURB001', { commissioned: true }, {});
+      expect(res.status).toBe(401);
+      expect(res.headers.get('www-authenticate')).toBe('Bearer');
+      expect(await stored('TURB001')).toBe(false);
+    });
+
+    it('unknown turbine: 404 and no event', async () => {
+      const sse = await openSse(eventsUrl(t));
+      try {
+        const res = await patch('TURB404', { commissioned: true });
+        expect(res.status).toBe(404);
+        expect(await res.json()).toMatchObject({
+          statusCode: 404,
+          message: 'Turbine TURB404 not found',
+        });
+        expect(await fleetEventsUntilNow(sse)).toEqual([]);
+      } finally {
+        sse.close();
+      }
+    });
+
+    it.each([
+      ['a missing value', {}, 'commissioned must be a boolean'],
+      ['a string', { commissioned: 'true' }, 'commissioned must be a boolean'],
+      ['a number', { commissioned: 1 }, 'commissioned must be a boolean'],
+      ['null', { commissioned: null }, 'commissioned must be a boolean'],
+      [
+        'an extra property',
+        { commissioned: true, farmId: 'FARM02' },
+        'property farmId should not exist',
+      ],
+    ])('rejects %s with 400', async (_case, body, message) => {
+      const res = await patch('TURB001', body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).message).toEqual([message]);
+      expect(await stored('TURB001')).toBe(false);
+    });
+
+    it('rejects a JSON array with 400', async () => {
+      const res = await patch('TURB001', [{ commissioned: true }]);
+      expect(res.status).toBe(400);
+      expect(await stored('TURB001')).toBe(false);
+    });
+
+    it('rejects a request without a body with 400', async () => {
+      const res = await fetch(`${t.url}/api/turbines/TURB001`, {
+        method: 'PATCH',
+        headers: t.auth('owner'),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('publishes fleet.changed once, after the commit, and not for the same value again', async () => {
+      const sse = await openSse(eventsUrl(t));
+      try {
+        expect((await patch('TURB002', { commissioned: true })).status).toBe(
+          200,
+        );
+        const event = await sse.nextEvent('fleet.changed');
+        expect(JSON.parse(event.data)).toEqual({ turbineId: 'TURB002' });
+        // Committed by the time the event arrives.
+        expect(await stored('TURB002')).toBe(true);
+        expect(await fleetEventsUntilNow(sse)).toEqual([]);
+
+        // Setting the same value: an idempotent 200 without an event.
+        const again = await patch('TURB002', { commissioned: true });
+        expect(again.status).toBe(200);
+        expect(await again.json()).toMatchObject({
+          id: 'TURB002',
+          commissioned: true,
+        });
+        expect(await fleetEventsUntilNow(sse)).toEqual([]);
+
+        // A real change back publishes again.
+        await patch('TURB002', { commissioned: false });
+        expect(await fleetEventsUntilNow(sse)).toEqual([
+          { turbineId: 'TURB002' },
+        ]);
+      } finally {
+        sse.close();
+      }
+    });
+
+    /**
+     * Deterministic: this test holds the row lock until both requests wait for it in their UPDATE,
+     * so both have read the old value by then. A read followed by a write would change the row
+     * twice and publish twice; the conditional UPDATE re-checks its WHERE after the wait.
+     */
+    it('publishes once when concurrent requests set the same value', async () => {
+      const sse = await openSse(eventsUrl(t));
+      try {
+        const requests = await t.prisma.$transaction(
+          async (tx) => {
+            await tx.$queryRaw`SELECT 1 FROM turbines WHERE turbine_id = 'TURB002' FOR UPDATE`;
+            const pending = [
+              patch('TURB002', { commissioned: true }),
+              patch('TURB002', { commissioned: true }),
+            ];
+            await expect
+              .poll(
+                async () => {
+                  const [{ waiting }] = await t.prisma.$queryRaw<
+                    { waiting: number }[]
+                  >`SELECT count(*)::int AS waiting FROM pg_stat_activity
+                    WHERE wait_event_type = 'Lock' AND query ILIKE 'UPDATE%turbines%'`;
+                  return waiting;
+                },
+                { timeout: 10_000, interval: 25 },
+              )
+              .toBe(2);
+            return pending;
+          },
+          { timeout: 15_000 },
+        );
+
+        const responses = await Promise.all(requests);
+        expect(responses.map((r) => r.status)).toEqual([200, 200]);
+        for (const res of responses) {
+          expect(await res.json()).toMatchObject({ commissioned: true });
+        }
+        expect(await fleetEventsUntilNow(sse)).toEqual([
+          { turbineId: 'TURB002' },
+        ]);
+      } finally {
+        sse.close();
+      }
+    });
+  });
 
   describe('GET /api/farms', () => {
     it('returns every farm with its turbines and their latest reading', async () => {

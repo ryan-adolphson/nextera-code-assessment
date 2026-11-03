@@ -16,6 +16,7 @@ import {
 } from 'rxjs';
 import { AuthStore } from '../core/auth/auth.store';
 import { NOW } from '../core/clock';
+import { errorMessage, statusOf } from '../core/http-errors';
 import { SseEvent, SseService, SseStatus } from '../core/sse.service';
 import { FleetApi, TelemetryWindow } from './fleet-api.service';
 import {
@@ -67,6 +68,19 @@ export function reconnectDelayMs(failures: number, random = Math.random()): numb
 
 /** How long a turbine counts as just updated: the row's flash (`--animate-flash` in styles.css). */
 export const FLASH_MS = secondsToMilliseconds(2);
+
+/** Why a commissioned change failed, in words (the API's 404 text names no reason). */
+function commissionedErrorMessage(
+  error: unknown,
+  turbineId: string,
+  commissioned: boolean,
+): string {
+  const reason =
+    statusOf(error) === 404
+      ? 'The turbine no longer exists, or your account can no longer change it.'
+      : errorMessage(error);
+  return `Could not mark ${turbineId} as ${commissioned ? 'commissioned' : 'not commissioned'}. ${reason}`;
+}
 
 /** A turbine with its farm's name, its latest reading (by measurement time) and staleness. */
 export interface FleetTurbine extends TurbineOverview {
@@ -120,6 +134,13 @@ export class FleetStore {
   private readonly announcedTurbineIds = new Set<string>();
   private historySub?: Subscription;
   private farmsSub?: Subscription;
+  /** Fleet loads sent so far: tells `setCommissioned` whether one overlapped its request. */
+  private loadsSent = 0;
+  /**
+   * The commissioned value being saved, per turbine. `turbines` shows it over whatever the loaded
+   * fleet says, so a reload answered meanwhile can't flip the value back.
+   */
+  private readonly commissionedSaving = signal<ReadonlyMap<string, boolean>>(new Map());
   /** The selected turbine's loaded and live readings, newest first (may extend past the window). */
   private readonly loadedHistory = signal<Telemetry[]>([]);
   /** Live readings received while the history request is pending (merged into its response). */
@@ -157,6 +178,12 @@ export class FleetStore {
    */
   readonly recentlyUpdated = signal<ReadonlySet<string>>(new Set());
   private readonly flashTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** The turbines whose commissioned change is being saved (their control waits). */
+  readonly commissionedPending = computed<ReadonlySet<string>>(
+    () => new Set(this.commissionedSaving().keys()),
+  );
+  /** Why the last commissioned change failed; cleared by the next change. */
+  readonly commissionedError = signal<string | null>(null);
   readonly selectedTurbineId = signal<string | null>(null);
   readonly historyLoading = signal(false);
   readonly historyRangeMs = signal(DEFAULT_HISTORY_RANGE_MS);
@@ -207,6 +234,7 @@ export class FleetStore {
         const latest = this.latestByTurbine().get(t.id) ?? null;
         return {
           ...t,
+          commissioned: this.commissionedSaving().get(t.id) ?? t.commissioned,
           farmName: farm.name,
           latest,
           staleness: stalenessOf(latest, this.now()),
@@ -370,6 +398,7 @@ export class FleetStore {
     // A load sent now lists every turbine announced so far (they were committed before the event).
     const announced = [...this.announcedTurbineIds];
     this.farmsSub?.unsubscribe();
+    this.loadsSent++;
     this.farmsSub = this.api
       .farms()
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -396,6 +425,56 @@ export class FleetStore {
           this.loading.set(false);
         },
       });
+  }
+
+  /**
+   * Marks a turbine commissioned or not: shown at once, then PATCHed (one request per turbine at a
+   * time; a call while one is pending is ignored). A failure goes back to what the server last said
+   * (not to the value before the click: a reload meanwhile may know better), sets
+   * `commissionedError` and reloads. This is not a reading: no flash, and no change to the latest.
+   *
+   * On success, a fleet load that overlapped the request can't be trusted for this turbine: one
+   * still in flight may have read the row before the commit, and one sent since may hold someone
+   * else's newer change that this answer just overwrote. So such a load is replaced by a new one,
+   * sent after the commit. `fleet.changed` usually reloads anyway, but arrives in its own time, and
+   * not at all for a value that was already set.
+   */
+  setCommissioned(turbineId: string, commissioned: boolean): void {
+    if (this.commissionedSaving().has(turbineId)) return;
+    this.commissionedError.set(null);
+    this.commissionedSaving.update((saving) => new Map(saving).set(turbineId, commissioned));
+    const loadsBefore = this.loadsSent;
+    this.api
+      .setCommissioned(turbineId, commissioned)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (updated) => {
+          this.farmList.update((farms) =>
+            farms.map((farm) => ({
+              ...farm,
+              turbines: farm.turbines.map((t) =>
+                t.id === turbineId ? { ...t, commissioned: updated.commissioned } : t,
+              ),
+            })),
+          );
+          this.endCommissionedSave(turbineId);
+          if (this.loadsSent !== loadsBefore || this.farmsSub?.closed === false) this.reloadFleet();
+        },
+        error: (error: unknown) => {
+          this.endCommissionedSave(turbineId);
+          this.commissionedError.set(commissionedErrorMessage(error, turbineId, commissioned));
+          // The change may have committed (a lost answer). A 401 just signed out: nothing to load.
+          if (this.auth.isAuthenticated()) this.reloadFleet();
+        },
+      });
+  }
+
+  private endCommissionedSave(turbineId: string): void {
+    this.commissionedSaving.update((saving) => {
+      const rest = new Map(saving);
+      rest.delete(turbineId);
+      return rest;
+    });
   }
 
   /**

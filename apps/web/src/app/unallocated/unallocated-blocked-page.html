@@ -65,7 +65,12 @@
         <ng-container matColumnDef="reported">
           <th mat-header-cell *matHeaderCellDef>Reported farm</th>
           <td mat-cell *matCellDef="let entry">
-            {{ farmLabel(entry.reportedFarm, entry.reportedFarmId) }}
+            <span
+              data-testid="reported-farm"
+              [attr.data-exists]="entry.reportedFarm !== null"
+              [class.text-muted]="entry.reportedFarm === null"
+              >{{ farmName(entry.reportedFarm) }} <app-farm-pill [farmId]="entry.reportedFarmId"
+            /></span>
           </td>
         </ng-container>
         <ng-container matColumnDef="blockedAt">

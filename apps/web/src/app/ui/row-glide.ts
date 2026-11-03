@@ -21,8 +21,16 @@ interface RowBefore {
  * Moving a row in the DOM blurs what is focused in it and restarts its CSS animations, so
  * `reorder()` also puts the focus back and resumes those animations where they were (with or
  * without the glide): the live flash always finishes on time.
+ *
+ * The table is also out of the browser's scroll anchoring, which would follow a moved row by
+ * changing `scrollTop` (the whole table would jump before gliding), so a live re-order never moves
+ * the user's scroll position. `overflow-anchor: none` on the table alone isn't enough: Chromium also
+ * tries the cells' `sr-only` text as anchors, since its containing block is the scroll region.
  */
-@Directive({ selector: 'table[appRowGlide]' })
+@Directive({
+  selector: 'table[appRowGlide]',
+  host: { class: '[overflow-anchor:none] [&_*]:[overflow-anchor:none]' },
+})
 export class RowGlide {
   private readonly table = inject<ElementRef<HTMLTableElement>>(ElementRef).nativeElement;
   private readonly injector = inject(Injector);
@@ -34,8 +42,10 @@ export class RowGlide {
   /** Runs `change` (which re-orders the rows on the next render) and animates the difference. */
   reorder(change: () => void): void {
     this.cancel();
-    const active = this.table.ownerDocument.activeElement as HTMLElement | null;
-    const focused = this.table.contains(active) ? active : null;
+    const doc = this.table.ownerDocument;
+    const focused = this.table.contains(doc.activeElement)
+      ? (doc.activeElement as HTMLElement)
+      : null;
     // offsetTop, not the screen position: unaffected by scrolling before the next render.
     const before = new Map<HTMLElement, RowBefore>(
       this.rows().map((row) => [row, { top: row.offsetTop, animations: cssAnimationStarts(row) }]),
@@ -45,7 +55,10 @@ export class RowGlide {
 
     afterNextRender(
       () => {
-        if (focused?.isConnected) focused.focus({ preventScroll: true });
+        // Only if the move dropped it (to the body), not if the user has moved on since.
+        if (focused?.isConnected && doc.activeElement === doc.body) {
+          focused.focus({ preventScroll: true });
+        }
         for (const row of this.rows()) {
           const was = before.get(row);
           if (!was) continue;

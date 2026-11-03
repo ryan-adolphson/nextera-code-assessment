@@ -2,6 +2,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import {
   UnallocatedResolution,
   farmLabel,
+  farmName,
   importedText,
   isEntryGone,
   outcomeNotice,
@@ -26,6 +27,8 @@ describe('unallocated model', () => {
       'Prairie Ridge (FARM01)',
     );
     expect(farmLabel(null, 'FARM99')).toBe('Unknown farm FARM99');
+    expect(farmName({ id: 'FARM01', name: 'Prairie Ridge' })).toBe('Prairie Ridge');
+    expect(farmName(null)).toBe('Unknown farm');
   });
 
   it('counts imported readings and duplicates', () => {

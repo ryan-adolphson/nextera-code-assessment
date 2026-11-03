@@ -1,5 +1,6 @@
 import { DecimalPipe } from '@angular/common';
 import { Component, input } from '@angular/core';
+import { FarmPill } from '../ui/farm-pill';
 import { FarmTabs } from './farm-tabs';
 import { FarmSummary } from './fleet.store';
 
@@ -10,11 +11,11 @@ import { FarmSummary } from './fleet.store';
  */
 @Component({
   selector: 'app-farm-header',
-  imports: [DecimalPipe, FarmTabs],
+  imports: [DecimalPipe, FarmPill, FarmTabs],
   host: { class: 'block' },
   template: `
-    <h1 class="mt-3 text-3xl font-bold">
-      {{ farm().name }} <span class="text-muted">{{ farm().id }}</span>
+    <h1 class="mt-3 flex flex-wrap items-center gap-x-1 text-3xl font-bold">
+      {{ farm().name }} <app-farm-pill [farmId]="farm().id" />
     </h1>
     <p class="text-sm text-muted">
       {{ farm().latitude | number: '1.2-2' }}, {{ farm().longitude | number: '1.2-2' }}

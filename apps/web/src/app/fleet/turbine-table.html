@@ -68,13 +68,30 @@
   >
     Hide turbines with no data
   </mat-slide-toggle>
-  <p class="pb-2.5 text-sm text-muted" role="status" data-testid="turbine-count">
+  <!-- tabindex -1: where focus goes when a change takes the focused switch's row off the page. -->
+  <p
+    #matchCount
+    class="pb-2.5 text-sm text-muted"
+    role="status"
+    tabindex="-1"
+    data-testid="turbine-count"
+  >
     {{ rows().length }} of {{ turbines().length }} turbines
     @if (hiddenNoData(); as hidden) {
       · {{ hidden }} with no data hidden
     }
   </p>
 </div>
+
+@if (store.commissionedError(); as message) {
+  <p
+    class="mt-2 rounded-lg bg-danger-bg px-4 py-3 text-danger"
+    role="alert"
+    data-testid="commissioned-error"
+  >
+    {{ message }}
+  </p>
+}
 
 <!-- The table frame (ui/table-frame.ts): the rows scroll under the sticky header row; the
      paginator stays below. -->
@@ -109,8 +126,8 @@
     <ng-container matColumnDef="farm">
       <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-farm">Farm</th>
       <td mat-cell *matCellDef="let t">
-        <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a>
-        <span class="text-muted"> {{ t.farmId }}</span>
+        <a [routerLink]="['/farms', t.farmId]">{{ t.farmName }}</a
+        >&ngsp;<app-farm-pill [farmId]="t.farmId" />
       </td>
     </ng-container>
 
@@ -129,16 +146,35 @@
         data-testid="commissioned-cell"
         [attr.data-commissioned]="t.commissioned"
       >
-        <!-- check mark (green) when commissioned, X (muted: a state, not an error) when not.
+        <!-- Owners and up get the switch instead of the icon, so the cell shows one indicator. While
+             saving it stays focusable (disabledInteractive) and ignores clicks. The touch target is
+             one row high, so it can't reach the next row's switch. stopPropagation: a click here is
+             never a row click. -->
+        @if (canCommission()) {
+          <mat-slide-toggle
+            hideIcon
+            disabledInteractive
+            class="align-middle [--mat-slide-toggle-touch-target-size:40px]"
+            data-testid="commissioned-toggle"
+            [aria-label]="'Mark ' + t.id + ' as commissioned'"
+            [attr.data-pending]="store.commissionedPending().has(t.id) ? '' : null"
+            [checked]="t.commissioned"
+            [disabled]="store.commissionedPending().has(t.id)"
+            (click)="$event.stopPropagation()"
+            (change)="onCommissionedToggle(t, $event)"
+          />
+        } @else {
+          <!-- check mark (green) when commissioned, X (muted: a state, not an error) when not.
                `!` utilities: mat-icon's own size/colour rules are unlayered. -->
-        <mat-icon
-          class="size-5! align-middle"
-          [class]="t.commissioned ? 'text-ok!' : 'text-muted!'"
-          data-testid="commissioned-icon"
-          [attr.data-icon]="t.commissioned ? 'check' : 'x'"
-          [svgIcon]="t.commissioned ? 'check' : 'close'"
-        />
-        <span class="sr-only">{{ t.commissioned ? 'Commissioned' : 'Not commissioned' }}</span>
+          <mat-icon
+            class="size-5! align-middle"
+            [class]="t.commissioned ? 'text-ok!' : 'text-muted!'"
+            data-testid="commissioned-icon"
+            [attr.data-icon]="t.commissioned ? 'check' : 'x'"
+            [svgIcon]="t.commissioned ? 'check' : 'close'"
+          />
+          <span class="sr-only">{{ t.commissioned ? 'Commissioned' : 'Not commissioned' }}</span>
+        }
       </td>
     </ng-container>
 

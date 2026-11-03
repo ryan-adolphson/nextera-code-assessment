@@ -8,14 +8,14 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 
 ## Automation status
 
-151 tests in 23 files (read-only project 116, data project 35; `npx playwright test --list`). Every scenario below has a **Status** line. Wall time for both projects locally: about 60 s.
+199 tests in 26 files (read-only project 155, data project 44; `npx playwright test --list`). Every scenario below has a **Status** line. Wall time for both projects locally: about 90 s.
 
 | Area | Files |
 |---|---|
 | 1 Authentication | `tests/auth/login.spec.ts`, `tests/auth/session.spec.ts` |
 | 2 Roles, 10 Navigation | `tests/roles/roles.spec.ts` |
-| 3 Farms and turbine page | `tests/farms/overview.spec.ts`, `tests/farms/turbine-page.spec.ts` |
-| 4 Turbines table | `tests/turbines/turbine-table.spec.ts` |
+| 3 Farms and turbine page | `tests/farms/overview.spec.ts`, `tests/farms/turbine-page.spec.ts`, `tests/farms/farm-pill.spec.ts` |
+| 4 Turbines table | `tests/turbines/turbine-table.spec.ts`, `tests/turbines/live-burst.spec.ts`, `tests/data/commissioned.spec.ts` |
 | 5 Staleness | `tests/staleness/staleness.spec.ts` (+ overview and Turbines) |
 | 6 Alerting history | `tests/alerting/history.spec.ts`, `tests/data/live.spec.ts` |
 | 7 Alert rules | `tests/alerting/rules.spec.ts`, `tests/data/rules.spec.ts`, `tests/data/live.spec.ts` |
@@ -27,9 +27,9 @@ E2E plan for the Nextera Angular app at http://localhost:8082 (production web im
 | 14 Farm History | `tests/farms/history.spec.ts`, `tests/data/farm-history.spec.ts` |
 | 15 Section tabs (keyboard, 320 px) | `tests/farms/tabs.spec.ts` |
 
-Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `clock.ts` (`fixBrowserDate`, `shortTimeIn`), `fleet.ts` (GET /api/farms from the page's own response, `mainNav`, `createTurbine`: held upload + assign), `rules.ts` (`ensureRule` / `removeRules`), `telemetry.ts`, `unallocated.ts`, `weather.ts`, `farm-history.ts` (the daily response shape, a recorder for the page's daily requests, the chart's texts derived from a response, `runRollup`: `npm run rollup` at the repo root against DATABASE_URL).
+Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `clock.ts` (`fixBrowserDate`, `shortTimeIn`), `fleet.ts` (GET /api/farms from the page's own response, `mainNav`, `createTurbine`: held upload + assign, `setCommissioned`), `rules.ts` (`ensureRule` / `removeRules`), `telemetry.ts`, `unallocated.ts`, `weather.ts`, `farm-history.ts` (the daily response shape, a recorder for the page's daily requests, the chart's texts derived from a response, `runRollup`: `npm run rollup` at the repo root against DATABASE_URL).
 
-**Robust to a shared DB** (db:seed fixture plus db:seed:demo, the demo feed and earlier runs): expectations come from the responses the page rendered; turbine history/stats are bounded at the browser clock (`boundTelemetryAt`); the SSE stream is aborted in read-only tests that must not change mid-test; [DATA] tests use per-run turbine ids and clean up rules and unallocated entries (turbines and readings can't be deleted through the API: each run leaves `E2E-<run>-LV` on FARM04 with 4 Jan 2 readings and `E2E-<run>-RF` on FARM04 with 3, and the disabled rules "Rotor speed above 50 rpm → Warning" and "Gearbox temperature below 5 °C → Info", besides what section 11 leaves; section 14 leaves `E2E-<run>-FH` on FARM09 with 5 readings on three new days (from Jan 10, 2026 on in a fixture-only DB), and their rollups). `page.route` mocks only where real data can't reach the state: Turbines paging (60 turbines), History paging/chips in read-only (30 flagged turbines), an empty farm when every farm has turbines, error/Retry, a failed rule switch (PATCH 500) and login 429/unreachable, the SSE transport, and weather (section 13).
+**Robust to a shared DB** (db:seed fixture plus db:seed:demo, the demo feed and earlier runs): expectations come from the responses the page rendered; turbine history/stats are bounded at the browser clock (`boundTelemetryAt`); the SSE stream is aborted in read-only tests that must not change mid-test; [DATA] tests use per-run turbine ids and clean up rules and unallocated entries (turbines and readings can't be deleted through the API: each run leaves `E2E-<run>-LV` on FARM04 with 4 Jan 2 readings and `E2E-<run>-RF` on FARM04 with 3, and the disabled rules "Rotor speed above 50 rpm → Warning" and "Gearbox temperature below 5 °C → Info", besides what section 11 leaves; section 14 leaves `E2E-<run>-FH` on FARM09 with 5 readings on three new days (from Jan 10, 2026 on in a fixture-only DB), and their rollups). `page.route` mocks only where real data can't reach the state: Turbines paging (60 turbines), History paging/chips in read-only (30 flagged turbines), an empty farm when every farm has turbines, error/Retry, a failed rule switch or commissioned switch (PATCH 500) and login 429/unreachable, the SSE transport, the generated fleet of the live-burst tests, and weather (section 13).
 
 ### Not automated (and why)
 
@@ -388,6 +388,58 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
   1. Open a turbine with commissioned=false (TURB001 in the current DB).
     - expect: not-commissioned badge visible; commissioned turbines have none
 
+#### 3.13. Farm id pill: where it shows
+
+**File:** `tests/farms/farm-pill.spec.ts` (Unallocated: 11.9)
+
+**Status:** Automated.
+
+**Steps:**
+  1. Open /farms.
+    - expect: each row of the Farms table has the farm's id in a pill (testid farm-pill) after its name
+  2. Open /turbines.
+    - expect: Farm cell 'High Plains FARM02': the link is the name only, the pill sits outside it
+  3. Open each farm tab (Overview, History, Weather history).
+    - expect: heading 'Prairie Ridge FARM01' with the pill, on every tab
+
+#### 3.14. Farm id pill: read-only, and a click goes through to the row
+
+**File:** `tests/farms/farm-pill.spec.ts`
+
+**Status:** Automated.
+
+**Steps:**
+  1. Inspect a pill.
+    - expect: no link, button or tab stop in it
+  2. Click a pill in the Farms table.
+    - expect: the farm opens
+  3. Double-click the pill in a farm's header.
+    - expect: its id is selected (copyable)
+
+#### 3.15. Farm id pill: row heights
+
+**File:** `tests/farms/farm-pill.spec.ts` (Pending's rows: 11.7)
+
+**Status:** Automated.
+
+**Steps:**
+  1. At 1280 px, measure the Farms and Turbines rows.
+    - expect: pill 22 px tall; every row 40 px
+
+#### 3.16. Farm id pill on a 360 px phone
+
+**File:** `tests/farms/farm-pill.spec.ts`
+
+**Status:** Automated.
+
+**Steps:**
+  1. Open each farm tab.
+    - expect: no horizontal page overflow; pill on the name's line, inside the window
+  2. A 45-character farm name (mocked GET /api/farms).
+    - expect: the name wraps, the pill drops to its own line, no overflow
+  3. Open /farms and /turbines.
+    - expect: no horizontal page overflow
+
 ### 4. 4. Turbines table
 
 **Seed:** `tests/seed.spec.ts`
@@ -512,6 +564,143 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
   8. At a 360px viewport, with the longest count line and the longest message.
     - expect: Filters, switch, count and message inside the viewport; no horizontal page overflow
 
+#### 4.10. Commissioned cell by role
+
+**File:** `tests/turbines/turbine-table.spec.ts`
+
+**Status:** Automated.
+
+**Steps:**
+  1. As a viewer, open /turbines.
+    - expect: commissioned-icon with its words; no switch
+  2. As an owner, then an admin, open /turbines and a farm page.
+    - expect: switch 'Mark TURB001 as commissioned' (testid commissioned-toggle); no icon or words
+
+#### 4.11. [DATA] An owner switches a turbine on
+
+**File:** `tests/data/commissioned.spec.ts`
+
+**Status:** Automated (every test in 4.11–4.16 starts with TURB001 and TURB002 off; afterAll restores what it found).
+
+**Steps:**
+  1. Click the switch with the PATCH held, then click again.
+    - expect: on at once, aria-disabled="true" on the inner button, focus kept, one PATCH with {commissioned: true}
+  2. Release it.
+    - expect: 200, no longer aria-disabled, no error; GET /api/farms says true
+  3. Reload, then open the turbine page.
+    - expect: still on; no not-commissioned badge
+  4. As an admin, from the keyboard (Space) on a turbine that is on.
+    - expect: off, focus kept, GET /api/farms says false
+
+#### 4.12. [DATA] A viewer's open page follows the change live
+
+**File:** `tests/data/commissioned.spec.ts`
+
+**Status:** Automated (second browser context; `fleet.changed` over the real stream).
+
+**Steps:**
+  1. Owner switches it on, then off, with a viewer's /turbines open.
+    - expect: viewer's icon follows both without a reload; the row doesn't flash; no switch for the viewer
+  2. PATCH the value it already has, then a real change.
+    - expect: the open page sends one GET /api/farms: the first PATCH published nothing
+
+#### 4.13. [DATA] A failed save rolls back
+
+**File:** `tests/data/commissioned.spec.ts`
+
+**Status:** Automated (PATCH 500 mocked and held; the reload is real).
+
+**Steps:**
+  1. Click the switch.
+    - expect: on and aria-disabled while the request runs
+  2. The 500 arrives.
+    - expect: off again, commissioned-error (role alert) 'Could not mark TURB001 as commissioned. …', not aria-disabled; API unchanged
+  3. Click again, unmocked.
+    - expect: the error goes; saved
+
+#### 4.14. [DATA] Under a commissioning filter the row leaves
+
+**File:** `tests/data/commissioned.spec.ts`
+
+**Status:** Automated.
+
+**Steps:**
+  1. Filter 'Not commissioned', click TURB001's switch.
+    - expect: row gone, focus on turbine-count, count one lower
+  2. Press Space.
+    - expect: no other turbine changes
+  3. Filter 'Commissioned'.
+    - expect: TURB001 listed, on
+
+#### 4.15. [DATA] Sorted by Commissioned the row moves
+
+**File:** `tests/data/commissioned.spec.ts`
+
+**Status:** Automated.
+
+**Steps:**
+  1. Sort by Commissioned (commissioned first), click TURB002's switch.
+    - expect: TURB002 is the first row, its switch keeps focus and stays in view, also after the save
+
+#### 4.16. [DATA] PATCH /api/turbines/:id by role
+
+**File:** `tests/data/commissioned.spec.ts`
+
+**Status:** Automated (API only).
+
+**Steps:**
+  1. Send it as each role and with bad input.
+    - expect: owner and admin 200; viewer 404 'Cannot PATCH …' and nothing changed; signed out 401; non-boolean or missing value 400; unknown turbine 404
+
+#### 4.17. Calm live updates: a burst
+
+**File:** `tests/turbines/live-burst.spec.ts`
+
+**Status:** Automated (20 generated turbines on the real farms; mocked stream; an in-page recorder keeps every order and highlight set, and a sample per frame). Windows: not more than 50 ms early, generous above.
+
+**Steps:**
+  1. One SSE body with five readings.
+    - expect: the five rows get data-updated in one render, in the old order, and no others; one re-order, about 1 s later; highlights end together about 2 s after they began, after the move
+    - expect: a moved row's flash animation carries on, its time never goes back
+
+#### 4.18. Calm live updates: waves and the 3 s limit
+
+**File:** `tests/turbines/live-burst.spec.ts`
+
+**Status:** Automated (each wave is one fulfilled stream body; `retry: 200` sets the gap).
+
+**Steps:**
+  1. Three waves.
+    - expect: one re-order, at least 1 s after the last wave
+  2. A wave per reconnect until the table moves.
+    - expect: no gap reaches 1 s; the first re-order comes 3 s (to 4 s) after the first reading
+
+#### 4.19. Calm live updates: the glide
+
+**File:** `tests/turbines/live-burst.spec.ts`
+
+**Status:** Automated. One step is an expected failure (`test.fail`): see below.
+
+**Steps:**
+  1. Scrolled 120 px at 1600×620, a burst.
+    - expect: glide animations of 500 ms; the sticky header's top stays on the region's top on every frame, and it is the top element at each header cell's centre; opaque header cells
+  2. At the top of the table.
+    - expect: no row jumps between the last frame before the glide and the first of it
+  3. Scrolled down.
+    - expect: no row jumps. **Fails today:** scroll anchoring moves scrollTop (120 → 280), which the glide's offsets ignore, so every row jumps 160 px at its start (`ui/row-glide.ts`)
+  4. prefers-reduced-motion.
+    - expect: one re-order, no glide
+
+#### 4.20. Calm live updates: sort, filter and farm changes apply at once
+
+**File:** `tests/turbines/live-burst.spec.ts`
+
+**Status:** Automated.
+
+**Steps:**
+  1. During the hold: sort by Power; or filter 'GEN1'; or go to another farm (`history.go(-2)` between two farm pages, so the same table stays).
+    - expect: the new rows at once, no glide, and nothing moves afterwards
+
 ### 5. 5. Staleness
 
 **Seed:** `tests/seed.spec.ts`
@@ -530,10 +719,10 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **File:** `tests/staleness/staleness.spec.ts`
 
-**Status:** Automated (`page.clock.install`, clock set relative to TURB001’s latest reading in the response: exactly 15:00 is still Reporting, 16/31/61 min flip to 15/30/60; the status filter finds it).
+**Status:** Automated (`page.clock.install` an hour before the seed clock, then forward-only jumps relative to TURB001’s latest reading in the response with `pauseAt` + `resume`: exactly 15:00 is still Reporting, 16/31/61 min flip to 15/30/60; the status filter finds it). Never move the clock back on a page with the map: see the web-test-engineer agent's clock note.
 
 **Steps:**
-  1. Use page.clock to set the time to 2026-01-03T00:10Z (15 min after 23:55 is the boundary; check just before and after), 00:25, 00:55 and 01:55 (via fastForward, FleetStore ticks every minute).
+  1. Use page.clock to move the time forward to 00:10Z (15 min after 23:55 is the boundary; check just before and after), 00:25, 00:55 and 00:56 (via pauseAt + resume, FleetStore ticks every minute).
     - expect: Pill goes Reporting -> 'No data in 15 min' (yellow) -> 'No data in 30 min' (orange) -> 'No data in 60 min' (red) after each threshold
     - expect: Overview 'Turbines reporting' decreases; status filter finds them; map legend colours follow
 
@@ -541,7 +730,7 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **File:** `tests/staleness/staleness.spec.ts`
 
-**Status:** Automated (and the overview reporting count drops).
+**Status:** Automated (and the overview reporting count follows: the exact count derived per turbine from the response at 5 and 40 min, which has to drop).
 
 **Steps:**
   1. Open TURB001 page with clock advanced 40 minutes.
@@ -1122,7 +1311,7 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
 **Steps:**
   1. Owner on /unallocated/pending, list loaded and live-status 'Live'. POST a 3-row CSV for `E2E-<run>-LIVE` / FARM01 (Jan 2 23:45, 23:50, 23:55) to ingestion :8081.
     - expect: upload `{ rows: 3, inserted: 0, held: 3, blocked: 0 }`
-    - expect: without reload (SSE `unallocated-turbine.changed`), the row appears: 'Unknown turbine', 'Prairie Ridge (FARM01)', current farm 'Not in the fleet', held 3, staleness 'Reporting', 'Assign … to farm…' button (the row has no latest values: the newest held reading carries them)
+    - expect: without reload (SSE `unallocated-turbine.changed`), the row appears: 'Unknown turbine', 'Prairie Ridge FARM01', current farm 'Not in the fleet', held 3, staleness 'Reporting', 'Assign … to farm…' button (the row has no latest values: the newest held reading carries them)
   2. Click 'Show held readings for <id>'.
     - expect: aria-expanded true; '3 held readings, newest first.'; 3 rows newest first (Jan 2, 23:55 … Jan 2, 23:45); the first holds the latest values (1,520 kW, 8.2 m/s, 71.5 °C)
 
@@ -1147,7 +1336,7 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
 
 **Steps:**
   1. Upload one TURB001 reading reporting FARM02 at a unique 2020 timestamp; open Pending.
-    - expect: upload held 1; row 'Farm mismatch', reported 'High Plains (FARM02)', current 'Prairie Ridge (FARM01)'
+    - expect: upload held 1; row 'Farm mismatch', reported 'High Plains FARM02', current 'Prairie Ridge FARM01'
     - expect: 'More actions for TURB001' opens a menu with menuitem 'Move TURB001 to FARM02…' enabled; Escape closes it and focuses the trigger
   2. Click 'Keep TURB001 in FARM01'.
     - expect: notice 'TURB001 kept in Prairie Ridge (FARM01): 1 reading imported.'; row gone
@@ -1167,7 +1356,7 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
   4. Upload another reading for the same pair.
     - expect: `{ rows: 1, inserted: 0, held: 0, blocked: 1 }`
   5. Blocked tab.
-    - expect: row 'Blue Sky (FARM05)', 'Unknown turbine', blocked by 'owner@nextera.local', a blocked time
+    - expect: row 'Blue Sky FARM05', 'Unknown turbine', blocked by 'owner@nextera.local', a blocked time
   6. Click 'Unblock <id> from FARM05'.
     - expect: notice '<id> from FARM05 unblocked: its next reading will show under Pending.'; row gone; the API lists the id under neither status
 
@@ -1177,7 +1366,7 @@ Readings of turbine ids that aren't in the fleet (`unknown_turbine`) and of turb
 
 **Steps:**
   1. Setup through the API: upload `E2E-<run>-MOV` / FARM01 (Jan 2 23:50) and assign it to FARM01; then upload it reporting FARM03 (Jan 2 23:55). Open Pending.
-    - expect: row 'Farm mismatch', current 'Prairie Ridge (FARM01)'
+    - expect: row 'Farm mismatch', current 'Prairie Ridge FARM01'
   2. 'More actions for <id>' → menuitem 'Move <id> to FARM03…'.
     - expect: dialog 'Move <id> to FARM03?': '<id> and all its readings will move to Red Canyon (FARM03)…'
   3. Click 'Move turbine'.
@@ -1217,6 +1406,18 @@ Setup (beforeEach, idempotent): hold `E2E-<run>-ROW` / FARM01 (Jan 2 23:40), and
 #### 11.8. Not yet automated (covered by the Angular unit specs, `unallocated-pages.spec.ts`)
 
   - Assign with coordinates, and picking a farm from the autocomplete when the reported farm doesn't exist; a 409/404 when the entry was resolved in another browser; load errors and Retry.
+
+#### 11.9. [DATA] Farm id pills in Pending and Blocked
+
+**File:** `tests/data/unallocated.spec.ts`
+
+**Status:** Automated.
+
+**Steps:**
+  1. Pending: an unknown farm, a known farm, a farm mismatch.
+    - expect: 'Unknown farm FARM99' (data-exists false), 'Cedar Valley FARM06' (true), reported and current each with a pill; 'Not in the fleet' has none
+  2. Blocked: a known and an unknown farm.
+    - expect: reported-farm 'Blue Sky FARM05' (data-exists true), 'Unknown farm FARM98' (false), each with a pill
 
 ### 12. 12. Settings: time zone
 
