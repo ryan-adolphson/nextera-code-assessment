@@ -56,8 +56,23 @@
       }
     </select>
   </mat-form-field>
+  <!-- Never-reported turbines only ("No data in N min" stays visible). While the status filter asks
+       for "No readings yet" the switch shows what happens: off and disabled. pb-1 centres its 32px
+       track on the 40px fields, as the count's pb-2.5 does for its text. -->
+  <mat-slide-toggle
+    class="pb-1"
+    data-testid="hide-no-data"
+    [checked]="hidesNoData()"
+    [disabled]="status() === 'empty'"
+    (change)="onHideNoData($event)"
+  >
+    Hide turbines with no data
+  </mat-slide-toggle>
   <p class="pb-2.5 text-sm text-muted" role="status" data-testid="turbine-count">
     {{ rows().length }} of {{ turbines().length }} turbines
+    @if (hiddenNoData(); as hidden) {
+      · {{ hidden }} with no data hidden
+    }
   </p>
 </div>
 
@@ -175,7 +190,8 @@
         data-testid="no-matches"
         [attr.colspan]="columnKeys().length"
       >
-        No turbines match the filters.
+        <!-- Cells don't wrap and the table is wider than a phone: keep the message on screen. -->
+        <div class="max-w-[calc(100vw-4rem)] whitespace-normal">{{ noRowsMessage() }}</div>
       </td>
     </tr>
   </table>

@@ -396,12 +396,13 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **File:** `tests/turbines/turbine-table.spec.ts`
 
-**Status:** Automated (sorted by id; turbines without readings are not moved last on the id sort, only on value columns).
+**Status:** Automated (sorted by last reading, newest first; ties by id; turbines without readings are last on value columns, not on the id sort).
 
 **Steps:**
   1. Open /turbines.
-    - expect: Heading 'Turbines'; filter row (text, Status, Commissioned)
-    - expect: turbine-count '2 of 2 turbines' (fixture)
+    - expect: Heading 'Turbines'; filter row (text, Status, Commissioned, Hide turbines with no data)
+    - expect: sort-time has aria-sort='descending'
+    - expect: turbine-count '2 of 2 turbines' (fixture; on another database it counts what the switch hides, e.g. '3 of 4 turbines · 1 with no data hidden')
     - expect: Columns Turbine, Farm, Status, Commissioned, Power, Wind, Gearbox, Last reading (UTC)
     - expect: one page (25 rows per page), paginator '1 – 2 of 2'; paging itself is covered by mocking GET /api/farms with page.route
 
@@ -445,11 +446,12 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **File:** `tests/turbines/turbine-table.spec.ts`
 
-**Status:** Automated (Reporting, No data in 60 min, No readings yet; counts from the response).
+**Status:** Automated (Reporting, No data in 60 min, No readings yet; counts from the response. How 'No readings yet' overrides the switch: 4.9).
 
 **Steps:**
   1. Select each of Reporting, No data in 15/30/60 min, No readings yet in status-filter.
     - expect: Only rows with the matching pill; count updates; empty selection shows no-matches
+    - expect: 'No readings yet' shows the never-reported turbines even though Hide turbines with no data is on by default
 
 #### 4.6. Commissioned filter
 
@@ -467,11 +469,13 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **File:** `tests/turbines/turbine-table.spec.ts`
 
-**Status:** Automated (Turbine twice, Farm, Power twice; Status/Commissioned/Last reading headers are not clicked).
+**Status:** Automated (Turbine twice, Farm, Power twice, Last reading twice; Status/Commissioned headers are not clicked; ties on time by id with a mocked fleet).
 
 **Steps:**
-  1. Click sort-id, sort-farm, sort-status, sort-commissioned, sort-time headers, each twice.
-    - expect: Row order toggles ascending/descending (aria-sort updates); sorting persists across paging
+  1. Open /turbines; click sort-id, sort-farm, sort-status, sort-commissioned headers, each twice.
+    - expect: The first click on a header gives ascending, the second descending (aria-sort updates); sorting persists across paging
+  2. Click sort-time, the default sort (descending), twice.
+    - expect: The first click gives ascending, the second descending; ties on the last reading sort by id in both directions
 
 #### 4.8. Pagination
 
@@ -482,6 +486,31 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 **Steps:**
   1. The fixture has only 2 turbines, so mock GET /api/farms with page.route to return 50 turbines. Click Next page, change items per page to 10 and 50.
     - expect: Label '26 – 50 of 50'; Previous enabled; page size change resets to page 1; first page has Previous disabled
+
+#### 4.9. Hide turbines with no data
+
+**File:** `tests/turbines/turbine-table.spec.ts`
+
+**Status:** Automated (the fixture has no never-reported turbine, so GET /api/farms is mocked with page.route: the real farms with `latest: null` and stale turbines).
+
+**Steps:**
+  1. Open /turbines with two never-reported turbines among six others.
+    - expect: Switch 'Hide turbines with no data' (testid hide-no-data) on and enabled; never-reported rows hidden; count '6 of 8 turbines · 2 with no data hidden'
+    - expect: 'No data in 15/30/60 min' turbines stay visible
+  2. Turn the switch off.
+    - expect: Count '8 of 8 turbines' without a suffix; never-reported turbines last, ordered by id, on Last reading and Power in both directions
+  3. Reload after turning it off.
+    - expect: The switch is on again (not saved)
+  4. Status 'No readings yet', then another status.
+    - expect: Only never-reported turbines, switch off and disabled, no suffix; another status restores the user's setting (on or off) and enables it
+  5. Filter text matching only a hidden turbine, then text matching nothing.
+    - expect: no-matches '1 turbine with no readings yet is hidden. Turn off “Hide turbines with no data” to show it.'; then 'No turbines match the filters.' and no suffix
+  6. Farm page where every turbine has never reported.
+    - expect: no-matches '2 turbines with no readings yet are hidden. Turn off “Hide turbines with no data” to show them.'; count '0 of 2 turbines · 2 with no data hidden'; turning the switch off lists them and removes the message
+  7. A live telemetry.received for a hidden turbine (mocked stream).
+    - expect: The turbine appears at the top without a reload; count '7 of 8 turbines · 1 with no data hidden'
+  8. At a 360px viewport, with the longest count line and the longest message.
+    - expect: Filters, switch, count and message inside the viewport; no horizontal page overflow
 
 ### 5. 5. Staleness
 
@@ -522,10 +551,10 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
 
 **File:** `tests/turbines/turbine-table.spec.ts`
 
-**Status:** Partly: the 'No readings yet' status filter is checked against the response (no such turbine in the fixture, so CI sees the no-matches state).
+**Status:** Partly: the pill and the status filter are covered with a mocked never-reported turbine (4.9); the status filter on the real response finds none in the fixture, so CI sees the no-matches state there. The reporting count isn't checked with one.
 
 **Steps:**
-  1. Find a turbine without telemetry (if any).
+  1. Find a turbine without telemetry (mocked; hidden by default, so turn off Hide turbines with no data or choose status 'No readings yet').
     - expect: Pill 'No readings yet'; excluded from reporting count
 
 ### 6. 6. Alerting history

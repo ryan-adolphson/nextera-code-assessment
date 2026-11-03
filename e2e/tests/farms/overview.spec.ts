@@ -102,15 +102,17 @@ test.describe('Farm page', () => {
     await expect(page.getByTestId('farm-reporting')).toContainText(
       `${farm.turbines.filter(reporting).length} / ${farm.turbines.length}`,
     );
+    // Never-reported turbines are hidden by default ("Hide turbines with no data"), and counted.
+    const shown = farm.turbines.filter((t) => t.latest).length;
+    const hidden = farm.turbines.length - shown;
     await expect(page.getByTestId('turbine-count')).toHaveText(
-      `${farm.turbines.length} of ${farm.turbines.length} turbines`,
+      `${shown} of ${farm.turbines.length} turbines${hidden ? ` · ${hidden} with no data hidden` : ''}`,
     );
     await expect(page.getByTestId('sort-farm')).toHaveCount(0);
     // Without the Farm column the filter searches turbine ids only.
     await expect(page.getByRole('searchbox', { name: 'Turbine', exact: true })).toBeVisible();
-    const ids = farm.turbines.map((t) => t.id).sort((a, b) => a.localeCompare(b));
     await expect(page.getByTestId('turbines').locator('tr[data-turbine-id]')).toHaveCount(
-      Math.min(ids.length, 25),
+      Math.min(shown, 25),
     );
 
     await page

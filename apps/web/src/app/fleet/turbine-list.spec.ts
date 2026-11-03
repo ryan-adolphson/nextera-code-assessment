@@ -1,5 +1,7 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { MatPaginatorHarness } from '@angular/material/paginator/testing';
+import { MatSlideToggleHarness } from '@angular/material/slide-toggle/testing';
+import { MatSortHarness } from '@angular/material/sort/testing';
 import {
   TEST_API_BASE_URL,
   largeFleetFixture,
@@ -48,6 +50,20 @@ describe('TurbineList (/turbines)', () => {
     await app.stable();
   }
 
+  /** The "Hide turbines with no data" switch. */
+  const hideNoData = () =>
+    TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatSlideToggleHarness.with({ selector: '[data-testid=hide-no-data]' }),
+    );
+  /** Turns the switch off, so TURB004 (never reported) is listed. */
+  const showNoData = async () => {
+    await (await hideNoData()).uncheck();
+    await app.stable();
+  };
+  const count = () => app.text(app.root().querySelector('[data-testid=turbine-count]'));
+  /** Newest reading first; TURB001/TURB002 tie on 23:55; TURB004 (never reported) is hidden. */
+  const NEWEST_FIRST = ['TURB001', 'TURB002', 'TURB003', 'TURB006', 'TURB005', 'TURB007'];
+
   it('labels each filter with a Material outline field', () => {
     const label = (testId: string) => {
       const control = app.root().querySelector(`[data-testid=${testId}]`)!;
@@ -83,10 +99,8 @@ describe('TurbineList (/turbines)', () => {
     button.click();
     await app.stable();
     expect(input().value).toBe('');
-    expect(ids()).toHaveLength(7);
-    expect(app.text(app.root().querySelector('[data-testid=turbine-count]'))).toBe(
-      '7 of 7 turbines',
-    );
+    expect(ids()).toHaveLength(6);
+    expect(count()).toBe('6 of 7 turbines · 1 with no data hidden');
     expect(document.activeElement).toBe(input());
     expect(clear()).toBeNull();
   });
@@ -117,17 +131,9 @@ describe('TurbineList (/turbines)', () => {
     }
   });
 
-  it('lists every turbine of every farm by turbine id, with status and latest reading', () => {
+  it('lists the turbines of every farm that have reported, newest first, with status and latest reading', async () => {
     expect(app.text(app.root().querySelector('h1'))).toBe('Turbines');
-    expect(ids()).toEqual([
-      'TURB001',
-      'TURB002',
-      'TURB003',
-      'TURB004',
-      'TURB005',
-      'TURB006',
-      'TURB007',
-    ]);
+    expect(ids()).toEqual(NEWEST_FIRST);
     expect(cells(rows()[0])).toEqual([
       'TURB001',
       'Prairie Ridge FARM01',
@@ -138,7 +144,14 @@ describe('TurbineList (/turbines)', () => {
       '80.0',
       'Jan 2, 23:55',
     ]);
-    expect(cells(rows()[3])).toEqual([
+    expect(cells(rows()[3])[2]).toBe('No data in 30 min');
+    expect(rows()[3].querySelector('[data-testid=staleness]')!.getAttribute('data-staleness')).toBe(
+      'stale-30',
+    );
+    expect(count()).toBe('6 of 7 turbines · 1 with no data hidden');
+
+    await showNoData();
+    expect(cells(rows()[6])).toEqual([
       'TURB004',
       'High Plains FARM02',
       'No readings yet',
@@ -148,14 +161,126 @@ describe('TurbineList (/turbines)', () => {
       '–',
       'No readings yet',
     ]);
-    expect(cells(rows()[5])[2]).toBe('No data in 30 min');
-    expect(rows()[5].querySelector('[data-testid=staleness]')!.getAttribute('data-staleness')).toBe(
-      'stale-30',
+    expect(count()).toBe('7 of 7 turbines');
+  });
+
+  it('sorts by last reading, newest first, by default, and the header shows it', async () => {
+    const sort = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatSortHarness,
     );
+    const active = (await sort.getActiveHeader())!;
+    expect(await active.getLabel()).toBe('Last reading (UTC)');
+    expect(await active.getSortDirection()).toBe('desc');
+    expect(sortedColumns()).toEqual([['Last reading (UTC)', 'descending']]);
+    expect(ids()).toEqual(NEWEST_FIRST);
+  });
+
+  it('keeps turbines without readings last on last reading both ways, ties by id', async () => {
+    await showNoData();
+    expect(ids()).toEqual([...NEWEST_FIRST, 'TURB004']);
+
+    await sortBy('time'); // the default column: a click reverses it
+    expect(sortedColumns()).toEqual([['Last reading (UTC)', 'ascending']]);
+    expect(ids()).toEqual([
+      'TURB007',
+      'TURB005',
+      'TURB006',
+      'TURB003',
+      'TURB001',
+      'TURB002',
+      'TURB004',
+    ]);
+  });
+
+  it('another column sorts ascending first', async () => {
+    await sortBy('id');
     expect(sortedColumns()).toEqual([['Turbine', 'ascending']]);
-    expect(app.text(app.root().querySelector('[data-testid=turbine-count]'))).toBe(
-      '7 of 7 turbines',
-    );
+    expect(ids()).toEqual([...NEWEST_FIRST].sort());
+  });
+
+  describe('Hide turbines with no data', () => {
+    it('is a named switch, on by default, among the filters', async () => {
+      const toggle = await hideNoData();
+      expect(await toggle.isChecked()).toBe(true);
+      expect(await toggle.isDisabled()).toBe(false);
+      expect(await toggle.getLabelText()).toBe('Hide turbines with no data');
+      const host = app.root().querySelector('[data-testid=hide-no-data]')!;
+      expect(host.closest('[role=search]')).not.toBeNull();
+      const button = host.querySelector('button[role=switch]')!;
+      expect(app.text(app.root().querySelector(`label[for="${button.id}"]`))).toBe(
+        'Hide turbines with no data',
+      );
+    });
+
+    it('hides only turbines that never reported, and lists them when off', async () => {
+      const staleness = () =>
+        rows().map((r) =>
+          r.querySelector('[data-testid=staleness]')!.getAttribute('data-staleness'),
+        );
+      expect(staleness()).toEqual(['ok', 'ok', 'stale-15', 'stale-30', 'stale-60', 'stale-60']);
+
+      await showNoData();
+      expect(staleness()).toContain('empty');
+      expect(ids()).toContain('TURB004');
+
+      await (await hideNoData()).check();
+      await app.stable();
+      expect(ids()).toEqual(NEWEST_FIRST);
+    });
+
+    it('counts only the hidden turbines the other filters would show', async () => {
+      expect(count()).toBe('6 of 7 turbines · 1 with no data hidden');
+      await filter('FARM01'); // TURB004 is on FARM02: the switch hides nothing here
+      expect(count()).toBe('3 of 7 turbines');
+      await filter('FARM02');
+      expect(count()).toBe('3 of 7 turbines · 1 with no data hidden');
+      await filter('');
+      await status('ok');
+      expect(count()).toBe('2 of 7 turbines');
+    });
+
+    it('explains when the switch is all that hides a match', async () => {
+      await filter('TURB004');
+      expect(rows()).toHaveLength(0);
+      expect(app.text(app.root().querySelector('[data-testid=no-matches]'))).toBe(
+        '1 turbine with no readings yet is hidden. Turn off “Hide turbines with no data” to show it.',
+      );
+      expect(count()).toBe('0 of 7 turbines · 1 with no data hidden');
+
+      await showNoData();
+      expect(ids()).toEqual(['TURB004']);
+    });
+
+    it('gives way to the "No readings yet" status, then comes back as it was', async () => {
+      const toggle = await hideNoData();
+      await status('empty');
+      // Asking for exactly these turbines lists them; the switch shows it isn't hiding anything.
+      expect(ids()).toEqual(['TURB004']);
+      expect(count()).toBe('1 of 7 turbines');
+      expect(await toggle.isChecked()).toBe(false);
+      expect(await toggle.isDisabled()).toBe(true);
+
+      await status('all');
+      expect(ids()).toEqual(NEWEST_FIRST);
+      expect(await toggle.isChecked()).toBe(true);
+      expect(await toggle.isDisabled()).toBe(false);
+
+      await showNoData();
+      await status('empty');
+      await status('all');
+      expect(await toggle.isChecked()).toBe(false);
+      expect(ids()).toContain('TURB004');
+    });
+
+    it('lists a hidden turbine as soon as it reports', async () => {
+      expect(ids()).not.toContain('TURB004');
+      app.sse.push(
+        reading({ turbineId: 'TURB004', farmId: 'FARM02', timestamp: '2026-01-03T00:00:00.000Z' }),
+      );
+      await app.stable();
+      expect(ids()[0]).toBe('TURB004');
+      expect(count()).toBe('7 of 7 turbines');
+    });
   });
 
   it('has no Alert column, filter or sort, and does not load the alert rules', () => {
@@ -185,6 +310,7 @@ describe('TurbineList (/turbines)', () => {
   });
 
   it('sorts by a column from its header button, and reverses on a second click', async () => {
+    await showNoData();
     // Every header is a Material sort header: a focusable role=button, aria-sort on the <th>.
     const headers = [...table().querySelectorAll('thead th')];
     expect(headers).toHaveLength(8);
@@ -220,6 +346,7 @@ describe('TurbineList (/turbines)', () => {
   });
 
   it('sorts by status from reporting to never reported, ties by turbine id', async () => {
+    await showNoData();
     await sortBy('status');
     expect(ids()).toEqual([
       'TURB001',
@@ -233,6 +360,7 @@ describe('TurbineList (/turbines)', () => {
   });
 
   it('sorts by farm, gearbox temperature and last reading time', async () => {
+    await showNoData();
     await sortBy('farm');
     expect(ids()).toEqual([
       'TURB002',
@@ -259,6 +387,7 @@ describe('TurbineList (/turbines)', () => {
   });
 
   it('sorts by wind speed, keeping the turbine that never reported last both ways', async () => {
+    await showNoData();
     await sortBy('wind');
     expect(ids()).toEqual([
       'TURB006',
@@ -283,10 +412,8 @@ describe('TurbineList (/turbines)', () => {
 
   it('filters by turbine id, farm id or farm name, case-insensitively', async () => {
     await filter('farm02');
-    expect(ids()).toEqual(['TURB002', 'TURB004', 'TURB006', 'TURB007']);
-    expect(app.text(app.root().querySelector('[data-testid=turbine-count]'))).toBe(
-      '4 of 7 turbines',
-    );
+    expect(ids()).toEqual(['TURB002', 'TURB006', 'TURB007']);
+    expect(count()).toBe('3 of 7 turbines · 1 with no data hidden');
     await filter('prairie');
     expect(ids()).toEqual(['TURB001', 'TURB003', 'TURB005']);
     await filter(' turb003 ');
@@ -349,6 +476,7 @@ describe('TurbineList (/turbines)', () => {
     });
 
     it('sorts commissioned first, then reversed, ties by turbine id', async () => {
+      await showNoData();
       await sortBy('commissioned');
       expect(sortedColumns()).toEqual([['Commissioned', 'ascending']]);
       expect(ids()).toEqual([
@@ -375,18 +503,19 @@ describe('TurbineList (/turbines)', () => {
       ]);
       expect(select().value).toBe('all');
 
+      await showNoData();
       await commissioned('no');
-      expect(ids()).toEqual(['TURB004', 'TURB007']);
+      expect(ids()).toEqual(['TURB007', 'TURB004']);
       expect(select().value).toBe('no');
       await status('stale-60');
       expect(ids()).toEqual(['TURB007']);
       await status('all');
       await commissioned('yes');
-      expect(ids()).toEqual(['TURB001', 'TURB002', 'TURB003', 'TURB005', 'TURB006']);
+      expect(ids()).toEqual(['TURB001', 'TURB002', 'TURB003', 'TURB006', 'TURB005']);
       await filter('FARM02');
       expect(ids()).toEqual(['TURB002', 'TURB006']);
       await commissioned('all');
-      expect(ids()).toEqual(['TURB002', 'TURB004', 'TURB006', 'TURB007']);
+      expect(ids()).toEqual(['TURB002', 'TURB006', 'TURB007', 'TURB004']);
     });
   });
 
@@ -399,6 +528,7 @@ describe('TurbineList (/turbines)', () => {
   });
 
   it('updates a row live and re-sorts it', async () => {
+    await showNoData();
     await sortBy('power');
     app.sse.push(
       reading({
@@ -425,6 +555,57 @@ describe('TurbineList (/turbines)', () => {
       'Jan 3, 00:00',
     ]);
     expect(row.hasAttribute('data-updated')).toBe(true);
+  });
+});
+
+/** A fleet (or farm) whose turbines have all never reported must not look broken. */
+describe('TurbineList where no turbine has reported', () => {
+  const never = (id: string) => ({
+    id,
+    farmId: 'FARM09',
+    latitude: 40,
+    longitude: -100,
+    commissioned: true,
+    latest: null,
+  });
+  const open = (url: string, ids: string[]) =>
+    openFleet(url, () => Date.parse('2026-01-03T00:00:00.000Z'), [
+      { id: 'FARM09', name: 'New Mesa', latitude: 40, longitude: -100, turbines: ids.map(never) },
+    ]);
+
+  for (const url of ['/turbines', '/farms/FARM09']) {
+    it(`${url} says why the table is empty, and the switch lists them`, async () => {
+      const app = await open(url, ['TURB101', 'TURB102']);
+      await app.stable();
+      const q = (testId: string) => app.root().querySelector(`[data-testid=${testId}]`);
+
+      expect(q('no-turbines')).toBeNull();
+      expect(q('turbines')).not.toBeNull();
+      expect(app.text(q('no-matches'))).toBe(
+        '2 turbines with no readings yet are hidden. Turn off “Hide turbines with no data” to show them.',
+      );
+      expect(app.text(q('turbine-count'))).toBe('0 of 2 turbines · 2 with no data hidden');
+
+      const toggle = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+        MatSlideToggleHarness.with({ selector: '[data-testid=hide-no-data]' }),
+      );
+      await toggle.uncheck();
+      await app.stable();
+      expect(q('no-matches')).toBeNull();
+      expect(
+        [...app.root().querySelectorAll('tbody tr[data-turbine-id]')].map((r) =>
+          r.getAttribute('data-turbine-id'),
+        ),
+      ).toEqual(['TURB101', 'TURB102']);
+      expect(app.text(q('turbine-count'))).toBe('2 of 2 turbines');
+    });
+  }
+
+  it('words one hidden turbine in the singular', async () => {
+    const app = await open('/turbines', ['TURB101']);
+    expect(app.text(app.root().querySelector('[data-testid=no-matches]'))).toBe(
+      '1 turbine with no readings yet is hidden. Turn off “Hide turbines with no data” to show it.',
+    );
   });
 });
 
@@ -477,6 +658,18 @@ describe('TurbineList pagination', () => {
     await pages.setPageSize(10);
     expect(await pages.getPageSize()).toBe(10);
     expect(ids()).toHaveLength(10);
+  });
+
+  it('goes back to the first page when the switch changes', async () => {
+    const pages = await paginator();
+    await pages.goToNextPage();
+    expect(await pages.getRangeLabel()).toBe('26 – 30 of 30');
+    const toggle = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatSlideToggleHarness.with({ selector: '[data-testid=hide-no-data]' }),
+    );
+    await toggle.uncheck();
+    await app.stable();
+    expect(await pages.getRangeLabel()).toBe('1 – 25 of 30');
   });
 
   it('pages the sorted, filtered rows and goes back to the first page on a sort or filter', async () => {

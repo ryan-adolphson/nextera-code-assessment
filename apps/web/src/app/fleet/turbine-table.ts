@@ -4,6 +4,7 @@ import { MatIcon } from '@angular/material/icon';
 import { MatIconButton } from '@angular/material/button';
 import { MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
+import { MatSlideToggle, MatSlideToggleChange } from '@angular/material/slide-toggle';
 import { MatSort, MatSortHeader, Sort } from '@angular/material/sort';
 import { RouterLink } from '@angular/router';
 import { AppTimePipe } from '../core/app-time.pipe';
@@ -71,11 +72,12 @@ const COLUMNS: Column[] = [
 
 /**
  * The turbines table shared by /turbines (every turbine) and the farm page (one farm's turbines,
- * without the Farm column): filters (text, status, commissioning) with the match count, then a
+ * without the Farm column): filters (text, status, commissioning, a "Hide turbines with no data"
+ * switch, on by default, for turbines that have never reported) with the match count, then a
  * Material table in a `TableFrame` with the status pill, Commissioned check mark or X, the latest
- * values and the last reading time; sortable by any column (default: turbine id; turbines without
- * readings last; ties by id), 25 rows per page, live (`data-updated` flash on the updated row).
- * Each turbine id links to its turbine page.
+ * values and the last reading time; sortable by any column (default: last reading, newest first;
+ * turbines without readings last; ties by id), 25 rows per page, live (`data-updated` flash on the
+ * updated row). Each turbine id links to its turbine page.
  */
 @Component({
   selector: 'app-turbine-table',
@@ -90,6 +92,7 @@ const COLUMNS: Column[] = [
     MatIconButton,
     MatInput,
     MatLabel,
+    MatSlideToggle,
     MatSort,
     MatSortHeader,
     MatSuffix,
@@ -127,30 +130,54 @@ export class TurbineTable {
   }));
 
   protected readonly sort = signal<{ key: TurbineSortKey; dir: 'asc' | 'desc' }>({
-    key: 'id',
-    dir: 'asc',
+    key: 'time',
+    dir: 'desc',
   });
   protected readonly query = signal('');
   protected readonly status = signal<Staleness | 'all'>('all');
   protected readonly commissionedFilter = signal<CommissionedFilter>('all');
 
-  protected readonly rows = computed(() => {
+  /** The switch's own setting; it comes back when the status filter lets go of it. */
+  private readonly hideNoData = signal(true);
+  /** Choosing "No readings yet" asks for exactly those turbines, so it overrides the switch. */
+  protected readonly hidesNoData = computed(() => this.hideNoData() && this.status() !== 'empty');
+
+  /** Turbines matching the text, status and commissioning filters (the switch not applied). */
+  private readonly matching = computed(() => {
     const query = this.query().trim().toLowerCase();
     const status = this.status();
     const commissioned = this.commissionedFilter();
+    const searched = (t: FleetTurbine) =>
+      this.searchesFarms() ? [t.id, t.farmId, t.farmName] : [t.id];
+    return this.turbines().filter(
+      (t) =>
+        (status === 'all' || t.staleness === status) &&
+        (commissioned === 'all' || t.commissioned === (commissioned === 'yes')) &&
+        (!query || searched(t).some((s) => s.toLowerCase().includes(query))),
+    );
+  });
+
+  /** How many turbines the other filters would show that the switch hides right now. */
+  protected readonly hiddenNoData = computed(() =>
+    this.hidesNoData() ? this.matching().filter((t) => t.staleness === 'empty').length : 0,
+  );
+
+  protected readonly rows = computed(() => {
     const { key, dir } = this.sort();
     const column = COLUMNS.find((c) => c.key === key)!;
     const value = (t: FleetTurbine) => column.value(t);
-    const searched = (t: FleetTurbine) =>
-      this.searchesFarms() ? [t.id, t.farmId, t.farmName] : [t.id];
-    return this.turbines()
-      .filter(
-        (t) =>
-          (status === 'all' || t.staleness === status) &&
-          (commissioned === 'all' || t.commissioned === (commissioned === 'yes')) &&
-          (!query || searched(t).some((s) => s.toLowerCase().includes(query))),
-      )
+    return this.matching()
+      .filter((t) => !this.hidesNoData() || t.staleness !== 'empty')
       .sort((a, b) => compare(value(a), value(b), dir) || a.id.localeCompare(b.id));
+  });
+
+  /** The empty table's message: says when it is only the switch that hides the turbines. */
+  protected readonly noRowsMessage = computed(() => {
+    const hidden = this.hiddenNoData();
+    if (hidden === 0) return 'No turbines match the filters.';
+    return hidden === 1
+      ? '1 turbine with no readings yet is hidden. Turn off “Hide turbines with no data” to show it.'
+      : `${hidden} turbines with no readings yet are hidden. Turn off “Hide turbines with no data” to show them.`;
   });
 
   /** Rows on the current page (Material paginator; 25 per page by default). */
@@ -184,6 +211,11 @@ export class TurbineTable {
 
   protected onCommissionedFilter(event: Event): void {
     this.commissionedFilter.set((event.target as HTMLSelectElement).value as CommissionedFilter);
+    this.paging.reset();
+  }
+
+  protected onHideNoData(event: MatSlideToggleChange): void {
+    this.hideNoData.set(event.checked);
     this.paging.reset();
   }
 }
