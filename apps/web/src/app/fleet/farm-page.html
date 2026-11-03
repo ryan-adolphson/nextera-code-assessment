@@ -61,6 +61,6 @@
       <app-turbine-table [turbines]="turbines()" [hiddenColumns]="hiddenColumns" />
     }
   </app-farm-header>
-} @else {
+} @else if (store.fleetLoadedOk()) {
   <p data-testid="farm-not-found">Farm {{ farmId() }} was not found.</p>
 }

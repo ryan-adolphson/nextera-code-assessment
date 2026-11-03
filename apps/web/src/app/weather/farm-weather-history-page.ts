@@ -73,7 +73,7 @@ export class FarmWeatherHistoryPage {
   readonly farmId = input.required<string>();
 
   private readonly api = inject(WeatherApi);
-  private readonly store = inject(FleetStore);
+  protected readonly store = inject(FleetStore);
   private readonly title = inject(Title);
   private readonly now = inject(NOW);
   protected readonly tz = inject(TimeZoneSettings);

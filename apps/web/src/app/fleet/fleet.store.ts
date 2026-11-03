@@ -143,6 +143,11 @@ export class FleetStore {
   readonly unallocatedVersion = signal(0);
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
+  /**
+   * The fleet finished loading and no error is showing, so `farms` can be trusted: a farm missing
+   * from it really doesn't exist. After a failed load the list is just empty.
+   */
+  readonly fleetLoadedOk = computed(() => !this.loading() && !this.error());
   readonly recentlyUpdated = signal<string | null>(null);
   readonly selectedTurbineId = signal<string | null>(null);
   readonly historyLoading = signal(false);

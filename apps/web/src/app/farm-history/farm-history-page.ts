@@ -70,7 +70,7 @@ export class FarmHistoryPage {
 
   private readonly api = inject(FarmHistoryApi);
   private readonly cache = inject(FarmHistoryCache);
-  private readonly store = inject(FleetStore);
+  protected readonly store = inject(FleetStore);
   private readonly title = inject(Title);
   protected readonly tz = inject(TimeZoneSettings);
   private readonly document = inject(DOCUMENT);
