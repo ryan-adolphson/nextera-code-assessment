@@ -101,4 +101,4 @@ Use `MCP_DATABASE_URL` to point it at another database (in GCP: a role with only
 
 **Load testing:** [docs/load-test.md](docs/load-test.md) has the Artillery harness and its smoke run, which proves the harness works and says nothing about capacity.
 
-`CLAUDE.md` has the full reference: architecture, data model, auth, conventions and deployment.
+`CLAUDE.md` and `.claude/rules/` have the full reference: architecture, data model, auth, conventions and deployment.

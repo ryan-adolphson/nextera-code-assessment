@@ -1,0 +1,11 @@
+# apps/web: Leaflet maps
+
+- **Maps (Leaflet 1.9, `src/app/map/map-view.ts`):** a data-driven `MapView` (inputs `markers`, `selectedId`, `legend`, `maxZoom`; output `markerClick`).
+  - **Markers:** vector `circleMarker`s, so there are no image icons to bundle. Colours come from the theme's CSS variables. `MarkerStatus` is the `Staleness` type: `ok` `--ok`, `stale-15` `--caution`, `stale-30` `--warn`, `stale-60` `--danger`, `empty` `--muted` (`STATUS_COLOR_VAR`); markers get a `marker-<status>` class, legend items `data-status`. Flagged markers add the level's label as a tooltip line.
+  - **Tooltips:** built with `textContent`, never HTML.
+  - **Fitting:** the map fits its bounds only when the **set** of marker ids changes, so live updates recolour markers without moving the map.
+  - **Pages:** the overview shows farm markers (status + size by turbine count; click opens the farm). The farm page shows turbine markers at turbine coordinates (click opens the turbine page), or the farm location if it has no turbines. Marker data comes from pure functions in `fleet-markers.ts`.
+  - **CSS:** `leaflet/dist/leaflet.css` is in `angular.json` styles. **Restart `ng serve` after changing `angular.json`**: without the CSS, markers get `pointer-events: none` and can't be clicked. jsdom tests can't catch this because they don't apply CSS.
+  - **Accessibility:** the farm table and the farm page's turbines table stay as the keyboard and screen-reader path.
+  - **Tiles:** OpenStreetMap's public tiles fit development and light use only (usage policy). A production fleet tool should use a tile provider with an SLA/key.
+  - **Tests:** `fleet-routes.spec.ts` drives the real routes with `RouterTestingHarness`. Newer page specs (`fleet-shell.spec.ts`, `turbine-list.spec.ts`, `farm-page.spec.ts`, `alerts-page.spec.ts`, `reporting-page.spec.ts`) use `openFleet(url, clock, farms?, beforeOpen?, role = 'admin')` from `fleet/testing.ts` (real routes, fake API/SSE, `NOW`, the auth interceptor, and a stored session for `role`; `null` = signed out; `sse.observed()` tells whether the live stream is still subscribed) and `mixedFleetFixture()` (one turbine per staleness level at 2026-01-03T00:00Z). Assert accessible names without `aria-hidden` parts (the alert pill's digits would otherwise run into the text).
