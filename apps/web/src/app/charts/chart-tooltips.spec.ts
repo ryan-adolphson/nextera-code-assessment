@@ -67,3 +67,16 @@ describe('in local time', () => {
     expect(lines(tip)).toEqual(['80.0 °C', 'Jan 1, 21:00 CST', 'Error: …']);
   });
 });
+
+describe('12-hour clock', () => {
+  it('shows the candle span, the candle tooltip and the plain tooltip time as 12-hour', () => {
+    const c = candle(4);
+    expect(candleSpan(c, 'UTC', true)).toBe('Jan 2, 3:00 AM–3:30 AM UTC');
+    expect(lines(candleTooltip(c, format(c), '°C', 'UTC', true)).at(-1)).toBe(
+      'Jan 2, 3:00 AM–3:30 AM UTC · 4 readings',
+    );
+    expect(lines(tooltipContent('82.1 °C', start + 13 * 60 * MIN, [], 'UTC', true))[1]).toBe(
+      'Jan 2, 4:00 PM UTC',
+    );
+  });
+});

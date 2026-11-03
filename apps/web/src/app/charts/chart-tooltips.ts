@@ -10,6 +10,7 @@ export function tooltipContent(
   t: number,
   lines: readonly string[] = [],
   zone: string = UTC_ZONE,
+  clock12 = false,
 ): HTMLElement {
   const root = document.createElement('div');
   root.className = 'text-xs leading-5';
@@ -18,7 +19,7 @@ export function tooltipContent(
   strong.textContent = value;
   const time = document.createElement('span');
   time.className = 'text-muted';
-  time.textContent = formatTimestamp(t, zone);
+  time.textContent = formatTimestamp(t, zone, clock12);
   root.append(strong, time);
   for (const line of lines) {
     const item = document.createElement('span');
@@ -33,10 +34,10 @@ export function tooltipContent(
  * "Jan 2, 03:00–03:30 UTC" (or "… CST" in local time): a candle's time span, or its own `label`
  * (a precomputed candle, e.g. a day).
  */
-export function candleSpan(c: Candle, zone: string = UTC_ZONE): string {
+export function candleSpan(c: Candle, zone: string = UTC_ZONE, clock12 = false): string {
   if (c.label) return c.label;
-  const start = formatIn(c.start, 'MMM d, HH:mm', zone);
-  return `${start}–${formatIn(c.end, 'HH:mm', zone)} ${zoneAbbr(zone, c.start)}`;
+  const start = formatIn(c.start, 'MMM d, HH:mm', zone, false, clock12);
+  return `${start}–${formatIn(c.end, 'HH:mm', zone, false, clock12)} ${zoneAbbr(zone, c.start)}`;
 }
 
 /**
@@ -48,6 +49,7 @@ export function candleTooltip(
   format: (key: 'open' | 'close' | 'low' | 'high') => string,
   unit: string,
   zone: string = UTC_ZONE,
+  clock12 = false,
 ): HTMLElement {
   const root = document.createElement('div');
   root.className = 'text-xs leading-5';
@@ -69,7 +71,7 @@ export function candleTooltip(
   }
   const time = document.createElement('span');
   time.className = 'block text-muted';
-  time.textContent = `${candleSpan(c, zone)} · ${candleCount(c)}`;
+  time.textContent = `${candleSpan(c, zone, clock12)} · ${candleCount(c)}`;
   root.append(time);
   return root;
 }

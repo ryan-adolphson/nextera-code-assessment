@@ -54,8 +54,13 @@ export function timeTicks(
   widthPx: number,
   minSpacingPx = 80,
   zone: string = UTC_ZONE,
+  clock12 = false,
 ): TimeTick[] {
-  const maxTicks = Math.max(1, Math.floor(widthPx / minSpacingPx));
+  // 12-hour labels ("12:30 PM") are wider, so they get a quarter more room.
+  const maxTicks = Math.max(
+    1,
+    Math.floor(widthPx / (clock12 ? minSpacingPx * 1.25 : minSpacingPx)),
+  );
   const step = TIME_STEPS.find((s) => (to - from) / s <= maxTicks) ?? TIME_STEPS.at(-1)!;
   const onStep = (t: number) => mod(wallTime(t, zone), step) === 0;
   // Every zone's offset is a whole number of quarter hours, so each tick is on the absolute
@@ -68,20 +73,23 @@ export function timeTicks(
   };
   const ticks: TimeTick[] = [];
   for (let t = nextTick(Math.ceil(from / grid) * grid); t <= to;) {
-    ticks.push({ t, label: formatTick(t, zone) });
+    ticks.push({ t, label: formatTick(t, zone, clock12) });
     t = onStep(t + step) ? t + step : nextTick(t + grid);
   }
   return ticks;
 }
 
-/** "HH:mm", or "MMM d" at midnight in `zone`. */
-function formatTick(t: number, zone: string): string {
-  return formatIn(t, mod(wallTime(t, zone), millisecondsInDay) === 0 ? 'MMM d' : 'HH:mm', zone);
+/** "HH:mm" ("2 PM" / "2:30 PM" on the 12-hour clock), or "MMM d" at midnight in `zone`. */
+function formatTick(t: number, zone: string, clock12: boolean): string {
+  const wall = mod(wallTime(t, zone), millisecondsInDay);
+  if (wall === 0) return formatIn(t, 'MMM d', zone);
+  if (clock12) return formatIn(t, wall % millisecondsInHour === 0 ? 'h a' : 'h:mm a', zone);
+  return formatIn(t, 'HH:mm', zone);
 }
 
 /** "Jan 2, 03:20 UTC" (or "Jan 1, 21:20 CST" in local time): a time as the charts show it. */
-export function formatTimestamp(t: number, zone: string = UTC_ZONE): string {
-  return formatIn(t, 'MMM d, HH:mm', zone, true);
+export function formatTimestamp(t: number, zone: string = UTC_ZONE, clock12 = false): string {
+  return formatIn(t, 'MMM d, HH:mm', zone, true, clock12);
 }
 
 /** Index of the point nearest to `t` (points ascending by t), or -1 if there are none. */

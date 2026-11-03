@@ -1,7 +1,13 @@
 import { Component, computed, inject } from '@angular/core';
 import { MatButtonToggle, MatButtonToggleGroup } from '@angular/material/button-toggle';
 import { FleetStore } from '../fleet/fleet.store';
-import { TimeZoneMode, TimeZoneSettings, formatIn, offsetLabel } from '../core/time-zone';
+import {
+  ClockFormat,
+  TimeZoneMode,
+  TimeZoneSettings,
+  formatIn,
+  offsetLabel,
+} from '../core/time-zone';
 
 /**
  * /settings (every role): how times are shown, UTC (default) or the browser's time zone. Saved in
@@ -38,6 +44,24 @@ import { TimeZoneMode, TimeZoneSettings, formatIn, offsetLabel } from '../core/t
       </p>
       <p class="text-sm text-muted" data-testid="time-zone-note">Saved in this browser.</p>
     </section>
+
+    <section class="mt-6 grid max-w-xl gap-3" aria-labelledby="clock-heading">
+      <h2 id="clock-heading" class="text-lg font-semibold">Clock</h2>
+      <p class="text-sm text-muted">
+        Show times as 24-hour (14:05) or 12-hour (2:05 PM). Applies to every page and chart.
+      </p>
+      <mat-button-toggle-group
+        hideSingleSelectionIndicator
+        aria-labelledby="clock-heading"
+        class="justify-self-start"
+        data-testid="clock-format"
+        [value]="settings.clock()"
+        (change)="chooseClock($event.value)"
+      >
+        <mat-button-toggle value="24h" data-testid="clock-24h">24-hour</mat-button-toggle>
+        <mat-button-toggle value="12h" data-testid="clock-12h">12-hour</mat-button-toggle>
+      </mat-button-toggle-group>
+    </section>
   `,
 })
 export class SettingsPage {
@@ -53,8 +77,12 @@ export class SettingsPage {
 
   /** "Oct 31, 14:05 UTC", or "Oct 31, 09:05 CDT" in local time. */
   protected readonly preview = computed(() =>
-    formatIn(this.now(), 'MMM d, HH:mm', this.settings.zone(), true),
+    formatIn(this.now(), 'MMM d, HH:mm', this.settings.zone(), true, this.settings.clock12()),
   );
+
+  protected chooseClock(clock: ClockFormat): void {
+    this.settings.setClock(clock === '12h' ? '12h' : '24h');
+  }
 
   protected choose(mode: TimeZoneMode): void {
     this.settings.setMode(mode === 'local' ? 'local' : 'utc');

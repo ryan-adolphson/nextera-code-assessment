@@ -2,7 +2,7 @@ import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { MatButtonToggleGroupHarness } from '@angular/material/button-toggle/testing';
 import { TestBed } from '@angular/core/testing';
 import { Title } from '@angular/platform-browser';
-import { TIME_ZONE_STORAGE_PREFIX } from '../core/time-zone';
+import { CLOCK_STORAGE_PREFIX, TIME_ZONE_STORAGE_PREFIX } from '../core/time-zone';
 import { Role } from '../core/auth/roles';
 import { TEST_API_BASE_URL, openFleet, storeTimeZone } from '../fleet/testing';
 
@@ -57,6 +57,28 @@ describe('SettingsPage (/settings)', () => {
     expect([...row.querySelectorAll('td')].map((td) => app.text(td))).toContain('Jan 2, 17:55');
   });
 
+  it('offers a 24-hour (default) or 12-hour clock that every page follows and that is saved', async () => {
+    app = await openFleet('/settings', () => CLOCK, undefined, undefined, 'viewer');
+    const group = q('clock-format')!;
+    expect(group.getAttribute('aria-labelledby')).toBe('clock-heading');
+    expect(app.text(q('clock-24h'))).toBe('24-hour');
+    expect(app.text(q('clock-12h'))).toBe('12-hour');
+    expect(q('clock-24h')!.querySelector('button')!.getAttribute('aria-checked')).toBe('true');
+    expect(app.text(q('time-zone-now'))).toBe('Jan 3, 00:00 UTC');
+
+    q('clock-12h')!.querySelector('button')!.click();
+    await app.stable();
+    expect(q('clock-12h')!.querySelector('button')!.getAttribute('aria-checked')).toBe('true');
+    expect(app.text(q('time-zone-now'))).toBe('Jan 3, 12:00 AM UTC');
+    expect(localStorage.getItem(`${CLOCK_STORAGE_PREFIX}viewer@nextera.local`)).toBe('12h');
+
+    // The turbines table follows (shared state, no reload): 23:55 UTC.
+    q('nav-turbines')!.click();
+    await app.stable();
+    const row = app.root().querySelector('tr[data-turbine-id=TURB001]')!;
+    expect([...row.querySelectorAll('td')].map((td) => app.text(td))).toContain('Jan 2, 11:55 PM');
+  });
+
   it("restores the user's saved choice on the next visit", async () => {
     app = await openFleet('/settings', () => CLOCK, undefined, undefined, 'owner', {
       timeZone: 'local',
@@ -73,7 +95,7 @@ describe('SettingsPage (/settings)', () => {
     expect(localStorage.getItem(`${TIME_ZONE_STORAGE_PREFIX}owner@nextera.local`)).toBe('utc');
   });
 
-  it('applies each user\'s own setting when users take turns on one browser (no reload)', async () => {
+  it("applies each user's own setting when users take turns on one browser (no reload)", async () => {
     app = await openFleet('/turbines', () => CLOCK, undefined, undefined, 'viewer', {
       timeZone: 'local',
     });

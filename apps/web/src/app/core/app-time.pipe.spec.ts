@@ -46,6 +46,23 @@ describe('appTime pipe', () => {
     expect(text('plain')).toBe('Jan 2, 03:20');
   });
 
+  it('shows 12-hour times, with the zone tag, and follows a live switch', async () => {
+    const { fixture, text, settings } = await render('America/Chicago');
+    settings.setClock('12h');
+    await fixture.whenStable();
+    expect(text('plain')).toBe('Jan 2, 3:20 AM');
+    expect(text('zoned')).toBe('Jan 2, 2026, 3:20 AM UTC');
+
+    settings.setMode('local');
+    await fixture.whenStable();
+    expect(text('plain')).toBe('Jan 1, 9:20 PM');
+    expect(text('zoned')).toBe('Jan 1, 2026, 9:20 PM CST');
+
+    settings.setClock('24h');
+    await fixture.whenStable();
+    expect(text('plain')).toBe('Jan 1, 21:20');
+  });
+
   it('formats epoch ms and Dates, and shows nothing for no or an invalid time', async () => {
     const { fixture, text } = await render('America/Chicago');
     const host = fixture.componentInstance;

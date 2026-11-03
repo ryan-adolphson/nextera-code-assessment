@@ -1,3 +1,5 @@
+import { TestBed } from '@angular/core/testing';
+import { TimeZoneSettings } from '../core/time-zone';
 import { AlertConfig } from '../alerting/alert-config.model';
 import { reading } from '../fleet/testing';
 import { TelemetryReport } from './report-api.service';
@@ -122,6 +124,13 @@ describe('reportSeries', () => {
 });
 
 describe('CSV', () => {
+  it('stays ISO whatever clock the user chose', () => {
+    TestBed.inject(TimeZoneSettings).setClock('12h');
+    const csv = toCsv(report('turbine', [reading({ timestamp: '2026-01-02T15:20:00.000Z' })]));
+    expect(csv).toContain('2026-01-02T15:20:00.000Z');
+    expect(csv).not.toMatch(/ [AP]M/);
+  });
+
   it('writes telemetry.csv columns plus the alerts each reading triggered (RFC 4180)', () => {
     const csv = toCsv(
       report('turbine', [

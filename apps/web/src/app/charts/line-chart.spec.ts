@@ -837,6 +837,25 @@ describe('LineChart in local time (Settings)', () => {
     ).tooltip[0].formatter([{ value: [t0 + 22.5 * MIN, 82.1, 126.5, 82.1, 126.5] }]);
     expect(content.lastElementChild!.textContent).toBe('Jan 1, 21:15–21:30 CST · 3 readings');
   });
+
+  it('redraws ticks, tooltip and aria-label on the 12-hour clock without a reload', async () => {
+    TestBed.inject(TimeZoneSettings).setClock('12h');
+    await fixture.whenStable();
+
+    expect(xLabels().length).toBeGreaterThan(0);
+    expect(xLabels().every((label) => /^\d{1,2}( |:\d\d )(AM|PM)$/.test(label))).toBe(true);
+    expect(plot().getAttribute('aria-label')).toContain('at Jan 2, 3:35 AM UTC');
+    const content = (
+      chart.chart!.getOption() as unknown as {
+        tooltip: { formatter: (params: unknown) => HTMLElement }[];
+      }
+    ).tooltip[0].formatter([{ value: [t0 + 22.5 * MIN, 82.1, 126.5, 82.1, 126.5] }]);
+    expect(content.lastElementChild!.textContent).toBe('Jan 2, 3:15 AM–3:30 AM UTC · 3 readings');
+
+    TestBed.inject(TimeZoneSettings).setClock('24h');
+    await fixture.whenStable();
+    expect(xLabels()[0]).toBe('03:00');
+  });
 });
 
 /**

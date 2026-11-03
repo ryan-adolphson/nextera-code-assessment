@@ -182,7 +182,10 @@ export class LineChart {
   private readonly plot = viewChild.required<ElementRef<HTMLElement>>('plot');
   private readonly destroyRef = inject(DestroyRef);
   /** The zone times are shown in (Settings): ticks, candles and tooltips follow it. */
-  private readonly zone = inject(TimeZoneSettings).zone;
+  private readonly timeSettings = inject(TimeZoneSettings);
+  private readonly zone = this.timeSettings.zone;
+  /** The 12-hour clock (Settings): tick labels and tooltips follow it. */
+  private readonly clock12 = this.timeSettings.clock12;
   /** The ECharts instance (exposed for tests). */
   chart?: echarts.ECharts;
   /** Index (in the series data) of the reading under the crosshair, -1 for none. */
@@ -299,7 +302,8 @@ export class LineChart {
         ? `${readings} readings in ${this.drawn().length} ${this.candleSize().toLowerCase()} candles.`
         : `${readings} readings.`;
     // When the latest value is: a precomputed candle's own name (a day), else its time.
-    const lastAt = (t: number) => this.candleAt().get(t)?.label ?? formatTimestamp(t, this.zone());
+    const lastAt = (t: number) =>
+      this.candleAt().get(t)?.label ?? formatTimestamp(t, this.zone(), this.clock12());
     const summary = last
       ? `${this.title()}: latest ${this.format(last.v)} ${this.unit()} at ${lastAt(last.t)}. ${count}${stats}${flagged}`
       : `${this.title()}: no readings in this range.`;
@@ -308,7 +312,7 @@ export class LineChart {
     if (candle) return `${summary} Selected: ${this.describeCandle(candle)}.`;
     const marker = this.markerAt().get(hovered.t);
     const details = marker?.lines.length ? ` ${marker.lines.join('. ')}.` : '';
-    return `${summary} Selected: ${this.format(hovered.v)} ${this.unit()} at ${formatTimestamp(hovered.t, this.zone())}.${details}`;
+    return `${summary} Selected: ${this.format(hovered.v)} ${this.unit()} at ${formatTimestamp(hovered.t, this.zone(), this.clock12())}.${details}`;
   });
 
   constructor() {
@@ -323,6 +327,7 @@ export class LineChart {
       this.data();
       this.drawn();
       this.zone();
+      this.clock12();
       this.domain();
       this.statLines();
       this.visibleMarkers();
@@ -366,7 +371,7 @@ export class LineChart {
       .map(([key, label]) => `${label} ${this.format(c[key])}`)
       .join(', ');
     const unit = this.unit() ? ` ${this.unit()}` : '';
-    return `${candleSpan(c, this.zone())}: ${values}${unit} (${candleCount(c)})`;
+    return `${candleSpan(c, this.zone(), this.clock12())}: ${values}${unit} (${candleCount(c)})`;
   }
 
   /**
@@ -526,7 +531,14 @@ export class LineChart {
     if (!chart) return;
     const { from, to } = this.visibleRange().range;
     const y = this.yBounds();
-    const xTicks = timeTicks(from, to, chart.getWidth() || 640, undefined, this.zone());
+    const xTicks = timeTicks(
+      from,
+      to,
+      chart.getWidth() || 640,
+      undefined,
+      this.zone(),
+      this.clock12(),
+    );
     this.xLabels = new Map(xTicks.map((tick) => [tick.t, tick.label]));
     const xValues = xTicks.map((tick) => tick.t);
     // Counts (no decimals) get whole-number ticks only.
@@ -619,7 +631,13 @@ export class LineChart {
     const [t, v] = first?.value ?? [];
     const candle = t == null ? undefined : this.candleAt().get(t);
     if (candle)
-      return candleTooltip(candle, (key) => this.format(candle[key]), this.unit(), this.zone());
+      return candleTooltip(
+        candle,
+        (key) => this.format(candle[key]),
+        this.unit(),
+        this.zone(),
+        this.clock12(),
+      );
     return t == null || v == null
       ? ''
       : tooltipContent(
@@ -627,6 +645,7 @@ export class LineChart {
           t,
           this.markerAt().get(t)?.lines ?? [],
           this.zone(),
+          this.clock12(),
         );
   }
 

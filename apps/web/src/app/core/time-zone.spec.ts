@@ -1,9 +1,11 @@
 import { TestBed } from '@angular/core/testing';
 import {
   BROWSER_TIME_ZONE,
+  CLOCK_STORAGE_PREFIX,
   TIME_ZONE_STORAGE_PREFIX,
   TimeZoneSettings,
   UTC_ZONE,
+  clockPattern,
   formatIn,
   offsetLabel,
   validZone,
@@ -94,6 +96,73 @@ describe('TimeZoneSettings', () => {
   it("reads the browser's zone from Intl by default", () => {
     const zone = TestBed.inject(BROWSER_TIME_ZONE);
     expect(zone).toBe(validZone(Intl.DateTimeFormat().resolvedOptions().timeZone));
+  });
+});
+
+describe('TimeZoneSettings clock', () => {
+  const settings = () => TestBed.inject(TimeZoneSettings);
+  const ckey = (email: string) => `${CLOCK_STORAGE_PREFIX}${email}`;
+
+  beforeEach(() => localStorage.clear());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('is 24-hour by default, signed out or for a user who never chose', () => {
+    const s = settings();
+    expect(s.clock()).toBe('24h');
+    expect(s.clock12()).toBe(false);
+    s.useAccount('viewer@nextera.local');
+    expect(s.clock()).toBe('24h');
+  });
+
+  it('saves the choice per user email under its own key, apart from the zone', () => {
+    const s = settings();
+    s.setClock('12h');
+    expect(localStorage.length).toBe(0); // nobody signed in: memory only
+    s.useAccount(' Viewer@Nextera.local ');
+    expect(s.clock()).toBe('24h'); // the account's own (unset) choice
+    s.setClock('12h');
+    expect(s.clock12()).toBe(true);
+    expect(localStorage.getItem(ckey('viewer@nextera.local'))).toBe('12h');
+    expect(localStorage.getItem(key('viewer@nextera.local'))).toBeNull();
+    s.useAccount('owner@nextera.local');
+    expect(s.clock()).toBe('24h');
+    s.useAccount('viewer@nextera.local');
+    expect(s.clock()).toBe('12h');
+    s.setClock('24h');
+    expect(localStorage.getItem(ckey('viewer@nextera.local'))).toBe('24h');
+  });
+
+  it('treats a bad stored value as 24-hour', () => {
+    localStorage.setItem(ckey('admin@nextera.local'), 'am-pm');
+    const s = settings();
+    s.useAccount('admin@nextera.local');
+    expect(s.clock()).toBe('24h');
+  });
+
+  it('keeps working when localStorage throws (the choice lives in memory)', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    const s = settings();
+    s.useAccount('admin@nextera.local');
+    expect(s.clock()).toBe('24h');
+    expect(() => s.setClock('12h')).not.toThrow();
+    expect(s.clock12()).toBe(true);
+  });
+
+  it('formats HH:mm as h:mm a on the 12-hour clock only', () => {
+    expect(clockPattern('MMM d, HH:mm', true)).toBe('MMM d, h:mm a');
+    expect(clockPattern('MMM d, HH:mm', false)).toBe('MMM d, HH:mm');
+    expect(clockPattern('EEE, MMM d', true)).toBe('EEE, MMM d');
+    expect(formatIn(Date.parse('2026-01-02T14:05:00Z'), 'HH:mm', 'UTC', true, true)).toBe(
+      '2:05 PM UTC',
+    );
+    expect(formatIn(Date.parse('2026-01-02T00:05:00Z'), 'HH:mm', 'UTC', false, true)).toBe(
+      '12:05 AM',
+    );
   });
 });
 

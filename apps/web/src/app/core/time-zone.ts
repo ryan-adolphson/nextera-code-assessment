@@ -59,18 +59,31 @@ export function offsetLabel(zone: string, t: number): string {
   return `UTC${minutes < 0 ? '−' : '+'}${hm}`;
 }
 
-/** `t` formatted with a date-fns pattern in `zone`, plus " <abbr>" when `withZone`. */
+/** The clock shown: 24-hour ("14:05", the default) or 12-hour ("2:05 PM"). */
+export type ClockFormat = '24h' | '12h';
+
+/** A pattern for the 12-hour clock: every `HH:mm` becomes `h:mm a` (other patterns are kept). */
+export function clockPattern(pattern: string, clock12: boolean): string {
+  return clock12 ? pattern.replaceAll('HH:mm', 'h:mm a') : pattern;
+}
+
+/**
+ * `t` formatted with a date-fns pattern in `zone`, plus " <abbr>" when `withZone`. With `clock12`,
+ * `HH:mm` in the pattern is shown as `h:mm a`.
+ */
 export function formatIn(
   t: Date | number | string,
   pattern: string,
   zone: string,
   withZone = false,
+  clock12 = false,
 ): string {
-  const text = format(t, pattern, { in: zoneContext(zone) });
+  const text = format(t, clockPattern(pattern, clock12), { in: zoneContext(zone) });
   return withZone ? `${text} ${zoneAbbr(zone, +new Date(t))}` : text;
 }
 
 export const TIME_ZONE_STORAGE_PREFIX = 'nextera.timeZone.';
+export const CLOCK_STORAGE_PREFIX = 'nextera.clock.';
 
 /**
  * The user's time-zone setting (Settings page): UTC (default) or the browser's zone. Saved in this
@@ -86,7 +99,13 @@ export class TimeZoneSettings {
   /** The chosen mode: the account's saved one, until `setMode` (re-read when the account changes). */
   private readonly selected = linkedSignal<TimeZoneMode>(() => readMode(this.account()));
 
+  /** The chosen clock: the account's saved one, until `setClock` (24-hour when none or invalid). */
+  private readonly clockChoice = linkedSignal<ClockFormat>(() => readClock(this.account()));
+
   readonly mode = this.selected.asReadonly();
+  readonly clock = this.clockChoice.asReadonly();
+  /** Whether times show on the 12-hour clock ("2:05 PM"). */
+  readonly clock12 = computed(() => this.clockChoice() === '12h');
   /** The zone times are shown in: "UTC" or the browser's zone. */
   readonly zone = computed(() => (this.mode() === 'local' ? this.browserZone : UTC_ZONE));
   /** The date-fns `in` context for `zone`. */
@@ -115,9 +134,30 @@ export class TimeZoneSettings {
     }
   }
 
+  /** Chooses the 24-hour or 12-hour clock, and saves it for the signed-in user. */
+  setClock(clock: ClockFormat): void {
+    this.clockChoice.set(clock);
+    const account = this.account();
+    if (!account) return;
+    try {
+      localStorage.setItem(CLOCK_STORAGE_PREFIX + account, clock);
+    } catch {
+      // memory only (privacy mode, full storage)
+    }
+  }
+
   /** The current zone's offset at `t` ("UTC−5"). */
   offsetLabel(t: number): string {
     return offsetLabel(this.zone(), t);
+  }
+}
+
+function readClock(account: string | null): ClockFormat {
+  if (!account) return '24h';
+  try {
+    return localStorage.getItem(CLOCK_STORAGE_PREFIX + account) === '12h' ? '12h' : '24h';
+  } catch {
+    return '24h';
   }
 }
 

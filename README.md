@@ -23,7 +23,7 @@ In production each part runs on Google Cloud Run, defined in `infra/terraform`.
 2. **Turbines**: the whole fleet in one table, with status pills when a turbine stops reporting (no data in 15/30/60 min).
 3. **Alerting**: define threshold rules (e.g. gearbox above 100 °C = error); every incoming reading is checked against them, and History shows what fired.
 4. **Reporting**: pick a farm or turbine and a date range, see charts and a table, download a CSV.
-5. **Settings**: show times in UTC (the default) or your browser's local time zone. The choice is saved in your browser and every page follows it.
+5. **Settings**: show times in UTC (the default) or your browser's local time zone, on a 24-hour (the default) or 12-hour clock. The choice is saved in your browser and every page follows it.
 
 New readings appear live, with no page reload. Users sign in with one of three roles: **viewer** (read-only), **owner** (also edits rules, runs reports) and **admin**.
 

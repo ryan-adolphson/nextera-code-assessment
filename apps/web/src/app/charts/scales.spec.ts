@@ -39,6 +39,39 @@ describe('timeTicks', () => {
   });
 });
 
+describe('12-hour clock', () => {
+  it('labels ticks compactly: "2 PM" on the hour, "2:30 PM" otherwise, the date at midnight', () => {
+    const ticks = timeTicks(
+      t0 + 22 * 60 * MIN,
+      t0 + 26 * 60 * MIN + 30 * MIN,
+      640,
+      80,
+      'UTC',
+      true,
+    );
+    expect(ticks.map((t) => t.label)).toEqual(['10 PM', '11 PM', 'Jan 2', '1 AM', '2 AM']);
+    const half = timeTicks(t0 + 12 * 60 * MIN, t0 + 14 * 60 * MIN, 640, 80, 'UTC', true);
+    expect(half.map((t) => t.label)).toContain('12:30 PM');
+    expect(half.map((t) => t.label)).toContain('12 PM');
+  });
+
+  it('keeps wider labels apart: fewer ticks than the 24-hour clock in a tight width', () => {
+    const range = [t0, t0 + 12 * 60 * MIN] as const;
+    expect(timeTicks(...range, 400, 80, 'UTC', true).length).toBeLessThanOrEqual(
+      timeTicks(...range, 400, 80, 'UTC', false).length,
+    );
+    const labels = timeTicks(...range, 400, 80, 'UTC', true);
+    expect(labels.length * 100).toBeLessThanOrEqual(400 + 100);
+  });
+
+  it('formats a timestamp with the zone name', () => {
+    expect(formatTimestamp(Date.parse('2026-01-02T15:05:00Z'), 'UTC', true)).toBe(
+      'Jan 2, 3:05 PM UTC',
+    );
+    expect(formatTimestamp(Date.parse('2026-01-02T15:05:00Z'))).toBe('Jan 2, 15:05 UTC');
+  });
+});
+
 describe('nearestIndex', () => {
   const points = [0, 5, 10].map((m) => ({ t: t0 + m * MIN, v: m }));
 
