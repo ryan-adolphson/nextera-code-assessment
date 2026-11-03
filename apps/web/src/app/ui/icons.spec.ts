@@ -12,9 +12,12 @@ describe('provideIcons', () => {
       'check',
       'chevron-right',
       'close',
+      'help',
       'map',
       'menu',
+      'more-vert',
       'notifications',
+      'settings',
       'wind-power',
     ]);
     for (const name of Object.keys(ICONS)) {

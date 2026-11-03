@@ -1,10 +1,12 @@
 import { expect, test } from '@playwright/test';
+import { SEED_NOW } from './support/session.js';
 
 // Seed for the Playwright test agents (planner/generator/healer) and a smoke test of sign-in.
 // The seed data covers 2026-01-01T00:00Z..2026-01-02T23:55Z and every window in the app ends at
 // the client clock, so the clock is fixed just after the last reading: turbines read as reporting,
 // the 24 h turbine range covers Jan 2 and History's default (yesterday-today) includes it.
-export const SEED_NOW = new Date('2026-01-03T00:00:00Z');
+// SEED_NOW lives in support/session.ts (with signIn for other roles), re-exported here.
+export { SEED_NOW };
 
 test('seed', async ({ page }) => {
   const email = process.env.E2E_USER ?? 'admin@nextera.local';

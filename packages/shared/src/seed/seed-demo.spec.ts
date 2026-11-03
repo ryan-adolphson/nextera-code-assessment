@@ -6,9 +6,15 @@ import type {
   PrismaClient,
   Telemetry,
 } from '../generated/prisma/client.js';
-import { DEMO_ALERT_RULES, DEMO_TURBINES } from './demo-fleet.js';
-import { DEMO_ANOMALIES } from './generate-telemetry.js';
+import { DEMO_ALERT_RULES, DEMO_SEED, DEMO_TURBINES } from './demo-fleet.js';
+import { DEMO_ANOMALIES, generateTelemetry } from './generate-telemetry.js';
+import { seedDemoUnallocated } from './demo-unallocated.js';
 import { parseDemoSeedEnv, seedDemo } from './seed-demo.js';
+
+// Tested on its own (demo-unallocated.spec.ts, demo-seed.e2e-spec.ts).
+vi.mock('./demo-unallocated.js', () => ({
+  seedDemoUnallocated: vi.fn(() => Promise.resolve([])),
+}));
 
 const DATA_DIR = fileURLToPath(new URL('../../prisma/data', import.meta.url));
 const END = new Date('2026-10-08T12:02:00Z'); // floored to 12:00
@@ -26,11 +32,30 @@ describe('seedDemo', () => {
 
   beforeEach(() => {
     prisma = mockDeep<PrismaClient>();
+    vi.mocked(seedDemoUnallocated).mockClear();
+    // Every turbine is on its demo farm (create's farm), unless a test says otherwise.
+    prisma.turbine.upsert.mockImplementation(((args: {
+      create: { farmId: string };
+    }) => Promise.resolve({ farmId: args.create.farmId })) as never);
     prisma.alertConfig.createMany.mockResolvedValue({ count: 2 });
     prisma.alertConfig.findMany.mockResolvedValue(rules);
     prisma.telemetryAlert.createMany.mockResolvedValue({ count: 0 });
-    // A fake telemetry table: unique (turbine_id, timestamp), ON CONFLICT DO NOTHING.
+    // A fake telemetry table: unique (turbine_id, timestamp), ON CONFLICT DO NOTHING, written by
+    // the bulk unnest insert (quiet readings) and createManyAndReturn (flagged ones).
     stored = new Set();
+    prisma.$queryRaw.mockImplementation(((
+      _sql: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const rows = bulkRows(values);
+      const count = rows.filter((r) => {
+        const key = `${r.turbineId}@${r.timestamp}`;
+        if (stored.has(key)) return false;
+        stored.add(key);
+        return true;
+      }).length;
+      return Promise.resolve([{ count }]);
+    }) as never);
     prisma.telemetry.createManyAndReturn.mockImplementation(((args: {
       data: Prisma.TelemetryCreateManyInput[];
     }) =>
@@ -51,12 +76,23 @@ describe('seedDemo', () => {
 
   const run = (end = END, hours = 72) =>
     seedDemo(prisma, { dataDir: DATA_DIR, end, hours });
+  /** Every row sent to the database (bulk and flagged), as { turbineId, farmId, timestamp }. */
+  const sentRows = () => [
+    ...prisma.$queryRaw.mock.calls.flatMap(([, ...values]) => bulkRows(values)),
+    ...prisma.telemetry.createManyAndReturn.mock.calls.flatMap(([a]) =>
+      (a!.data as Prisma.TelemetryCreateManyInput[]).map((r) => ({
+        turbineId: r.turbineId,
+        farmId: r.farmId,
+        timestamp: (r.timestamp as Date).toISOString(),
+      })),
+    ),
+  ];
   const links = () =>
     prisma.telemetryAlert.createMany.mock.calls.flatMap(
       ([args]) => args?.data as Prisma.TelemetryAlertCreateManyInput[],
     );
 
-  it('upserts the fixture farms and the demo turbines (commissioned only on create)', async () => {
+  it('upserts the fixture farms and the demo turbines (farm and commissioned only on create)', async () => {
     await run();
 
     expect(prisma.farm.upsert).toHaveBeenCalledTimes(10);
@@ -71,11 +107,46 @@ describe('seedDemo', () => {
       longitude: -96.518,
       commissioned: false,
     });
-    expect(args.update).toEqual({
-      farmId: 'FARM01',
-      latitude: 41.263,
-      longitude: -96.518,
-    });
+    expect(args.update).toEqual({ latitude: 41.263, longitude: -96.518 });
+  });
+
+  it('keeps a moved turbine on its farm and generates its readings for that farm', async () => {
+    prisma.turbine.upsert.mockImplementation(((args: {
+      where: { turbineId: string };
+      create: { farmId: string };
+    }) =>
+      Promise.resolve({
+        farmId:
+          args.where.turbineId === 'TURB003' ? 'FARM02' : args.create.farmId,
+      })) as never);
+
+    await run(END, 1);
+
+    const farms = new Set(
+      sentRows()
+        .filter((r) => r.turbineId === 'TURB003')
+        .map((r) => r.farmId),
+    );
+    expect(farms).toEqual(new Set(['FARM02']));
+  });
+
+  it('seeds the unallocated entries up to the same end and returns their outcome', async () => {
+    const outcome = [
+      {
+        turbineId: 'TURB999',
+        reportedFarmId: 'FARM01',
+        outcome: 'created' as const,
+        kind: 'unknown_turbine' as const,
+        status: 'pending' as const,
+        held: 72,
+      },
+    ];
+    vi.mocked(seedDemoUnallocated).mockResolvedValueOnce(outcome);
+
+    const result = await run(END, 1);
+
+    expect(seedDemoUnallocated).toHaveBeenCalledExactlyOnceWith(prisma, END);
+    expect(result.unallocated).toEqual(outcome);
   });
 
   it('creates only the missing default rules and evaluates the enabled ones', async () => {
@@ -96,11 +167,29 @@ describe('seedDemo', () => {
   it('inserts in batched transactions and links exactly the anomalies to the rules they trigger', async () => {
     const result = await run();
 
-    const calls = prisma.telemetry.createManyAndReturn.mock.calls;
-    expect(calls.length).toBe(Math.ceil(result.rows / 1000));
-    expect(prisma.$transaction).toHaveBeenCalledTimes(calls.length);
-    expect(calls.every(([a]) => a?.skipDuplicates === true)).toBe(true);
+    // 10 turbines generated at a time, at most 5,000 readings per transaction.
+    let batches = 0;
+    for (let t = 0; t < DEMO_TURBINES.length; t += 10) {
+      const chunk = generateTelemetry({
+        turbines: DEMO_TURBINES.slice(t, t + 10),
+        end: END,
+        hours: 72,
+        seed: DEMO_SEED,
+      });
+      batches += Math.ceil(chunk.length / 5000);
+    }
+    expect(prisma.$transaction).toHaveBeenCalledTimes(batches);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(batches);
+    for (const [, ...values] of prisma.$queryRaw.mock.calls) {
+      expect(bulkRows(values).length).toBeLessThanOrEqual(5000);
+    }
+    expect(sentRows()).toHaveLength(result.rows);
+    // Only the readings that trigger a rule go through createManyAndReturn (+ telemetry_alerts).
+    const flagged = prisma.telemetry.createManyAndReturn.mock.calls;
+    expect(flagged.every(([a]) => a?.skipDuplicates === true)).toBe(true);
+    expect(flagged.flatMap(([a]) => a!.data as unknown[])).toHaveLength(7);
     expect(result).toMatchObject({
+      rows: DEMO_TURBINES.length * 72 * 12 - missingReadings(),
       inserted: result.rows,
       skipped: 0,
       alerts: 7,
@@ -142,7 +231,7 @@ describe('seedDemo', () => {
     expect(prisma.telemetryAlert.createMany).not.toHaveBeenCalled();
 
     const later = await run(new Date(END.getTime() + HOUR));
-    // 12 new steps for each turbine (the stopped one's window moves too), plus the earlier gap,
+    // 12 new steps for each turbine (the stopped and lagging ones' windows move too), plus the earlier gap,
     // which is no longer at the gap's offset.
     expect(later.inserted).toBe(
       DEMO_TURBINES.length * 12 + DEMO_ANOMALIES.gap.readings,
@@ -162,6 +251,27 @@ describe('seedDemo', () => {
     await expect(run()).rejects.toThrow('db down');
   });
 });
+
+/** The bulk insert's unnest arrays → rows (turbine ids, farm ids, ISO timestamps first). */
+function bulkRows(values: unknown[]) {
+  const [turbineIds, farmIds, timestamps] = values as string[][];
+  return turbineIds.map((turbineId, i) => ({
+    turbineId,
+    farmId: farmIds[i],
+    timestamp: timestamps[i],
+  }));
+}
+
+/** Readings the 72 h demo leaves out: the gap and the stale turbines' last minutes. */
+function missingReadings() {
+  return (
+    DEMO_ANOMALIES.gap.readings +
+    [...DEMO_ANOMALIES.stopped, ...DEMO_ANOMALIES.lagging].reduce(
+      (n, s) => n + ('offsetMinutes' in s ? s.offsetMinutes : s.lagMinutes) / 5,
+      0,
+    )
+  );
+}
 
 describe('parseDemoSeedEnv', () => {
   const now = new Date('2026-10-08T12:34:56Z');

@@ -14,11 +14,11 @@ export interface AlertConfig {
   enabled: boolean;
 }
 
-/**
- * The fields the rule editor writes (POST body; PATCH sends them all too). Not `enabled`: a new
- * rule gets the API default (true) and editing a rule leaves it as it is.
- */
-export type AlertConfigInput = Omit<AlertConfig, 'id' | 'enabled'>;
+/** The fields the rule editor writes (POST body; PATCH sends them all too), `enabled` included. */
+export type AlertConfigInput = Omit<AlertConfig, 'id'>;
+
+/** What a rule checks (metric, condition, threshold, level): enough to name it. */
+export type RuleCondition = Omit<AlertConfig, 'id' | 'enabled'>;
 
 /** SSE event the API publishes after every committed alert-config write (ALERT_CONFIG_CHANGED). */
 export const ALERT_CONFIG_CHANGED = 'alert-config.changed';
@@ -60,7 +60,7 @@ export function formatThreshold(value: number, unit: string): string {
 }
 
 /** "Gearbox temperature above 120.5 °C": names a rule in buttons and dialogs. */
-export function describeRule(rule: AlertConfigInput): string {
+export function describeRule(rule: RuleCondition): string {
   const metric = metricOf(rule.measurementMetric);
   return `${metric.label} ${rule.comparison} ${formatThreshold(rule.valueMetric, metric.unit)}`;
 }

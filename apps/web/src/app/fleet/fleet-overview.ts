@@ -1,7 +1,10 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
+import { DecimalPipe } from '@angular/common';
+import { AppTimePipe } from '../core/app-time.pipe';
 import { Component, computed, inject } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
+import { MapPlaceholder } from '../map/map-placeholder';
 import { MapView } from '../map/map-view';
+import { FarmPill } from '../ui/farm-pill';
 import { StatTile } from '../ui/stat-tile';
 import { TABLE_IMPORTS } from '../ui/table';
 import { FARM_LEGEND, farmMarkers } from './fleet-markers';
@@ -10,7 +13,16 @@ import { FarmSummary, FleetStore } from './fleet.store';
 /** Landing page: fleet totals, a map of every farm and the farm table. Choosing a farm opens it. */
 @Component({
   selector: 'app-fleet-overview',
-  imports: [DatePipe, DecimalPipe, RouterLink, MapView, StatTile, TABLE_IMPORTS],
+  imports: [
+    AppTimePipe,
+    DecimalPipe,
+    FarmPill,
+    RouterLink,
+    MapPlaceholder,
+    MapView,
+    StatTile,
+    TABLE_IMPORTS,
+  ],
   templateUrl: './fleet-overview.html',
 })
 export class FleetOverview {

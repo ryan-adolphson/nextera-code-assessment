@@ -190,3 +190,138 @@ describe('candles', () => {
     expect(toCandles([], 30 * M)).toEqual([]);
   });
 });
+
+/** Local time: US DST changes in America/Chicago (2026-03-08 and 2026-11-01), and +5:30 Kolkata. */
+describe('in a local time zone', () => {
+  const CHICAGO = 'America/Chicago';
+  const KOLKATA = 'Asia/Kolkata';
+  const H = 60 * MIN;
+  const at = (iso: string) => Date.parse(iso);
+  const iso = (t: number) => new Date(t).toISOString().slice(0, 16);
+  const ticks = (from: string, to: string, zone: string, width = 640) =>
+    timeTicks(at(from), at(to), width, 80, zone).map((tick) => [iso(tick.t), tick.label]);
+
+  it('follows the clock on a spring-forward day (02:00 does not exist)', () => {
+    expect(ticks('2026-03-08T06:00Z', '2026-03-08T12:00Z', CHICAGO)).toEqual([
+      ['2026-03-08T06:00', 'Mar 8'], // 00:00 CST
+      ['2026-03-08T07:00', '01:00'],
+      ['2026-03-08T08:00', '03:00'], // 03:00 CDT
+      ['2026-03-08T09:00', '04:00'],
+      ['2026-03-08T10:00', '05:00'],
+      ['2026-03-08T11:00', '06:00'],
+      ['2026-03-08T12:00', '07:00'],
+    ]);
+  });
+
+  it('shows the repeated hour on a fall-back day', () => {
+    expect(ticks('2026-11-01T05:00Z', '2026-11-01T11:00Z', CHICAGO)).toEqual([
+      ['2026-11-01T05:00', 'Nov 1'], // 00:00 CDT
+      ['2026-11-01T06:00', '01:00'], // 01:00 CDT
+      ['2026-11-01T07:00', '01:00'], // 01:00 CST
+      ['2026-11-01T08:00', '02:00'],
+      ['2026-11-01T09:00', '03:00'],
+      ['2026-11-01T10:00', '04:00'],
+      ['2026-11-01T11:00', '05:00'],
+    ]);
+  });
+
+  it('puts day ticks on local midnights across a DST change (23-hour day)', () => {
+    expect(ticks('2026-03-05T06:00Z', '2026-03-12T05:00Z', CHICAGO)).toEqual([
+      ['2026-03-05T06:00', 'Mar 5'],
+      ['2026-03-06T06:00', 'Mar 6'],
+      ['2026-03-07T06:00', 'Mar 7'],
+      ['2026-03-08T06:00', 'Mar 8'],
+      ['2026-03-09T05:00', 'Mar 9'], // CDT from here
+      ['2026-03-10T05:00', 'Mar 10'],
+      ['2026-03-11T05:00', 'Mar 11'],
+      ['2026-03-12T05:00', 'Mar 12'],
+    ]);
+    // Day steps on a narrow chart: still local midnights.
+    const wide = timeTicks(at('2026-10-28T05:00Z'), at('2026-11-07T06:00Z'), 320, 80, CHICAGO);
+    expect(wide.every((tick) => /^[A-Z][a-z]{2} \d+$/.test(tick.label))).toBe(true);
+    expect(wide.map((tick) => iso(tick.t))).toContain('2026-11-03T06:00');
+  });
+
+  it('steps whole days over months of daily candles, on local midnights', () => {
+    // 30 days at 640 px: every 4th day; 182 days: every 28th. All local midnights, DST or not.
+    const month = timeTicks(at('2026-10-03T05:00Z'), at('2026-11-02T06:00Z'), 640, 80, CHICAGO);
+    expect(month.length).toBeGreaterThanOrEqual(6);
+    expect(month.length).toBeLessThanOrEqual(8);
+    expect(month.every((tick) => /^[A-Z][a-z]{2} \d+$/.test(tick.label))).toBe(true);
+    expect(month.slice(1).every((tick, i) => tick.t - month[i].t === 96 * H)).toBe(true);
+    const half = timeTicks(at('2026-05-04T05:00Z'), at('2026-11-02T06:00Z'), 640, 80, CHICAGO);
+    expect(half.length).toBeLessThanOrEqual(8);
+    expect(half.slice(1).every((tick, i) => Math.round((tick.t - half[i].t) / H / 24) === 28)).toBe(
+      true,
+    );
+    expect(half.every((tick) => /^[A-Z][a-z]{2} \d+$/.test(tick.label))).toBe(true);
+  });
+
+  it('aligns ticks to whole local hours in a +5:30 zone, with the date at its midnight', () => {
+    expect(ticks('2026-01-01T00:00Z', '2026-01-01T06:00Z', KOLKATA).map(([, l]) => l)).toEqual([
+      '06:00',
+      '07:00',
+      '08:00',
+      '09:00',
+      '10:00',
+      '11:00',
+    ]);
+    expect(ticks('2026-01-01T16:00Z', '2026-01-01T22:00Z', KOLKATA)).toContainEqual([
+      '2026-01-01T18:30',
+      'Jan 2',
+    ]);
+  });
+
+  it('formats timestamps with the zone name for the instant', () => {
+    expect(formatTimestamp(at('2026-01-02T03:25:00Z'), CHICAGO)).toBe('Jan 1, 21:25 CST');
+    expect(formatTimestamp(at('2026-07-02T03:25:00Z'), CHICAGO)).toBe('Jul 1, 22:25 CDT');
+    expect(formatTimestamp(at('2026-01-02T03:25:00Z'), KOLKATA)).toBe('Jan 2, 08:55 GMT+5:30');
+  });
+
+  const hourly = (from: string, count: number, stepMs = H) =>
+    Array.from({ length: count }, (_, i) => ({ t: at(from) + i * stepMs, v: i }));
+  const spans = (candles: ReturnType<typeof toCandles>) =>
+    candles.map((c) => [iso(c.start), iso(c.end), c.count]);
+
+  it('makes 4-hour candles of local hours: 3 h long on spring forward, 5 h on fall back', () => {
+    expect(spans(toCandles(hourly('2026-03-08T06:00Z', 8), 4 * H, CHICAGO))).toEqual([
+      ['2026-03-08T06:00', '2026-03-08T09:00', 3], // 00:00 CST – 04:00 CDT
+      ['2026-03-08T09:00', '2026-03-08T13:00', 4],
+      ['2026-03-08T13:00', '2026-03-08T17:00', 1],
+    ]);
+    expect(spans(toCandles(hourly('2026-11-01T05:00Z', 6), 4 * H, CHICAGO))).toEqual([
+      ['2026-11-01T05:00', '2026-11-01T10:00', 5], // 00:00 CDT – 04:00 CST
+      ['2026-11-01T10:00', '2026-11-01T14:00', 1],
+    ]);
+    const [first] = toCandles(hourly('2026-11-01T05:00Z', 1), 4 * H, CHICAGO);
+    expect(first.t).toBe((first.start + first.end) / 2);
+  });
+
+  it('gives the repeated fall-back hour its own hourly candle', () => {
+    expect(spans(toCandles(hourly('2026-11-01T06:00Z', 5, 30 * MIN), H, CHICAGO))).toEqual([
+      ['2026-11-01T06:00', '2026-11-01T07:00', 2], // 01:00 CDT
+      ['2026-11-01T07:00', '2026-11-01T08:00', 2], // 01:00 CST
+      ['2026-11-01T08:00', '2026-11-01T09:00', 1],
+    ]);
+  });
+
+  it('aligns candles to the half hour in a +5:30 zone', () => {
+    const point = [{ t: at('2026-01-01T00:10:00Z'), v: 1 }];
+    expect(spans(toCandles(point, 30 * MIN, KOLKATA))).toEqual([
+      ['2026-01-01T00:00', '2026-01-01T00:30', 1], // 05:30–06:00 IST
+    ]);
+    expect(spans(toCandles(point, H, KOLKATA))).toEqual([
+      ['2025-12-31T23:30', '2026-01-01T00:30', 1], // 05:00–06:00 IST
+    ]);
+    expect(spans(toCandles(point, 4 * H, KOLKATA))).toEqual([
+      ['2025-12-31T22:30', '2026-01-01T02:30', 1], // 04:00–08:00 IST
+    ]);
+  });
+
+  it('keeps UTC 4-hour candles on UTC hours', () => {
+    expect(spans(toCandles(hourly('2026-01-01T01:00Z', 4), 4 * H))).toEqual([
+      ['2026-01-01T00:00', '2026-01-01T04:00', 3],
+      ['2026-01-01T04:00', '2026-01-01T08:00', 1],
+    ]);
+  });
+});

@@ -22,7 +22,8 @@ describe('CSV upload: POST /ingest/telemetry (e2e, real Postgres + Redis)', () =
   });
 
   beforeEach(async () => {
-    await t.prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry`;
+    await t.prisma
+      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, held_telemetry, unallocated_turbines`;
     lastEventId = (await t.events.publish('test.marker', null)).id;
   });
 
@@ -47,6 +48,8 @@ describe('CSV upload: POST /ingest/telemetry (e2e, real Postgres + Redis)', () =
       rows: 1122,
       inserted: 1122,
       duplicates: 0,
+      held: 0,
+      blocked: 0,
       turbines: ['TURB001', 'TURB002'],
     });
     expect(await t.prisma.telemetry.count()).toBe(1122);
@@ -188,25 +191,71 @@ describe('CSV upload: POST /ingest/telemetry (e2e, real Postgres + Redis)', () =
     expect(await t.prisma.telemetry.count()).toBe(0);
   });
 
-  it('rejects unknown turbines and farm mismatches by line, storing nothing', async () => {
-    const res = await upload(
-      csv(
-        'TURB001,FARM01,2026-03-01T00:00:00Z,,2000,7,12,4,80',
-        'TURB999,FARM01,2026-03-01T00:00:00Z,,2000,7,12,4,80',
-        'TURB002,FARM01,2026-03-01T00:00:00Z,,2000,7,12,4,80',
-      ),
+  it('holds unknown turbines and farm mismatches, drops blocked pairs and stores the rest', async () => {
+    await t.prisma.unallocatedTurbine.create({
+      data: {
+        turbineId: 'TURB998',
+        reportedFarmId: 'FARM01',
+        kind: 'unknown_turbine',
+        status: 'blocked',
+        firstSeenAt: new Date(),
+        lastSeenAt: new Date(),
+      },
+    });
+    const file = csv(
+      'TURB001,FARM01,2026-03-01T00:00:00Z,,2000,7,12,4,80',
+      'TURB999,FARM01,2026-03-01T00:00:00Z,,2000,7,12,4,80',
+      'TURB999,FARM01,2026-03-01T00:05:00Z,,2010,7,12,4,80',
+      'TURB002,FARM01,2026-03-01T00:00:00Z,,2000,7,12,4,80',
+      'TURB998,FARM01,2026-03-01T00:00:00Z,,2000,7,12,4,80',
     );
 
-    expect(res.status).toBe(400);
-    expect((await res.json()).errors).toEqual([
-      { line: 3, errors: ['Unknown turbine TURB999'] },
-      { line: 4, errors: ['Turbine TURB002 belongs to FARM02, not FARM01'] },
+    const res = await upload(file);
+
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({
+      rows: 5,
+      inserted: 1,
+      duplicates: 0,
+      held: 3,
+      blocked: 1,
+      turbines: ['TURB001', 'TURB002', 'TURB998', 'TURB999'],
+    });
+    expect(await t.prisma.telemetry.count()).toBe(1);
+    const entries = await t.prisma.unallocatedTurbine.findMany({
+      where: { status: 'pending' },
+      include: { _count: { select: { held: true } } },
+      orderBy: { turbineId: 'asc' },
+    });
+    expect(
+      entries.map((e) => [
+        e.turbineId,
+        e.reportedFarmId,
+        e.kind,
+        e._count.held,
+      ]),
+    ).toEqual([
+      ['TURB002', 'FARM01', 'farm_mismatch', 1],
+      ['TURB999', 'FARM01', 'unknown_turbine', 2],
     ]);
-    expect(await t.prisma.telemetry.count()).toBe(0);
-    expect(await publishedEvents()).toHaveLength(0);
+    const events = await publishedEvents();
+    expect(events.map((e) => e.type).sort()).toEqual([
+      'telemetry.received', // TURB001 only: held readings are never streamed as telemetry
+      'unallocated-turbine.changed',
+      'unallocated-turbine.changed',
+    ]);
+
+    // Re-uploading holds nothing new.
+    expect(await (await upload(file)).json()).toMatchObject({
+      inserted: 0,
+      duplicates: 1,
+      held: 3,
+      blocked: 1,
+    });
+    expect(await t.prisma.heldTelemetry.count()).toBe(3);
   });
 
-  it('reports format errors and unknown turbines together, so one attempt shows everything', async () => {
+  it('rejects format errors whatever the turbines, holding nothing', async () => {
     const res = await upload(
       csv(
         'TURB003,FARM01,2026-03-01T00:00:00Z,,2000,7,12,4,80',
@@ -216,7 +265,6 @@ describe('CSV upload: POST /ingest/telemetry (e2e, real Postgres + Redis)', () =
 
     expect(res.status).toBe(400);
     expect((await res.json()).errors).toEqual([
-      { line: 2, errors: ['Unknown turbine TURB003'] },
       {
         line: 3,
         errors: [
@@ -225,6 +273,7 @@ describe('CSV upload: POST /ingest/telemetry (e2e, real Postgres + Redis)', () =
         ],
       },
     ]);
+    expect(await t.prisma.unallocatedTurbine.count()).toBe(0);
   });
 
   it('reports a week-date timestamp as a line error (400, not 500) and stores nothing', async () => {

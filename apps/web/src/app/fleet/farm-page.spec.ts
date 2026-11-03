@@ -1,5 +1,6 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { MatPaginatorHarness } from '@angular/material/paginator/testing';
+import { MatSlideToggleHarness } from '@angular/material/slide-toggle/testing';
 import { largeFleetFixture, mixedFleetFixture, openFleet, reading } from './testing';
 
 /**
@@ -12,7 +13,9 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
   const CLOCK = Date.parse('2026-01-03T00:00:00.000Z');
   let app: Awaited<ReturnType<typeof openFleet>>;
   beforeEach(async () => {
-    app = await openFleet('/farms/FARM02', () => CLOCK, mixedFleetFixture());
+    // Viewers see the Commissioned check mark or X (owners get a switch: turbine-table-commissioned.spec).
+    app = await openFleet('/farms/FARM02', () => CLOCK, mixedFleetFixture(), undefined, 'viewer');
+    await app.stable(); // the deferred map renders
   });
   afterEach(() => app.http.verify()); // no other requests (e.g. no alert rules)
 
@@ -45,10 +48,19 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
     await app.stable();
   }
 
-  it("lists only this farm's turbines, by id, with the /turbines columns except Farm", () => {
+  /** Turns "Hide turbines with no data" off, so TURB004 (never reported) is listed. */
+  async function showNoData() {
+    const toggle = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatSlideToggleHarness.with({ selector: '[data-testid=hide-no-data]' }),
+    );
+    await toggle.uncheck();
+    await app.stable();
+  }
+
+  it("lists only this farm's turbines, newest first, with the /turbines columns except Farm", async () => {
     expect(app.text(app.root().querySelector('h1'))).toBe('High Plains FARM02');
-    expect(ids()).toEqual(['TURB002', 'TURB004', 'TURB006', 'TURB007']);
-    expect(count()).toBe('4 of 4 turbines');
+    expect(ids()).toEqual(['TURB002', 'TURB006', 'TURB007']);
+    expect(count()).toBe('3 of 4 turbines · 1 with no data hidden');
     expect([...table().querySelectorAll('thead th')].map((th) => app.text(th))).toEqual([
       'Turbine',
       'Status',
@@ -68,8 +80,14 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
       '80.0',
       'Jan 2, 23:55',
     ]);
-    // Never reported: no values, and not commissioned (X).
-    expect(cells(rows()[1])).toEqual([
+    expect(sortedColumns()).toEqual([['Last reading (UTC)', 'descending']]);
+    // The map shows every turbine, the hidden one too, and stays above the table.
+    expect(app.root().querySelectorAll('.map-marker')).toHaveLength(4);
+
+    // Never reported: no values, and not commissioned (X); last.
+    await showNoData();
+    expect(count()).toBe('4 of 4 turbines');
+    expect(cells(rows()[3])).toEqual([
       'TURB004',
       'No readings yet',
       'Not commissioned',
@@ -82,23 +100,21 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
       rows().map((r) =>
         r.querySelector('[data-testid=commissioned-icon]')!.getAttribute('data-icon'),
       ),
-    ).toEqual(['check', 'x', 'check', 'x']);
+    ).toEqual(['check', 'check', 'x', 'x']);
     expect(
       rows().map((r) => r.querySelector('[data-testid=staleness]')!.getAttribute('data-staleness')),
-    ).toEqual(['ok', 'empty', 'stale-30', 'stale-60']);
+    ).toEqual(['ok', 'stale-30', 'stale-60', 'empty']);
     // Each turbine id opens its page under this farm.
     expect(rows().map((r) => r.querySelector('a')!.getAttribute('href'))).toEqual([
       '/farms/FARM02/turbines/TURB002',
-      '/farms/FARM02/turbines/TURB004',
       '/farms/FARM02/turbines/TURB006',
       '/farms/FARM02/turbines/TURB007',
+      '/farms/FARM02/turbines/TURB004',
     ]);
-    expect(sortedColumns()).toEqual([['Turbine', 'ascending']]);
-    // The map stays above the table.
-    expect(app.root().querySelectorAll('.map-marker')).toHaveLength(4);
   });
 
   it('sorts by any column, reverses on a second click, and keeps turbines without readings last', async () => {
+    await showNoData();
     await sortBy('power');
     expect(ids()).toEqual(['TURB006', 'TURB007', 'TURB002', 'TURB004']); // 300, 1000, 2259, none
     expect(sortedColumns()).toEqual([['Power (kW)', 'ascending']]);
@@ -137,8 +153,8 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
 
     await choose('status-filter', 'all');
     await choose('commissioned-filter', 'no');
-    expect(ids()).toEqual(['TURB004', 'TURB007']);
-    expect(count()).toBe('2 of 4 turbines');
+    expect(ids()).toEqual(['TURB007']);
+    expect(count()).toBe('1 of 4 turbines · 1 with no data hidden');
   });
 
   it("updates a row live and ignores other farms' readings", async () => {
@@ -167,7 +183,7 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
       reading({ turbineId: 'TURB001', farmId: 'FARM01', timestamp: '2026-01-03T00:00:00.000Z' }),
     );
     await app.stable();
-    expect(ids()).toEqual(['TURB002', 'TURB004', 'TURB006', 'TURB007']);
+    expect(ids()).toEqual(['TURB002', 'TURB006', 'TURB007']); // the order follows when it settles
   });
 });
 

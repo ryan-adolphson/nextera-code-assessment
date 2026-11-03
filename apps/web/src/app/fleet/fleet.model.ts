@@ -60,6 +60,9 @@ export interface TurbineOverview {
   latest: Telemetry | null;
 }
 
+/** Mirrors TurbineResponse from PATCH /api/turbines/:id: a turbine without its latest reading. */
+export type TurbineResponse = Omit<TurbineOverview, 'latest'>;
+
 export interface FarmOverview {
   id: string;
   name: string;
@@ -73,6 +76,12 @@ export const TELEMETRY_EVENTS = ['telemetry.received'] as const;
 
 /** A reading that arrived this much after it was measured is flagged as delayed. */
 export const DELAYED_AFTER_MS = minutesToMilliseconds(10);
+
+/**
+ * How far ahead of the client clock a live reading may be dated; later ones are ignored. Wider
+ * than ingestion's 5 min (`MAX_FUTURE_SKEW_MS`) because browser clocks drift.
+ */
+export const LIVE_FUTURE_TOLERANCE_MS = minutesToMilliseconds(10);
 
 /** Turbines report every 5 minutes. */
 export const READING_INTERVAL_MS = minutesToMilliseconds(5);

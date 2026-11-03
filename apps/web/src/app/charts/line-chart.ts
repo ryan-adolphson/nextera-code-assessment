@@ -51,7 +51,8 @@ import {
   themeOption,
 } from './chart-options';
 import { ChartTheme, MarkerLevel, readTheme } from './chart-theme';
-import { candleSpan, candleTooltip, tooltipContent } from './chart-tooltips';
+import { candleCount, candleSpan, candleTooltip, tooltipContent } from './chart-tooltips';
+import { TimeZoneSettings } from '../core/time-zone';
 
 export type { ChartKind } from './chart-options';
 export type { ChartTheme, MarkerLevel } from './chart-theme';
@@ -122,7 +123,7 @@ export interface ChartMarker {
  * - 2px line that breaks at gaps (missing readings are shown, not interpolated); isolated
  *   readings as dots; an 8px end dot with a surface ring; latest value labelled in the header.
  * - The y-axis spans the data range ±10%, so the line never touches the frame. Hairline grid,
- *   round y ticks and UTC time ticks (our own tick values via `customValues`).
+ *   round y ticks and time ticks in the zone shown (Settings) (our own tick values via `customValues`).
  * - Crosshair + tooltip snapping to the nearest reading. `hoverT` is an input/output pair so
  *   several charts share one crosshair. Keyboard: focus the chart, then ←/→, Home/End, Esc.
  * - Optional `stats` (median/high/low of the whole selected range, not the zoomed window) as
@@ -134,11 +135,13 @@ export interface ChartMarker {
  *   points of interest such as readings that triggered alerts; a legend names the levels shown,
  *   and each marker's `lines` join the tooltip and the aria-label (colour is never the only cue).
  * - With `decimals` 0 (counts), the y-axis ticks are whole numbers.
- * - `kind: 'candlestick'`: the readings become UTC-aligned candles (open = first, close = last
+ * - `kind: 'candlestick'`: the readings become candles aligned in the zone shown (open = first, close = last
  *   reading of each bucket, plus low/high; the size adapts to the range, about 24–48 candles),
  *   hollow when rising and solid when falling (no red/green: those are status colours); the
  *   crosshair snaps to candle centres. Dragging over the plot draws a horizontal brush (ECharts
  *   lineX) that zooms every chart to the brushed range (`viewChange`); panning is the slider's.
+ *   With precomputed `candles` (e.g. one per local day from the API, 23 or 25 h on a DST day) those
+ *   are drawn as given, never rebuilt from `points`; `candleLabel` names their size ("Daily").
  * The tooltip content is built with textContent, so labels can never inject markup.
  */
 @Component({
@@ -168,9 +171,18 @@ export class LineChart {
   readonly markers = input<ChartMarker[]>([]);
   /** Line or candlestick (fixed for the chart's lifetime: read when ECharts is created). */
   readonly kind = input<ChartKind>('line');
+  /**
+   * Candlestick charts: precomputed candles (ascending by t, each spanning its own [start, end),
+   * e.g. a local day) to draw instead of bucketing `points`; null builds them from `points`.
+   */
+  readonly candles = input<Candle[] | null>(null);
+  /** The candle size in words ("Daily"); by default the bucket size ("15 min"). */
+  readonly candleLabel = input<string | null>(null);
 
   private readonly plot = viewChild.required<ElementRef<HTMLElement>>('plot');
   private readonly destroyRef = inject(DestroyRef);
+  /** The zone times are shown in (Settings): ticks, candles and tooltips follow it. */
+  private readonly zone = inject(TimeZoneSettings).zone;
   /** The ECharts instance (exposed for tests). */
   chart?: echarts.ECharts;
   /** Index (in the series data) of the reading under the crosshair, -1 for none. */
@@ -186,7 +198,17 @@ export class LineChart {
    */
   private readonly position = linkedSignal(() => this.hoverT());
 
+  /** The precomputed candles in the domain, or null when candles are built from `points`. */
+  private readonly given = computed(() => {
+    const candles = this.candles();
+    if (!candles || this.kind() !== 'candlestick') return null;
+    const { from, to } = this.domain();
+    return candles.filter((c) => c.t >= from && c.t <= to);
+  });
+  /** The points in the domain (precomputed candles: each candle's close at its centre). */
   protected readonly visible = computed(() => {
+    const given = this.given();
+    if (given) return given.map((c): ChartPoint => ({ t: c.t, v: c.close }));
     const { from, to } = this.domain();
     return this.points().filter((p) => p.t >= from && p.t <= to);
   });
@@ -196,15 +218,22 @@ export class LineChart {
     const { from, to } = this.domain();
     return candleSizeFor(to - from);
   });
-  protected readonly candleLabel = computed(() => formatDuration(this.candleMs()));
-  protected readonly candles = computed(() =>
-    this.kind() === 'candlestick' ? toCandles(this.visible(), this.candleMs()) : [],
+  protected readonly candleSize = computed(
+    () => this.candleLabel() ?? formatDuration(this.candleMs()),
   );
-  private readonly candleAt = computed(() => new Map(this.candles().map((c) => [c.t, c])));
+  /** The candles drawn: the precomputed ones, or the readings bucketed in the zone shown. */
+  protected readonly drawn = computed(
+    () =>
+      this.given() ??
+      (this.kind() === 'candlestick'
+        ? toCandles(this.visible(), this.candleMs(), this.zone())
+        : []),
+  );
+  private readonly candleAt = computed(() => new Map(this.drawn().map((c) => [c.t, c])));
   /** What the crosshair snaps to: the readings, or the candle centres (value = close). */
   private readonly targets = computed((): ChartPoint[] =>
     this.kind() === 'candlestick'
-      ? this.candles().map((c) => ({ t: c.t, v: c.close }))
+      ? this.drawn().map((c) => ({ t: c.t, v: c.close }))
       : this.visible(),
   );
   protected readonly visibleMarkers = computed(() => {
@@ -240,6 +269,8 @@ export class LineChart {
   readonly yBounds = computed((): ValueRange | null => {
     const values = this.visible().map((p) => p.v);
     if (!values.length) return null;
+    // Precomputed candles reach beyond their closes (bucketed readings never do).
+    for (const c of this.given() ?? []) values.push(c.low, c.high);
     values.push(...this.statLines().map((line) => line.value));
     return paddedRange(Math.min(...values), Math.max(...values));
   });
@@ -261,19 +292,23 @@ export class LineChart {
     const flagged = legend.length
       ? ` Flagged: ${legend.map((entry) => `${entry.count} ${entry.label}`).join(', ')}.`
       : '';
+    const given = this.given();
+    const readings = given ? given.reduce((sum, c) => sum + c.count, 0) : this.visible().length;
     const count =
       this.kind() === 'candlestick'
-        ? `${this.visible().length} readings in ${this.candles().length} ${this.candleLabel()} candles.`
-        : `${this.visible().length} readings.`;
+        ? `${readings} readings in ${this.drawn().length} ${this.candleSize().toLowerCase()} candles.`
+        : `${readings} readings.`;
+    // When the latest value is: a precomputed candle's own name (a day), else its time.
+    const lastAt = (t: number) => this.candleAt().get(t)?.label ?? formatTimestamp(t, this.zone());
     const summary = last
-      ? `${this.title()}: latest ${this.format(last.v)} ${this.unit()} at ${formatTimestamp(last.t)}. ${count}${stats}${flagged}`
+      ? `${this.title()}: latest ${this.format(last.v)} ${this.unit()} at ${lastAt(last.t)}. ${count}${stats}${flagged}`
       : `${this.title()}: no readings in this range.`;
     if (!hovered) return summary;
     const candle = this.candleAt().get(hovered.t);
     if (candle) return `${summary} Selected: ${this.describeCandle(candle)}.`;
     const marker = this.markerAt().get(hovered.t);
     const details = marker?.lines.length ? ` ${marker.lines.join('. ')}.` : '';
-    return `${summary} Selected: ${this.format(hovered.v)} ${this.unit()} at ${formatTimestamp(hovered.t)}.${details}`;
+    return `${summary} Selected: ${this.format(hovered.v)} ${this.unit()} at ${formatTimestamp(hovered.t, this.zone())}.${details}`;
   });
 
   constructor() {
@@ -283,9 +318,11 @@ export class LineChart {
       this.watchColorScheme();
     });
 
-    // Data, domain, stats or formatting changed: redraw.
+    // Data, domain, stats, formatting or the time zone (ticks, candles) changed: redraw.
     effect(() => {
       this.data();
+      this.drawn();
+      this.zone();
       this.domain();
       this.statLines();
       this.visibleMarkers();
@@ -316,7 +353,7 @@ export class LineChart {
     });
   }
 
-  /** "Jan 2, 03:00–03:30 UTC: start 82.1, end 90.0, low 81.9, high 126.5 °C (4 readings)". */
+  /** "Jan 2, 03:00–03:30 UTC (or the local zone): start 82.1, end 90.0, low 81.9, high 126.5 °C (4 readings)". */
   protected describeCandle(c: Candle): string {
     const values = (
       [
@@ -329,7 +366,7 @@ export class LineChart {
       .map(([key, label]) => `${label} ${this.format(c[key])}`)
       .join(', ');
     const unit = this.unit() ? ` ${this.unit()}` : '';
-    return `${candleSpan(c)}: ${values}${unit} (${c.count} ${c.count === 1 ? 'reading' : 'readings'})`;
+    return `${candleSpan(c, this.zone())}: ${values}${unit} (${candleCount(c)})`;
   }
 
   /**
@@ -421,7 +458,7 @@ export class LineChart {
           data:
             this.kind() === 'candlestick'
               ? // [t, open, close, low, high] per candle
-                this.candles().map((c) => [c.t, c.open, c.close, c.low, c.high])
+                this.drawn().map((c) => [c.t, c.open, c.close, c.low, c.high])
               : // The last reading carries the ring; the rest are plain [t, v] pairs (null = gap).
                 data.map((d, i) =>
                   i === lastIndex
@@ -483,13 +520,13 @@ export class LineChart {
     this.updateTicks();
   }
 
-  /** Our own round y ticks and UTC time ticks for the visible window and chart width. */
+  /** Our own round y ticks and time ticks (in the zone shown) for the visible window and chart width. */
   private updateTicks(): void {
     const chart = this.chart;
     if (!chart) return;
     const { from, to } = this.visibleRange().range;
     const y = this.yBounds();
-    const xTicks = timeTicks(from, to, chart.getWidth() || 640);
+    const xTicks = timeTicks(from, to, chart.getWidth() || 640, undefined, this.zone());
     this.xLabels = new Map(xTicks.map((tick) => [tick.t, tick.label]));
     const xValues = xTicks.map((tick) => tick.t);
     // Counts (no decimals) get whole-number ticks only.
@@ -511,7 +548,7 @@ export class LineChart {
     const index = !hovered
       ? -1
       : candles
-        ? this.candles().findIndex((c) => c.t === hovered.t)
+        ? this.drawn().findIndex((c) => c.t === hovered.t)
         : this.data().findIndex((d) => d.x === hovered.t);
     if (!force && index === this.activeIndex) return;
     this.activeIndex = index;
@@ -581,10 +618,16 @@ export class LineChart {
     const [first] = params as { value: [number, number | null] }[];
     const [t, v] = first?.value ?? [];
     const candle = t == null ? undefined : this.candleAt().get(t);
-    if (candle) return candleTooltip(candle, (key) => this.format(candle[key]), this.unit());
+    if (candle)
+      return candleTooltip(candle, (key) => this.format(candle[key]), this.unit(), this.zone());
     return t == null || v == null
       ? ''
-      : tooltipContent(`${this.format(v)} ${this.unit()}`, t, this.markerAt().get(t)?.lines ?? []);
+      : tooltipContent(
+          `${this.format(v)} ${this.unit()}`,
+          t,
+          this.markerAt().get(t)?.lines ?? [],
+          this.zone(),
+        );
   }
 
   private applyTheme(chart: echarts.ECharts, theme: ChartTheme): void {

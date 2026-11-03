@@ -1,0 +1,308 @@
+<h1 class="text-3xl font-bold">Unallocated turbines</h1>
+<p class="mt-1 text-sm text-muted">
+  Readings from turbines that aren’t in the fleet, or that report another farm than their own, are
+  held here (up to 7 days) until you assign, keep, move or block them. Times are {{ tz.label() }}.
+</p>
+
+<app-unallocated-tabs>
+  <p class="mt-4 min-h-5 text-sm text-muted" role="status" data-testid="unallocated-notice">
+    {{ actions.notice() }}
+  </p>
+
+  @if (actions.error(); as error) {
+    <p
+      class="mt-2 rounded-lg bg-danger-bg px-4 py-3 text-danger"
+      role="alert"
+      data-testid="unallocated-action-error"
+    >
+      {{ error }}
+    </p>
+  }
+
+  @if (store.failed()) {
+    <div
+      class="mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-danger-bg px-4 py-3 text-danger"
+      role="alert"
+      data-testid="unallocated-load-error"
+    >
+      Could not load the unallocated turbines.
+      <button matButton="outlined" type="button" data-testid="unallocated-retry" (click)="reload()">
+        Retry
+      </button>
+    </div>
+  }
+
+  @if (store.loading()) {
+    <p class="mt-2 text-muted" data-testid="unallocated-loading">Loading unallocated turbines…</p>
+  } @else if (rows().length === 0 && !store.failed()) {
+    <div
+      class="mt-2 rounded-lg border border-line bg-surface px-4 py-6"
+      data-testid="no-unallocated"
+    >
+      <p class="font-medium">No unallocated turbines.</p>
+      <p class="mt-1 text-sm text-muted">
+        Every reading belongs to a turbine of the fleet, in its own farm.
+      </p>
+    </div>
+  } @else if (rows().length) {
+    <h2 class="mt-2 mb-3 text-lg font-semibold" data-testid="unallocated-count">
+      {{ rows().length }} {{ rows().length === 1 ? 'turbine' : 'turbines' }} pending
+    </h2>
+    <!-- relative: contains the buttons' absolutely positioned sr-only text, which would otherwise
+       widen the page on phones when the table scrolls -->
+    <div class="relative overflow-x-auto rounded-lg border border-line">
+      <!-- Expandable rows: each entry renders a summary row and a detail row
+         (multiTemplateDataRows); the detail row is hidden until the entry is expanded. -->
+      <table
+        mat-table
+        multiTemplateDataRows
+        data-testid="unallocated"
+        [dataSource]="paging.page()"
+        [trackBy]="trackById"
+      >
+        <ng-container matColumnDef="expand">
+          <th mat-header-cell *matHeaderCellDef class="w-12">
+            <span class="sr-only">Expand</span>
+          </th>
+          <td mat-cell *matCellDef="let row" class="w-12 pr-0!">
+            <!-- The row's click handler toggles; this button makes it keyboard-operable. -->
+            <button
+              matIconButton
+              type="button"
+              class="-m-1 [--mat-icon-button-icon-size:20px] [--mat-icon-button-state-layer-size:32px]"
+              data-testid="unallocated-expand"
+              [attr.aria-expanded]="isExpanded(row.entry.id)"
+              [attr.aria-controls]="'unallocated-detail-' + row.entry.id"
+              [attr.aria-label]="
+                (isExpanded(row.entry.id) ? 'Hide' : 'Show') +
+                ' held readings for ' +
+                row.entry.turbineId
+              "
+            >
+              <mat-icon
+                class="size-5! transition-transform"
+                [class.rotate-90]="isExpanded(row.entry.id)"
+                svgIcon="chevron-right"
+              />
+            </button>
+          </td>
+        </ng-container>
+
+        <!-- Two-line cells keep the table narrow enough to fit a desktop frame without scrolling;
+           the newest held reading's values are the first row of the expanded detail. -->
+        <ng-container matColumnDef="turbine">
+          <th mat-header-cell *matHeaderCellDef>Turbine / problem</th>
+          <td mat-cell *matCellDef="let row" class="py-1.5!">
+            <span class="block font-semibold" data-testid="turbine-id">{{
+              row.entry.turbineId
+            }}</span>
+            <span
+              class="mt-0.5 inline-flex items-center rounded-full border border-line bg-surface px-2 py-0.5 text-xs font-medium text-ink"
+              data-testid="kind"
+              [attr.data-kind]="row.entry.kind"
+              >{{ kindLabel(row.entry.kind) }}</span
+            >
+          </td>
+        </ng-container>
+
+        <ng-container matColumnDef="farms">
+          <th mat-header-cell *matHeaderCellDef>Reported / current farm</th>
+          <td mat-cell *matCellDef="let row" class="py-1.5!">
+            <span class="block">
+              <span class="sr-only">Reported: </span>
+              <span
+                data-testid="reported-farm"
+                [attr.data-exists]="row.entry.reportedFarm !== null"
+                [class.text-muted]="row.entry.reportedFarm === null"
+                >{{ farmName(row.entry.reportedFarm) }}
+                <app-farm-pill [farmId]="row.entry.reportedFarmId"
+              /></span>
+            </span>
+            <span class="block">
+              @if (row.entry.currentFarm; as current) {
+                <span class="sr-only">Current: </span>
+                <span class="text-muted" data-testid="current-farm"
+                  >{{ current.name }} <app-farm-pill [farmId]="current.id"
+                /></span>
+              } @else {
+                <span class="text-muted" data-testid="current-farm">Not in the fleet</span>
+              }
+            </span>
+          </td>
+        </ng-container>
+
+        <ng-container matColumnDef="seen">
+          <th mat-header-cell *matHeaderCellDef>Seen ({{ tz.tag() }})</th>
+          <td mat-cell *matCellDef="let row" class="py-1.5! tabular-nums" data-testid="seen">
+            <span class="flex items-center gap-2">
+              <span data-testid="last-seen"
+                >Last {{ row.entry.lastSeenAt | appTime: 'MMM d, HH:mm' }}</span
+              >
+              <app-staleness-badge [staleness]="row.staleness" />
+            </span>
+            <span class="block text-muted" data-testid="first-seen"
+              >First {{ row.entry.firstSeenAt | appTime: 'MMM d, HH:mm' }}</span
+            >
+          </td>
+        </ng-container>
+
+        <ng-container matColumnDef="held">
+          <th mat-header-cell *matHeaderCellDef class="text-right!">Held</th>
+          <td mat-cell *matCellDef="let row" class="text-right! tabular-nums" data-testid="held">
+            {{ row.entry.heldCount | number }}
+          </td>
+        </ng-container>
+
+        <!-- stickyEnd: when the table scrolls sideways (narrow windows), the actions stay pinned
+           to its right edge on the row's opaque background, with a hairline before them. -->
+        <ng-container matColumnDef="actions" stickyEnd>
+          <th mat-header-cell *matHeaderCellDef class="border-l border-line">
+            <span class="sr-only">Actions</span>
+          </th>
+          <!-- One primary action by kind (Assign an unknown turbine, Keep a farm mismatch), the
+             rest in a menu, all on one line. Buttons act; they never toggle the row. -->
+          <td
+            mat-cell
+            *matCellDef="let row"
+            class="border-l border-line"
+            (click)="$event.stopPropagation()"
+          >
+            @let entry = row.entry;
+            <div class="flex items-center justify-end gap-1">
+              @if (entry.kind === 'unknown_turbine') {
+                <button
+                  matButton="outlined"
+                  type="button"
+                  class="min-w-36!"
+                  data-testid="assign"
+                  (click)="assign(entry)"
+                >
+                  Assign<span class="sr-only"> {{ entry.turbineId }}</span> to farm…
+                </button>
+              } @else {
+                <button
+                  matButton="outlined"
+                  type="button"
+                  class="min-w-36!"
+                  data-testid="keep"
+                  [disabled]="actions.busyId() === entry.id"
+                  (click)="keep(entry)"
+                >
+                  {{ actions.busyId() === entry.id ? 'Keeping…' : 'Keep'
+                  }}<span class="sr-only"> {{ entry.turbineId }}</span> in
+                  {{ entry.currentFarm?.id }}
+                </button>
+              }
+              <button
+                matIconButton
+                type="button"
+                data-testid="more-actions"
+                #trigger="matMenuTrigger"
+                [attr.aria-label]="'More actions for ' + entry.turbineId"
+                [matMenuTriggerFor]="more"
+              >
+                <mat-icon svgIcon="more-vert" />
+              </button>
+              <mat-menu #more="matMenu" class="app-menu" xPosition="before">
+                <!-- Lazy: the items exist only while this row's menu is open. An item that opens a
+                   dialog focuses the trigger first, so the dialog returns focus there when it
+                   closes (the item itself is gone by then). -->
+                <ng-template matMenuContent>
+                  @if (entry.kind === 'farm_mismatch') {
+                    @if (entry.reportedFarm === null) {
+                      <!-- Focusable (disabledInteractive) so the reason is read, as its description
+                         (aria-hidden keeps it out of the name); full opacity so it can be read
+                         on screen too (the label is muted instead). -->
+                      <button
+                        mat-menu-item
+                        type="button"
+                        class="opacity-100!"
+                        data-testid="move"
+                        [disabled]="true"
+                        [disabledInteractive]="true"
+                        [attr.aria-describedby]="'move-reason-' + entry.id"
+                        (click)="move(entry)"
+                      >
+                        <span class="block text-muted"
+                          >Move {{ entry.turbineId }} to {{ entry.reportedFarmId }}…</span
+                        >
+                        <span
+                          class="block text-xs text-muted"
+                          aria-hidden="true"
+                          data-testid="move-disabled-reason"
+                          [id]="'move-reason-' + entry.id"
+                          >No farm {{ entry.reportedFarmId }} to move to: keep or block it.</span
+                        >
+                      </button>
+                    } @else {
+                      <button
+                        mat-menu-item
+                        type="button"
+                        data-testid="move"
+                        (click)="trigger.focus(); move(entry)"
+                      >
+                        Move {{ entry.turbineId }} to {{ entry.reportedFarmId }}…
+                      </button>
+                    }
+                  }
+                  <button
+                    mat-menu-item
+                    type="button"
+                    class="danger-button"
+                    data-testid="block"
+                    (click)="trigger.focus(); block(entry)"
+                  >
+                    Block {{ entry.turbineId }} from {{ entry.reportedFarmId }}…
+                  </button>
+                </ng-template>
+              </mat-menu>
+            </div>
+          </td>
+        </ng-container>
+
+        <!-- The detail row: the entry's newest held readings, loaded when expanded. -->
+        <ng-container matColumnDef="detail">
+          <td
+            mat-cell
+            *matCellDef="let row"
+            class="bg-surface"
+            [attr.colspan]="columns.length"
+            [id]="'unallocated-detail-' + row.entry.id"
+          >
+            @if (isExpanded(row.entry.id)) {
+              <div class="py-1 pl-10">
+                <app-held-readings [entry]="row.entry" />
+              </div>
+            }
+          </td>
+        </ng-container>
+
+        <tr mat-header-row *matHeaderRowDef="columns"></tr>
+        <tr
+          mat-row
+          *matRowDef="let row; columns: columns"
+          class="cursor-pointer hover:bg-surface"
+          data-testid="unallocated-row"
+          [attr.data-entry-id]="row.entry.id"
+          [attr.data-turbine-id]="row.entry.turbineId"
+          [attr.data-kind]="row.entry.kind"
+          [attr.data-expanded]="isExpanded(row.entry.id) ? '' : null"
+          (click)="toggle(row.entry.id)"
+        ></tr>
+        <tr
+          mat-row
+          *matRowDef="let row; columns: ['detail']"
+          class="detail-row"
+          data-testid="unallocated-detail"
+          [attr.data-entry-id]="row.entry.id"
+          [attr.hidden]="isExpanded(row.entry.id) ? null : ''"
+        ></tr>
+      </table>
+    </div>
+    <mat-paginator
+      aria-label="Unallocated turbine pages"
+      data-testid="unallocated-paginator"
+      [appPaging]="paging"
+    />
+  }
+</app-unallocated-tabs>

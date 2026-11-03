@@ -1,8 +1,15 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { Prisma, PrismaService } from '@nextera/shared';
+import {
+  EventStore,
+  FLEET_CHANGED,
+  Prisma,
+  PrismaService,
+} from '@nextera/shared';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { FleetService } from './fleet.service.js';
+import { WeatherQueryDto } from './dto/weather-query.dto.js';
+import { FarmDailyQueryDto } from './dto/farm-daily-query.dto.js';
 
 const farm = (id: string, turbineIds: string[]) => ({
   id,
@@ -36,13 +43,140 @@ const row = (turbineId: string, farmId: string) => ({
 describe('FleetService', () => {
   let service: FleetService;
   let prisma: DeepMockProxy<PrismaService>;
+  let events: DeepMockProxy<EventStore>;
 
   beforeEach(async () => {
     prisma = mockDeep<PrismaService>();
+    events = mockDeep<EventStore>();
     const moduleRef = await Test.createTestingModule({
-      providers: [FleetService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        FleetService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EventStore, useValue: events },
+      ],
     }).compile();
     service = moduleRef.get(FleetService);
+  });
+
+  describe('setCommissioned', () => {
+    const turbine = (commissioned: boolean) => ({
+      id: '00000000-0000-4000-8000-000000000001', // internal UUID, never exposed
+      turbineId: 'TURB001',
+      farmId: 'FARM01',
+      latitude: new Prisma.Decimal('41.263'),
+      longitude: new Prisma.Decimal('-96.518'),
+      commissioned,
+    });
+    const response = (commissioned: boolean) => ({
+      id: 'TURB001',
+      farmId: 'FARM01',
+      latitude: 41.263,
+      longitude: -96.518,
+      commissioned,
+    });
+
+    it('updates only a row whose value differs, returns the turbine and publishes fleet.changed', async () => {
+      prisma.turbine.updateManyAndReturn.mockResolvedValue([
+        turbine(true),
+      ] as never);
+
+      await expect(service.setCommissioned('TURB001', true)).resolves.toEqual(
+        response(true),
+      );
+
+      expect(prisma.turbine.updateManyAndReturn).toHaveBeenCalledWith({
+        where: { turbineId: 'TURB001', commissioned: { not: true } },
+        data: { commissioned: true },
+      });
+      expect(prisma.turbine.findUnique).not.toHaveBeenCalled();
+      expect(events.publish).toHaveBeenCalledTimes(1);
+      expect(events.publish).toHaveBeenCalledWith(FLEET_CHANGED, {
+        turbineId: 'TURB001',
+      });
+    });
+
+    it('un-commissions a turbine the same way', async () => {
+      prisma.turbine.updateManyAndReturn.mockResolvedValue([
+        turbine(false),
+      ] as never);
+
+      await expect(service.setCommissioned('TURB001', false)).resolves.toEqual(
+        response(false),
+      );
+
+      expect(prisma.turbine.updateManyAndReturn).toHaveBeenCalledWith({
+        where: { turbineId: 'TURB001', commissioned: { not: false } },
+        data: { commissioned: false },
+      });
+    });
+
+    it('answers an unknown turbine with 404 and no event', async () => {
+      prisma.turbine.updateManyAndReturn.mockResolvedValue([] as never);
+      prisma.turbine.findUnique.mockResolvedValue(null);
+
+      const error = await service
+        .setCommissioned('TURB404', true)
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(NotFoundException);
+      expect((error as NotFoundException).message).toBe(
+        'Turbine TURB404 not found',
+      );
+      expect(events.publish).not.toHaveBeenCalled();
+    });
+
+    it('returns the turbine without an event when the value is already set', async () => {
+      prisma.turbine.updateManyAndReturn.mockResolvedValue([] as never);
+      prisma.turbine.findUnique.mockResolvedValue(turbine(true) as never);
+
+      await expect(service.setCommissioned('TURB001', true)).resolves.toEqual(
+        response(true),
+      );
+
+      expect(events.publish).not.toHaveBeenCalled();
+    });
+
+    it('publishes only after the write has committed', async () => {
+      let commit!: (rows: unknown) => void;
+      prisma.turbine.updateManyAndReturn.mockReturnValue(
+        new Promise((resolve) => {
+          commit = resolve;
+        }) as never,
+      );
+
+      const result = service.setCommissioned('TURB001', true);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(events.publish).not.toHaveBeenCalled();
+
+      commit([turbine(true)]);
+      await result;
+      expect(events.publish).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not publish when the write fails, and lets the error reach the global filter', async () => {
+      const failure = new Error('database down');
+      prisma.turbine.updateManyAndReturn.mockRejectedValue(failure);
+
+      await expect(service.setCommissioned('TURB001', true)).rejects.toBe(
+        failure,
+      );
+
+      expect(events.publish).not.toHaveBeenCalled();
+    });
+
+    it('still returns 200 when Redis fails after the commit', async () => {
+      prisma.turbine.updateManyAndReturn.mockResolvedValue([
+        turbine(true),
+      ] as never);
+      events.publish.mockRejectedValue(new Error('redis down'));
+      vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      await expect(service.setCommissioned('TURB001', true)).resolves.toEqual(
+        response(true),
+      );
+
+      expect(Logger.prototype.error).toHaveBeenCalledOnce();
+    });
   });
 
   describe('overview', () => {
@@ -333,6 +467,303 @@ describe('FleetService', () => {
         to: null,
         metrics: { powerOutputKw: null, gearboxTempC: null },
       });
+    });
+  });
+
+  describe('weather', () => {
+    const DAY = { from: '2026-01-01T00:00:00Z', to: '2026-01-02T00:00:00Z' };
+    const query = (
+      interval: '30min' | 'daily',
+      timeZone = 'UTC',
+    ): WeatherQueryDto =>
+      Object.assign(new WeatherQueryDto(), { ...DAY, interval, timeZone });
+
+    it('throws NotFoundException for an unknown farm', async () => {
+      prisma.farm.findUnique.mockResolvedValue(null);
+      await expect(service.weather('FARM99', query('30min'))).rejects.toThrow(
+        new NotFoundException('Farm FARM99 not found'),
+      );
+      expect(prisma.farmWeather.findMany).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException for a range over 31 days', async () => {
+      prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
+      await expect(
+        service.weather('FARM01', {
+          ...query('daily'),
+          to: '2026-03-01T00:00:00Z',
+        }),
+      ).rejects.toThrow(
+        new BadRequestException('The range may span at most 31 days'),
+      );
+    });
+
+    it('throws BadRequestException for a time zone Postgres does not know', async () => {
+      prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
+      prisma.$queryRaw.mockResolvedValue([{ known: false }]);
+      await expect(
+        service.weather('FARM01', query('daily', 'Mars/Olympus')),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'timeZone must be an IANA time zone name, e.g. "America/Chicago" (default "UTC")',
+        ),
+      );
+    });
+
+    it('returns the 30-minute buckets in [from, to), oldest first, without internal fields', async () => {
+      prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
+      prisma.farmWeather.findMany.mockResolvedValue([
+        {
+          farmId: 'FARM01',
+          time: new Date('2026-01-01T00:30:00Z'),
+          samples: 2,
+          windSpeed10mMs: 5.03,
+          windSpeed80mMs: 10.78,
+          windDirection10mDeg: 323,
+          windDirection80mDeg: 330,
+          windGusts10mMs: 7.4,
+          temperature2mC: 5.9,
+          relativeHumidity2mPct: 51,
+          surfacePressureHpa: 969.3,
+          precipitationMm: null,
+          cloudCoverPct: 0,
+          fetchedAt: new Date(),
+        },
+      ]);
+
+      const result = await service.weather('FARM01', query('30min'));
+
+      expect(prisma.farmWeather.findMany).toHaveBeenCalledWith({
+        where: {
+          farmId: 'FARM01',
+          time: { gte: new Date(DAY.from), lt: new Date(DAY.to) },
+        },
+        orderBy: { time: 'asc' },
+      });
+      expect(result).toEqual({
+        farmId: 'FARM01',
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-01-02T00:00:00.000Z',
+        interval: '30min',
+        timeZone: 'UTC',
+        points: [
+          {
+            time: '2026-01-01T00:30:00.000Z',
+            samples: 2,
+            windSpeed10mMs: 5.03,
+            windSpeed80mMs: 10.78,
+            windDirection10mDeg: 323,
+            windDirection80mDeg: 330,
+            windGusts10mMs: 7.4,
+            temperature2mC: 5.9,
+            relativeHumidity2mPct: 51,
+            surfacePressureHpa: 969.3,
+            precipitationMm: null,
+            cloudCoverPct: 0,
+          },
+        ],
+      });
+    });
+
+    it('aggregates daily in one Postgres query over the UTC day by default', async () => {
+      prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
+      prisma.$queryRaw.mockResolvedValue([]);
+
+      await service.weather('FARM01', query('daily'));
+
+      // UTC needs no zone lookup: the one query is the aggregate.
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = prisma.$queryRaw.mock
+        .calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
+      const sql = Prisma.sql(strings, ...values);
+      const text = sql.sql.replace(/\s+/g, ' ');
+      expect(text).toContain(
+        "to_char(w.time AT TIME ZONE ?::text, 'YYYY-MM-DD') AS day",
+      );
+      expect(text).toContain('count(*)::int AS samples');
+      expect(text).toContain('avg(sin(radians(w.wind_direction_80m_deg)))');
+      expect(text).toContain('sum(w.precipitation_mm) AS precipitation_sum');
+      expect(text).toContain('FROM farm_weather w');
+      expect(sql.values).toEqual([
+        'UTC',
+        'FARM01',
+        new Date(DAY.from),
+        new Date(DAY.to),
+      ]);
+    });
+
+    it("returns a turbine's farm weather with its id, 404 for an unknown turbine", async () => {
+      prisma.turbine.findUnique.mockResolvedValueOnce(null);
+      await expect(
+        service.turbineWeather('TURB999', query('30min')),
+      ).rejects.toThrow(new NotFoundException('Turbine TURB999 not found'));
+
+      prisma.turbine.findUnique.mockResolvedValueOnce({
+        farmId: 'FARM02',
+      } as never);
+      prisma.farmWeather.findMany.mockResolvedValue([]);
+      await expect(
+        service.turbineWeather('TURB002', query('30min')),
+      ).resolves.toEqual({
+        farmId: 'FARM02',
+        turbineId: 'TURB002',
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-01-02T00:00:00.000Z',
+        interval: '30min',
+        timeZone: 'UTC',
+        points: [],
+      });
+    });
+  });
+
+  describe('dailyHistory', () => {
+    const RANGE = { from: '2026-01-01T06:00:00Z', to: '2026-01-03T06:00:00Z' };
+    const query = (overrides: Partial<FarmDailyQueryDto> = {}) =>
+      Object.assign(new FarmDailyQueryDto(), {
+        ...RANGE,
+        timeZone: 'UTC',
+        ...overrides,
+      });
+    const farmRow = { id: 'FARM01', _count: { turbines: 3 } };
+    const ohlc = (prefix: string, base: number) => ({
+      [`${prefix}_open`]: base,
+      [`${prefix}_close`]: base + 1,
+      [`${prefix}_high`]: base + 2.005,
+      [`${prefix}_low`]: base - 1.123456,
+    });
+    const dayRow = (day: string, computedAt: string) => ({
+      day,
+      turbines: 2,
+      readings: BigInt(576),
+      computed_at: new Date(computedAt),
+      ...ohlc('power', 4000),
+      ...ohlc('wind_speed', 9),
+      ...ohlc('rotor_rpm', 14),
+      ...ohlc('blade_pitch', 3),
+      ...ohlc('gearbox_temp', 80),
+    });
+
+    it('throws NotFoundException for an unknown farm before reading rollups', async () => {
+      prisma.farm.findUnique.mockResolvedValue(null);
+      await expect(service.dailyHistory('FARM99', query())).rejects.toThrow(
+        new NotFoundException('Farm FARM99 not found'),
+      );
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a reversed range', { to: RANGE.from }, 'to must be after from'],
+      [
+        'an empty range',
+        { to: RANGE.from, from: RANGE.from },
+        'to must be after from',
+      ],
+      [
+        'more than 183 days (+1 h for DST)',
+        { from: '2026-01-01T00:00:00Z', to: '2026-07-03T01:00:01Z' },
+        'The range may span at most 183 days',
+      ],
+    ])('throws BadRequestException for %s', async (_, overrides, message) => {
+      prisma.farm.findUnique.mockResolvedValue(farmRow as never);
+      await expect(
+        service.dailyHistory('FARM01', query(overrides)),
+      ).rejects.toThrow(new BadRequestException(message));
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('accepts 183 local days that are an hour longer across a DST change', async () => {
+      prisma.farm.findUnique.mockResolvedValue(farmRow as never);
+      prisma.$queryRaw.mockResolvedValue([]);
+      // Chicago: 2026-07-01 00:00 CDT (05:00Z) to 2026-12-31 00:00 CST (06:00Z) = 183 days + 1 h.
+      await expect(
+        service.dailyHistory(
+          'FARM01',
+          query({ from: '2026-07-01T05:00:00Z', to: '2026-12-31T06:00:00Z' }),
+        ),
+      ).resolves.toMatchObject({ days: [] });
+    });
+
+    it('throws BadRequestException for a time zone Postgres does not know', async () => {
+      prisma.farm.findUnique.mockResolvedValue(farmRow as never);
+      prisma.$queryRaw.mockResolvedValue([{ known: false }]);
+      await expect(
+        service.dailyHistory('FARM01', query({ timeZone: 'Mars/Olympus' })),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'timeZone must be an IANA time zone name, e.g. "America/Chicago" (default "UTC")',
+        ),
+      );
+    });
+
+    it('aggregates the rollups by local day in one query and maps the days', async () => {
+      prisma.farm.findUnique.mockResolvedValue(farmRow as never);
+      prisma.$queryRaw.mockResolvedValue([
+        dayRow('2026-01-01', '2026-01-03T00:15:00Z'),
+        dayRow('2026-01-02', '2026-01-03T00:30:00Z'),
+      ]);
+
+      const result = await service.dailyHistory('FARM01', query());
+
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = prisma.$queryRaw.mock
+        .calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
+      const sql = Prisma.sql(strings, ...values);
+      const text = sql.sql.replace(/\s+/g, ' ');
+      expect(text).toContain(
+        "to_char(r.bucket_start AT TIME ZONE ?::text, 'YYYY-MM-DD') AS day",
+      );
+      expect(text).toContain(
+        '(array_agg(r.power_open ORDER BY r.bucket_start))[1] AS power_open',
+      );
+      expect(text).toContain(
+        '(array_agg(r.power_close ORDER BY r.bucket_start DESC))[1] AS power_close',
+      );
+      expect(text).toContain('max(r.gearbox_temp_high) AS gearbox_temp_high');
+      expect(text).toContain('FROM farm_telemetry_rollups r');
+      expect(sql.values).toEqual([
+        'UTC',
+        'FARM01',
+        new Date(RANGE.from),
+        new Date(RANGE.to),
+      ]);
+      expect(result).toEqual({
+        farmId: 'FARM01',
+        from: '2026-01-01T06:00:00.000Z',
+        to: '2026-01-03T06:00:00.000Z',
+        timeZone: 'UTC',
+        turbineCount: 3,
+        computedAt: '2026-01-03T00:30:00.000Z',
+        days: [
+          expect.objectContaining({ date: '2026-01-01' }),
+          {
+            date: '2026-01-02',
+            turbines: 2,
+            readings: 576,
+            powerOutputKw: {
+              open: 4000,
+              close: 4001,
+              high: 4002.01,
+              low: 3998.88,
+            },
+            windSpeedMs: { open: 9, close: 10, high: 11.01, low: 7.88 },
+            rotorRpm: { open: 14, close: 15, high: 16.01, low: 12.88 },
+            bladePitchDeg: { open: 3, close: 4, high: 5.01, low: 1.88 },
+            gearboxTempC: { open: 80, close: 81, high: 82.01, low: 78.88 },
+          },
+        ],
+      });
+    });
+
+    it('answers an empty range with no days and computedAt null', async () => {
+      prisma.farm.findUnique.mockResolvedValue(farmRow as never);
+      prisma.$queryRaw.mockResolvedValue([]);
+      await expect(service.dailyHistory('FARM01', query())).resolves.toEqual(
+        expect.objectContaining({
+          computedAt: null,
+          days: [],
+          turbineCount: 3,
+        }),
+      );
     });
   });
 });

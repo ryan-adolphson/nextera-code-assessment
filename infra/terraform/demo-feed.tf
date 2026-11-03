@@ -16,6 +16,8 @@ resource "google_service_account" "demo_feed" {
 
   account_id   = "nextera-demo-feed"
   display_name = "nextera demo feed (Cloud Run Job, publishes demo telemetry)"
+
+  depends_on = [google_project_service.this]
 }
 
 resource "google_pubsub_topic_iam_member" "demo_feed_publisher" {
@@ -39,7 +41,7 @@ resource "google_cloud_run_v2_job" "demo_feed" {
 
     template {
       service_account = google_service_account.demo_feed[0].email
-      timeout         = "60s" # one tick: 24 publishes
+      timeout         = "60s" # one tick: 195 publishes
       max_retries     = 1     # a failed publish exits 1; the next tick comes 5 minutes later anyway
 
       containers {
@@ -93,6 +95,8 @@ resource "google_service_account" "demo_feed_scheduler" {
 
   account_id   = "nextera-demo-feed-scheduler"
   display_name = "Cloud Scheduler -> Cloud Run Job nextera-demo-feed"
+
+  depends_on = [google_project_service.this]
 }
 
 resource "google_cloud_run_v2_job_iam_member" "demo_feed_scheduler_invoker" {

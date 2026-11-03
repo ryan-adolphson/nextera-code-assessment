@@ -79,8 +79,8 @@
 
 @theme {
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  /* Brief highlight when a live reading updates something (animate-flash). */
-  --animate-flash: flash 1.5s ease-out;
+  /* Brief highlight when a live reading updates something (animate-flash; FLASH_MS in fleet.store.ts). */
+  --animate-flash: flash 2s ease-out;
 
   @keyframes flash {
     from {
@@ -202,6 +202,44 @@
   --mat-button-toggle-selected-state-background-color: var(--accent);
   --mat-button-toggle-selected-state-text-color: var(--on-accent);
 
+  /*
+   * Section tabs (`mat-tab-nav-bar`, ui/page-tabs.ts): 40px links in the body font; inactive
+   * --muted (5.3:1 light, 6.6:1 dark), active, hovered and focused --text; a 2px --accent
+   * indicator under the active tab (5.7:1 / 6.2:1) on a hairline divider; --text paginator arrows.
+   */
+  --mat-tab-container-height: 40px;
+  --mat-tab-label-text-weight: 500;
+  --mat-tab-divider-color: var(--border);
+  --mat-tab-divider-height: 1px;
+  --mat-tab-active-indicator-color: var(--accent);
+  --mat-tab-active-hover-indicator-color: var(--accent);
+  --mat-tab-active-focus-indicator-color: var(--accent);
+  --mat-tab-active-indicator-height: 2px;
+  --mat-tab-active-label-text-color: var(--text);
+  --mat-tab-active-hover-label-text-color: var(--text);
+  --mat-tab-active-focus-label-text-color: var(--text);
+  --mat-tab-inactive-label-text-color: var(--muted);
+  --mat-tab-inactive-hover-label-text-color: var(--text);
+  --mat-tab-inactive-focus-label-text-color: var(--text);
+  --mat-tab-active-ripple-color: var(--text);
+  --mat-tab-inactive-ripple-color: var(--text);
+  --mat-tab-pagination-icon-color: var(--text);
+
+  /*
+   * Slide toggle (rule Enabled switch, turbine Commissioned switch): on = --accent track with an --on-accent handle; off =
+   * a --surface track with a --muted outline and handle (Material's surface-variant has no
+   * counterpart here, so the off-state tokens are set directly).
+   */
+  --mat-slide-toggle-unselected-track-color: var(--surface);
+  --mat-slide-toggle-unselected-hover-track-color: var(--surface);
+  --mat-slide-toggle-unselected-focus-track-color: var(--surface);
+  --mat-slide-toggle-unselected-pressed-track-color: var(--surface);
+  --mat-slide-toggle-unselected-icon-color: var(--surface);
+  --mat-slide-toggle-disabled-unselected-track-color: var(--surface);
+  --mat-slide-toggle-disabled-unselected-icon-color: var(--surface);
+  --mat-slide-toggle-handle-shape: 9999px;
+  --mat-slide-toggle-track-shape: 9999px;
+
   /* Datepicker (alert history): the days in the chosen range get a light accent wash. */
   --mat-datepicker-calendar-date-in-range-state-background-color: color-mix(
     in srgb,
@@ -223,6 +261,17 @@
   --mat-form-field-outlined-outline-color: var(--border);
   --mat-form-field-outlined-hover-outline-color: var(--muted);
   --mat-form-field-outlined-label-text-color: var(--muted);
+
+  /*
+   * Menus (`mat-menu`, the Unallocated rows' "More actions"): a page-coloured card (--bg) with
+   * --text items (17.4:1 light, 15.6:1 dark; a disabled item's --muted text 5.3:1 / 6.6:1) and
+   * the app's corners; `.app-menu` adds a hairline, since the shadow barely shows on the dark
+   * page. Destructive items use `.danger-button`.
+   */
+  --mat-menu-container-color: var(--bg);
+  --mat-menu-container-shape: 8px;
+  --mat-menu-item-label-text-color: var(--text);
+  --mat-menu-item-icon-color: var(--muted);
 
   /* Tooltip (`matTooltip`): our surface card instead of Material's inverse chip. */
   --mat-tooltip-supporting-text-size: 0.875rem;
@@ -261,18 +310,56 @@
   --mat-chip-outline-color: var(--danger);
 }
 
-/* Expandable table rows (alert history): the detail row sizes to its content and is gone while
-   collapsed (Material gives every row a fixed height). */
-tr.mat-mdc-row.history-detail-row {
+/*
+ * Farm id pills (ui/farm-pill.ts): neutral, not a status. A --bg pill with a hairline, --text on it
+ * 17.4:1 light, 15.6:1 dark, and 22px tall so a row of them stays within the tables' row heights.
+ * Read-only: no hover layer. The padding, cursor and text selection have no tokens: chips set
+ * 12px, `auto` (over the row's pointer) and `none` (the id should stay copyable).
+ */
+.farm-pill {
+  --mat-chip-container-height: 1.375rem;
+  --mat-chip-container-shape-radius: 9999px;
+  --mat-chip-elevated-container-color: var(--bg);
+  --mat-chip-outline-color: var(--border);
+  --mat-chip-label-text-color: var(--text);
+  --mat-chip-label-text-size: 0.75rem;
+  --mat-chip-label-text-line-height: 1rem;
+  --mat-chip-label-text-weight: 500;
+  --mat-chip-label-text-tracking: normal;
+  --mat-chip-hover-state-layer-opacity: 0;
+}
+.mat-mdc-standard-chip.farm-pill .mdc-evolution-chip__action--primary {
+  padding-inline: 8px;
+  cursor: inherit;
+}
+.farm-pill .mdc-evolution-chip__text-label {
+  user-select: text;
+}
+
+/* Expandable table rows (alert history, unallocated turbines): the detail row sizes to its
+   content and is gone while collapsed (Material gives every row a fixed height). */
+tr.mat-mdc-row.history-detail-row,
+tr.mat-mdc-row.detail-row {
   height: auto;
 }
-tr.mat-mdc-row.history-detail-row[hidden] {
+tr.mat-mdc-row.history-detail-row[hidden],
+tr.mat-mdc-row.detail-row[hidden] {
   display: none;
 }
 
-/* Destructive Material buttons (Delete): danger text, or a solid danger fill for filled ones. */
+/* `mat-menu class="app-menu"`: a hairline around the panel (it sits on --surface table rows). */
+.app-menu {
+  @apply border border-line;
+}
+
+/*
+ * Destructive Material buttons and menu items (Delete, Block): danger text, or a solid danger fill
+ * for filled ones. Menu items: --danger on the --bg menu is 5.5:1 light, 7.9:1 dark.
+ */
 .danger-button {
   --mat-button-text-label-text-color: var(--danger);
+  --mat-menu-item-label-text-color: var(--danger);
+  --mat-menu-item-icon-color: var(--danger);
   --mat-button-filled-container-color: var(--danger);
   --mat-button-filled-label-text-color: var(--on-danger);
 }

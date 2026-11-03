@@ -32,7 +32,7 @@ describe('Alerts API (e2e, CSV seed data)', () => {
   beforeAll(async () => {
     t = await createTestApp();
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, turbines, farms`;
+      .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
     const rule = (data: object) =>
       t.prisma.alertConfig.create({ data: data as never }).then((r) => r.id);

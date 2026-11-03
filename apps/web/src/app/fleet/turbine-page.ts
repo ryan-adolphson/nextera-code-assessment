@@ -1,4 +1,4 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
+import { DecimalPipe } from '@angular/common';
 import { Component, OnDestroy, computed, effect, inject, input, untracked } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { differenceInMinutes } from 'date-fns';
@@ -7,8 +7,14 @@ import { MatButtonToggle, MatButtonToggleGroup } from '@angular/material/button-
 import { RouterLink } from '@angular/router';
 import { AlertsCell } from '../alerting/alerts-cell';
 import { alertSeries } from '../charts/alert-series';
-import { ChartGroup, ChartSeries } from '../charts/chart-group';
+// Separate declarations: ChartGroup is @defer-red, and the compiler only defers a dependency whose
+// whole import declaration it can drop.
+import { ChartGroup } from '../charts/chart-group';
+import type { ChartSeries } from '../charts/chart-group';
+import { ChartSkeleton, ChartSkeletonCard } from '../charts/chart-skeleton';
 import { ChartPoint } from '../charts/scales';
+import { AppTimePipe } from '../core/app-time.pipe';
+import { TimeZoneSettings } from '../core/time-zone';
 import { DELAYED_AFTER_MS, HISTORY_RANGES, READING_INTERVAL_MS, Telemetry } from './fleet.model';
 import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
@@ -21,10 +27,11 @@ import { StalenessBadge } from './staleness-badge';
   selector: 'app-turbine-page',
   imports: [
     AlertsCell,
-    DatePipe,
+    AppTimePipe,
     DecimalPipe,
     RouterLink,
     ChartGroup,
+    ChartSkeleton,
     MatButton,
     MatButtonToggle,
     MatButtonToggleGroup,
@@ -39,6 +46,7 @@ export class TurbinePage implements OnDestroy {
   readonly turbineId = input.required<string>();
 
   protected readonly store = inject(FleetStore);
+  protected readonly tz = inject(TimeZoneSettings);
   protected readonly ranges = HISTORY_RANGES;
   protected readonly gapMs = READING_INTERVAL_MS * 1.5; // one missing reading breaks the line
 
@@ -84,6 +92,14 @@ export class TurbinePage implements OnDestroy {
    * readings as a scatter overlay, coloured by their worst level; the tooltip lists the rules.
    */
   protected readonly alertChart = computed(() => alertSeries(this.ascending()));
+  /**
+   * The charts' size before ECharts has loaded (`@defer` placeholder): a card per metric (candle
+   * size and stats lines) and the alerts chart (its marker legend when readings were flagged).
+   */
+  protected readonly chartSkeleton = computed((): ChartSkeletonCard[] => [
+    ...METRICS.map((metric) => ({ title: metric.title, lines: 2 })),
+    { title: 'Alert rules triggered', lines: this.alertChart().markers.length ? 1 : 0 },
+  ]);
   /** Another turbine or range: the chart group clears its crosshair and zoom. */
   protected readonly chartResetKey = computed(
     () => `${this.turbineId()}:${this.store.historyRangeMs()}`,

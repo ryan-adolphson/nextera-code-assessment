@@ -126,12 +126,16 @@ describe('Auth (e2e)', () => {
     const ROUTES: Route[] = [
       ['GET', '/api/auth/me', 'viewer'],
       ['GET', '/api/farms', 'viewer'],
+      ['GET', `/api/farms/FARM01/weather?${DAY}`, 'viewer'],
+      ['GET', `/api/farms/FARM01/telemetry/daily?${DAY}`, 'viewer'],
+      ['GET', `/api/turbines/TURB001/weather?${DAY}`, 'viewer'],
       ['GET', '/api/turbines/TURB001/telemetry', 'viewer'],
       ['GET', '/api/turbines/TURB001/telemetry/stats', 'viewer'],
       ['GET', `/api/alerts?${DAY}`, 'viewer'],
       ['GET', '/api/alert-configs', 'viewer'],
       ['GET', `/api/alert-configs/${UNKNOWN_ID}`, 'viewer'],
       ['GET', `/api/reports/telemetry?turbineId=TURB001&${DAY}`, 'owner'],
+      ['PATCH', '/api/turbines/TURB001', 'owner', { commissioned: false }],
       ['POST', '/api/alert-configs', 'owner', rule],
       [
         'PATCH',
@@ -140,6 +144,18 @@ describe('Auth (e2e)', () => {
         { valueMetric: 1 },
       ],
       ['DELETE', `/api/alert-configs/${UNKNOWN_ID}`, 'owner'],
+      ['GET', '/api/unallocated-turbines', 'owner'],
+      ['GET', `/api/unallocated-turbines/${UNKNOWN_ID}/readings`, 'owner'],
+      [
+        'POST',
+        `/api/unallocated-turbines/${UNKNOWN_ID}/assign`,
+        'owner',
+        { farmId: 'FARM01' },
+      ],
+      ['POST', `/api/unallocated-turbines/${UNKNOWN_ID}/keep`, 'owner'],
+      ['POST', `/api/unallocated-turbines/${UNKNOWN_ID}/move`, 'owner'],
+      ['POST', `/api/unallocated-turbines/${UNKNOWN_ID}/block`, 'owner'],
+      ['POST', `/api/unallocated-turbines/${UNKNOWN_ID}/unblock`, 'owner'],
     ];
 
     beforeEach(async () => {

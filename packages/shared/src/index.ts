@@ -3,9 +3,12 @@ export { Prisma, PrismaClient } from './generated/prisma/client.js';
 export type {
   AlertConfig,
   Farm,
+  FarmWeather,
   Telemetry,
+  HeldTelemetry,
   TelemetryAlert,
   Turbine,
+  UnallocatedTurbine,
   User,
 } from './generated/prisma/client.js';
 export {
@@ -13,9 +16,12 @@ export {
   AlertLevel,
   MeasurementMetric,
   Role,
+  UnallocatedKind,
+  UnallocatedStatus,
 } from './generated/prisma/enums.js';
 export { PrismaModule } from './prisma/prisma.module.js';
 export { PrismaService } from './prisma/prisma.service.js';
+export { createPrismaClient } from './prisma/create-prisma.js';
 
 // Events (Redis stream + pub/sub) for SSE
 export {
@@ -39,16 +45,29 @@ export {
   toTelemetryResponse,
   toTelemetryStatsResponse,
   toTurbineResponse,
+  toWeatherDayResponse,
+  toWeatherHalfHourResponse,
+  toFarmDayResponse,
 } from './wind/responses.js';
 export type {
+  FarmDailyHistoryResponse,
+  FarmDayResponse,
+  FarmDayRow,
   FarmResponse,
   MetricStats,
+  Ohlc,
   TelemetryMetric,
   TelemetryResponse,
   TelemetryStatsResponse,
   TelemetryStatsRow,
   TelemetryWithAlerts,
   TurbineResponse,
+  FarmWeatherResponse,
+  TurbineWeatherResponse,
+  WeatherDayResponse,
+  WeatherDayRow,
+  WeatherHalfHourResponse,
+  WeatherInterval,
 } from './wind/responses.js';
 
 // Alert evaluation (ingestion stores each reading's triggered rules in telemetry_alerts)
@@ -67,23 +86,34 @@ export {
 export {
   ALERT_RULE_ORDER,
   DEFAULT_TELEMETRY_LIMIT,
+  DEFAULT_WEATHER_TIME_ZONE,
+  MAX_FARM_DAILY_RANGE_DAYS,
   MAX_QUERY_RANGE_DAYS,
   MAX_TELEMETRY_LIMIT,
   QueryError,
   QueryInputError,
   QueryNotFoundError,
   alertsInRange,
+  checkTimeZone,
+  farmDailyHistory,
+  farmWeather,
   getTurbine,
+  getUnallocated,
+  heldReadings,
   listAlertRules,
+  listUnallocated,
   listFarms,
   parseRange,
   reportSummary,
   reportTelemetry,
   telemetryStats,
   turbineTelemetry,
+  turbineWeather,
 } from './wind/queries.js';
 export type {
+  FarmDailyQuery,
   FarmOverview,
+  FarmWeatherQuery,
   MetricSummary,
   ReadClient,
   ReportQuery,
@@ -96,6 +126,66 @@ export type {
   TurbineOverview,
 } from './wind/queries.js';
 
+// Farm telemetry rollups (30-minute farm series buckets → daily candles on read): the job
+// (`node dist/farm-rollup/main.js` in the ingestion image, `npm run rollup`, the seeds)
+export {
+  FARM_ROLLUP_BUCKET_MINUTES,
+  FARM_ROLLUP_LOCK,
+  FARM_ROLLUP_LOOKBACK_MS,
+  FARM_ROLLUP_METRICS,
+  FARM_ROLLUP_RETENTION_DAYS,
+  FARM_ROLLUP_TIMEOUT_MS,
+  floorToBucket,
+  runFarmRollup,
+} from './wind/farm-rollup.js';
+export type {
+  FarmRollupClient,
+  FarmRollupMode,
+  FarmRollupOptions,
+  FarmRollupResult,
+} from './wind/farm-rollup.js';
+
+// Farm weather (Open-Meteo minutely_15 → 30-minute farm_weather): client, request planning and the sync
+// (`node dist/weather-sync/main.js` in the ingestion image, `npm run weather:sync`)
+export {
+  HISTORICAL_LAG_DAYS,
+  MAX_REQUEST_DAYS,
+  OPEN_METEO_ATTEMPTS,
+  OPEN_METEO_BACKOFF_MS,
+  OPEN_METEO_TIMEOUT_MS,
+  OpenMeteoError,
+  WEATHER_VARIABLES,
+  addDays,
+  buildOpenMeteoUrl,
+  fetchFarmWeather,
+  isUtcDay,
+  parseMinutely15,
+  planRequests,
+  toHalfHourBuckets,
+  utcDay,
+} from './weather/open-meteo.js';
+export type {
+  FetchFarmWeatherOptions,
+  WeatherAggregate,
+  WeatherApi,
+  WeatherBucketRow,
+  WeatherMetric,
+  WeatherRequest,
+  WeatherSample,
+} from './weather/open-meteo.js';
+export {
+  WEATHER_REQUEST_DELAY_MS,
+  WEATHER_UPSERT_BATCH,
+  syncFarmWeather,
+  upsertFarmWeather,
+} from './weather/sync-weather.js';
+export type {
+  FarmWeatherSyncResult,
+  SyncWeatherOptions,
+  SyncWeatherResult,
+  WeatherWriteClient,
+} from './weather/sync-weather.js';
+
 // Alert thresholds (alerts_config): response shape, mapper and change event
 export {
   ALERT_CONFIG_CHANGED,
@@ -105,6 +195,40 @@ export type {
   AlertConfigChangedEvent,
   AlertConfigResponse,
 } from './wind/alert-config.js';
+
+// Unallocated turbines: ingestion holds readings of unknown turbines and farm mismatches until an
+// owner assigns, keeps, moves or blocks them (classify/hold in ingestion, lock/import in the API)
+export {
+  FLEET_CHANGED,
+  HELD_RETENTION_MS,
+  MAX_PENDING_UNALLOCATED,
+  UNALLOCATED_CHANGED,
+  UNALLOCATED_EVENT_INTERVAL_MS,
+  UnallocatedCapError,
+  blockUnallocated,
+  classifyReadings,
+  holdReadings,
+  importHeld,
+  lockTurbineIds,
+  lockUnallocated,
+  toHeldReadingResponse,
+  toUnallocatedResponse,
+} from './wind/unallocated.js';
+export type {
+  FarmRef,
+  FleetChangedEvent,
+  HeldEntry,
+  HeldReadingResponse,
+  HoldableReading,
+  ImportResult,
+  ReadingClass,
+  TelemetryRowInput,
+  UnallocatedAction,
+  UnallocatedChangedEvent,
+  UnallocatedListRow,
+  UnallocatedResolutionResponse,
+  UnallocatedTurbineResponse,
+} from './wind/unallocated.js';
 
 // Auth: roles (viewer < owner < admin), password hash parameters, email normalisation
 export { ROLE_RANK, ROLES, hasRole, isRole } from './auth/roles.js';
@@ -123,6 +247,12 @@ export type {
   UtcTimestampOptions,
 } from './validation/is-utc-timestamp.js';
 
+// Environment validation: the variables both services read; each service extends the class
+export {
+  CommonEnvironmentVariables,
+  validateEnvironment,
+} from './config/env.validation.js';
+
 // Seed data loader (prisma/seed.ts and e2e tests)
 export {
   TELEMETRY_CSV_COLUMNS,
@@ -140,14 +270,18 @@ export {
 // Demo data: generated telemetry for the last hours (npm run db:seed:demo, npm run demo:feed)
 export {
   DEMO_ALERT_RULES,
+  DEMO_FARM_LAYOUT,
   DEMO_SEED,
   DEMO_TURBINES,
+  demoFleetTurbines,
 } from './seed/demo-fleet.js';
 export type { DemoTurbine } from './seed/demo-fleet.js';
 export {
   DEMO_ANOMALIES,
   TELEMETRY_STEP_MINUTES,
+  demoReportingLagMinutes,
   floorToTelemetryStep,
+  isDemoStopped,
   generateTelemetry,
 } from './seed/generate-telemetry.js';
 export type {
@@ -161,3 +295,13 @@ export {
   seedDemo,
 } from './seed/seed-demo.js';
 export type { DemoSeedOptions, DemoSeedResult } from './seed/seed-demo.js';
+export {
+  DEMO_UNALLOCATED,
+  demoUnallocatedReadings,
+  seedDemoUnallocated,
+} from './seed/demo-unallocated.js';
+export type {
+  DemoUnallocatedEntry,
+  DemoUnallocatedOutcome,
+  DemoUnallocatedResult,
+} from './seed/demo-unallocated.js';

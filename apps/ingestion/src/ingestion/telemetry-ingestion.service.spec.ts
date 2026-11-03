@@ -2,8 +2,10 @@ import { BadRequestException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import {
   EventStore,
+  MAX_PENDING_UNALLOCATED,
   PrismaService,
   TELEMETRY_RECEIVED,
+  UNALLOCATED_CHANGED,
   type AlertConfig,
   type Telemetry,
 } from '@nextera/shared';
@@ -58,6 +60,16 @@ describe('TelemetryIngestionService', () => {
     ] as never);
     prisma.telemetry.createManyAndReturn.mockResolvedValue([stored]);
     prisma.alertConfig.findMany.mockResolvedValue([]); // no rules unless a test adds some
+    // Unallocated turbines: nothing blocked, no entry yet, room under the cap.
+    prisma.unallocatedTurbine.findMany.mockResolvedValue([]);
+    prisma.$queryRaw.mockResolvedValue([] as never); // the entry's FOR UPDATE lookup
+    prisma.unallocatedTurbine.count.mockResolvedValue(0);
+    prisma.unallocatedTurbine.create.mockResolvedValue({
+      id: 'entry-1',
+    } as never);
+    prisma.heldTelemetry.createMany.mockImplementation(((args: {
+      data: unknown[];
+    }) => Promise.resolve({ count: args.data.length })) as never);
     // Interactive transactions run against the same mock.
     prisma.$transaction.mockImplementation((fn: unknown) =>
       (fn as (tx: PrismaService) => Promise<unknown>)(prisma),
@@ -186,20 +198,143 @@ describe('TelemetryIngestionService', () => {
     expect(prisma.telemetryAlert.createMany).not.toHaveBeenCalled();
   });
 
-  it('rejects an unknown turbine with 400 and stores nothing', async () => {
-    prisma.turbine.findMany.mockResolvedValue([]);
+  describe('unknown turbines and farm mismatches (held), blocked pairs (dropped)', () => {
+    it('holds a reading of an unknown turbine, never stores or streams it as telemetry, and announces the new entry', async () => {
+      prisma.turbine.findMany.mockResolvedValue([]);
 
-    await expect(service.ingest(dto)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
-    expect(prisma.telemetry.createManyAndReturn).not.toHaveBeenCalled();
-  });
+      await expect(
+        service.ingest({ ...dto, turbine_id: 'TURB999' }),
+      ).resolves.toBe('held');
 
-  it('rejects a reading whose farm is not the turbine’s farm', async () => {
-    await expect(service.ingest({ ...dto, farm_id: 'FARM02' })).rejects.toThrow(
-      'Turbine TURB001 belongs to FARM01, not FARM02',
-    );
-    expect(prisma.telemetry.createManyAndReturn).not.toHaveBeenCalled();
+      expect(prisma.telemetry.createManyAndReturn).not.toHaveBeenCalled();
+      expect(prisma.unallocatedTurbine.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            turbineId: 'TURB999',
+            reportedFarmId: 'FARM01',
+            kind: 'unknown_turbine',
+          }),
+        }),
+      );
+      expect(prisma.heldTelemetry.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            unallocatedId: 'entry-1',
+            turbineId: 'TURB999',
+            farmId: 'FARM01',
+            timestamp: new Date('2026-01-01T00:00:00Z'),
+          }),
+        ],
+        skipDuplicates: true,
+      });
+      expect(events.publish).toHaveBeenCalledExactlyOnceWith(
+        UNALLOCATED_CHANGED,
+        { action: 'held', id: 'entry-1', turbineId: 'TURB999' },
+      );
+    });
+
+    it('holds a reading whose farm is not the turbine’s farm as a farm mismatch', async () => {
+      await expect(service.ingest({ ...dto, farm_id: 'FARM02' })).resolves.toBe(
+        'held',
+      );
+
+      expect(prisma.unallocatedTurbine.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            turbineId: 'TURB001',
+            reportedFarmId: 'FARM02',
+            kind: 'farm_mismatch',
+          }),
+        }),
+      );
+      expect(prisma.telemetry.createManyAndReturn).not.toHaveBeenCalled();
+    });
+
+    it('drops a reading of a blocked pair: acked, nothing written or published', async () => {
+      prisma.turbine.findMany.mockResolvedValue([]);
+      prisma.unallocatedTurbine.findMany.mockResolvedValue([
+        { turbineId: 'TURB999', reportedFarmId: 'FARM01' },
+      ] as never);
+
+      await expect(
+        service.ingest({ ...dto, turbine_id: 'TURB999' }),
+      ).resolves.toBe('blocked');
+
+      expect(prisma.heldTelemetry.createMany).not.toHaveBeenCalled();
+      expect(prisma.telemetry.createManyAndReturn).not.toHaveBeenCalled();
+      expect(events.publish).not.toHaveBeenCalled();
+    });
+
+    it('rejects a reading of a new pair with 400 when the pending entries are at the cap', async () => {
+      prisma.turbine.findMany.mockResolvedValue([]);
+      prisma.unallocatedTurbine.count.mockResolvedValue(
+        MAX_PENDING_UNALLOCATED,
+      );
+
+      await expect(
+        service.ingest({ ...dto, turbine_id: 'TURB999' }),
+      ).rejects.toThrow(
+        new BadRequestException(
+          `Too many pending unallocated turbines (${MAX_PENDING_UNALLOCATED}): readings for TURB999 on FARM01 are rejected until pending ones are assigned or blocked`,
+        ),
+      );
+      expect(prisma.heldTelemetry.createMany).not.toHaveBeenCalled();
+      expect(events.publish).not.toHaveBeenCalled();
+    });
+
+    it('announces further readings of an existing entry at most once a minute', async () => {
+      vi.useFakeTimers({ now: new Date('2026-03-01T00:00:40Z') });
+      try {
+        prisma.turbine.findMany.mockResolvedValue([]);
+        const existing = (lastSeen: string) =>
+          prisma.$queryRaw.mockResolvedValue([
+            {
+              id: 'entry-1',
+              status: 'pending',
+              last_seen_at: new Date(lastSeen),
+            },
+          ] as never);
+
+        existing('2026-03-01T00:00:10Z'); // same minute: no event
+        await service.ingest({ ...dto, turbine_id: 'TURB999' });
+        expect(prisma.unallocatedTurbine.create).not.toHaveBeenCalled();
+        expect(prisma.unallocatedTurbine.update).toHaveBeenCalledWith({
+          where: { id: 'entry-1' },
+          data: {
+            lastSeenAt: new Date('2026-03-01T00:00:40Z'),
+            kind: 'unknown_turbine',
+          },
+        });
+        expect(events.publish).not.toHaveBeenCalled();
+
+        existing('2026-02-28T23:59:50Z'); // the previous minute: one event
+        await service.ingest({ ...dto, turbine_id: 'TURB999' });
+        expect(events.publish).toHaveBeenCalledExactlyOnceWith(
+          UNALLOCATED_CHANGED,
+          { action: 'held', id: 'entry-1', turbineId: 'TURB999' },
+        );
+
+        // A redelivery (nothing new held) is never announced.
+        events.publish.mockClear();
+        prisma.heldTelemetry.createMany.mockResolvedValue({ count: 0 });
+        await expect(
+          service.ingest({ ...dto, turbine_id: 'TURB999' }),
+        ).resolves.toBe('held');
+        expect(events.publish).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('acks a held reading even when the live update fails', async () => {
+      prisma.turbine.findMany.mockResolvedValue([]);
+      events.publish.mockRejectedValue(new Error('redis down'));
+      vi.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+
+      await expect(
+        service.ingest({ ...dto, turbine_id: 'TURB999' }),
+      ).resolves.toBe('held');
+    });
   });
 
   it.each([
@@ -242,35 +377,102 @@ describe('TelemetryIngestionService', () => {
       ] as never);
     });
 
-    it('rejects the file when any row has an unknown turbine or the wrong farm, merged with format errors by line', async () => {
-      const input = {
-        rows: [
+    it('holds unknown turbines and farm mismatches, drops blocked pairs and stores the rest, in one transaction', async () => {
+      prisma.unallocatedTurbine.findMany.mockResolvedValue([
+        { turbineId: 'TURB998', reportedFarmId: 'FARM01' },
+      ] as never);
+      prisma.telemetry.createManyAndReturn.mockResolvedValue([stored]);
+
+      const result = await service.ingestBatch(
+        parsed(
           row(2),
           row(3, { turbine_id: 'TURB999' }),
+          row(4, { turbine_id: 'TURB999', timestamp: '2026-01-01T00:05:00Z' }),
           row(5, { farm_id: 'FARM02' }),
-        ],
-        rowErrors: [
-          {
-            line: 4,
-            errors: ['timestamp must be a valid ISO 8601 date string'],
-          },
-        ],
-      };
+          row(6, { turbine_id: 'TURB998' }),
+        ),
+      );
 
-      await expect(service.ingestBatch(input)).rejects.toMatchObject({
+      expect(result).toEqual({
+        rows: 5,
+        inserted: 1,
+        duplicates: 0,
+        held: 3,
+        blocked: 1,
+        turbines: ['TURB001', 'TURB998', 'TURB999'],
+      });
+      expect(prisma.$transaction).toHaveBeenCalledOnce();
+      expect(
+        prisma.telemetry.createManyAndReturn,
+      ).toHaveBeenCalledExactlyOnceWith({
+        data: [
+          expect.objectContaining({ turbineId: 'TURB001', farmId: 'FARM01' }),
+        ],
+        skipDuplicates: true,
+      });
+      // Two entries: TURB999 (unknown, 2 rows) and TURB001 reporting FARM02 (mismatch).
+      expect(
+        prisma.unallocatedTurbine.create.mock.calls.map(([args]) => [
+          args.data.turbineId,
+          args.data.reportedFarmId,
+          args.data.kind,
+        ]),
+      ).toEqual([
+        ['TURB999', 'FARM01', 'unknown_turbine'],
+        ['TURB001', 'FARM02', 'farm_mismatch'],
+      ]);
+      expect(
+        events.publish.mock.calls.filter(
+          ([type]) => type === UNALLOCATED_CHANGED,
+        ),
+      ).toHaveLength(2);
+    });
+
+    it('reports format errors without touching the database, whatever the turbines', async () => {
+      await expect(
+        service.ingestBatch({
+          rows: [row(2, { turbine_id: 'TURB999' })],
+          rowErrors: [
+            { line: 4, errors: ['b'] },
+            { line: 3, errors: ['a'] },
+          ],
+        }),
+      ).rejects.toMatchObject({
         rowErrors: [
-          { line: 3, errors: ['Unknown turbine TURB999'] },
+          { line: 3, errors: ['a'] },
+          { line: 4, errors: ['b'] },
+        ],
+      });
+      expect(prisma.turbine.findMany).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects the file, reporting every line of new pairs over the cap', async () => {
+      prisma.unallocatedTurbine.count.mockResolvedValue(
+        MAX_PENDING_UNALLOCATED,
+      );
+
+      await expect(
+        service.ingestBatch(
+          parsed(
+            row(2),
+            row(3, { turbine_id: 'TURB999' }),
+            row(4, { farm_id: 'FARM02' }),
+          ),
+        ),
+      ).rejects.toMatchObject({
+        rowErrors: [
           {
-            line: 4,
-            errors: ['timestamp must be a valid ISO 8601 date string'],
+            line: 3,
+            errors: [expect.stringContaining('readings for TURB999 on FARM01')],
           },
           {
-            line: 5,
-            errors: ['Turbine TURB001 belongs to FARM01, not FARM02'],
+            line: 4,
+            errors: [expect.stringContaining('readings for TURB001 on FARM02')],
           },
         ],
       });
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(events.publish).not.toHaveBeenCalled();
     });
 
     it('rejects the file when only format errors exist, without touching the database for writes', async () => {
@@ -302,6 +504,8 @@ describe('TelemetryIngestionService', () => {
         rows: 2,
         inserted: 1,
         duplicates: 1,
+        held: 0,
+        blocked: 0,
         turbines: ['TURB001'],
       });
       expect(prisma.telemetry.createManyAndReturn).toHaveBeenCalledWith({

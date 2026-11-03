@@ -1,4 +1,4 @@
-import { Injectable, computed, effect, inject, untracked } from '@angular/core';
+import { Injectable, computed, effect, inject, linkedSignal, untracked } from '@angular/core';
 import { FleetStore } from '../fleet/fleet.store';
 import { latestLoad } from '../ui/latest-load';
 import { AlertConfigApi } from './alert-config-api.service';
@@ -18,7 +18,9 @@ export class AlertRulesStore {
   private readonly fleet = inject(FleetStore);
   private readonly load = latestLoad<void, AlertConfig[]>(() => this.api.list());
 
-  readonly rules = computed(() => this.load.value() ?? []);
+  /** The loaded rules; `replace` updates one locally until the next load answers. */
+  private readonly list = linkedSignal(() => this.load.value() ?? []);
+  readonly rules = this.list.asReadonly();
   /** True when the latest load failed (the rules may be missing or out of date). */
   readonly failed = this.load.failed;
   /** True until the first response (success or failure). */
@@ -33,5 +35,10 @@ export class AlertRulesStore {
 
   reload(): void {
     this.load.run();
+  }
+
+  /** Shows a rule as a write returned it (e.g. after enabling it), before the reload answers. */
+  replace(rule: AlertConfig): void {
+    this.list.update((rules) => rules.map((r) => (r.id === rule.id ? rule : r)));
   }
 }

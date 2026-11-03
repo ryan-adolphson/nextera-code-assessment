@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 7.0"
     }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 7.0"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
@@ -20,6 +24,23 @@ terraform {
 provider "google" {
   project = var.project_id
   region  = var.region
+}
+
+# Only for google_project_service_identity (pubsub.tf), which the GA provider doesn't have.
+provider "google-beta" {
+  project = var.project_id
+  region  = var.region
+}
+
+# Only for google_billing_budget (monitoring.tf): with user credentials the Billing Budgets API needs a
+# quota project, so its calls are billed to this project (needs serviceusage.services.use on it).
+# Every other resource keeps the default provider above.
+provider "google" {
+  alias                 = "billing_budget"
+  project               = var.project_id
+  region                = var.region
+  billing_project       = var.project_id
+  user_project_override = true
 }
 
 data "google_project" "this" {

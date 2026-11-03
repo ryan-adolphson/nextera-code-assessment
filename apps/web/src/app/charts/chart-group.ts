@@ -3,7 +3,7 @@ import { MatButton } from '@angular/material/button';
 import { minutesToMilliseconds } from 'date-fns';
 import { AlertSeries } from './alert-series';
 import { ChartKind, LineChart, RangeStats, TimeRange } from './line-chart';
-import { ChartPoint } from './scales';
+import { Candle, ChartPoint } from './scales';
 
 /** One metric chart of the group. */
 export interface ChartSeries {
@@ -14,6 +14,10 @@ export interface ChartSeries {
   points: ChartPoint[];
   /** Median/high/low reference lines, or null for none. */
   stats?: RangeStats | null;
+  /** Candlestick groups: precomputed candles (e.g. one per day) instead of bucketed `points`. */
+  candles?: Candle[] | null;
+  /** Their size in words ("Daily"). */
+  candleLabel?: string | null;
 }
 
 /**
@@ -60,6 +64,8 @@ export interface ChartSeries {
           [view]="view()"
           (viewChange)="view.set($event)"
           [stats]="chart.stats ?? null"
+          [candles]="chart.candles ?? null"
+          [candleLabel]="chart.candleLabel ?? null"
         />
       }
       @if (alerts(); as alerts) {

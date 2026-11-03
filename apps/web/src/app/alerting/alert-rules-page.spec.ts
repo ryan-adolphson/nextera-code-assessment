@@ -2,6 +2,7 @@ import { TestRequest } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { Title } from '@angular/platform-browser';
 import { TEST_API_BASE_URL, openFleet } from '../fleet/testing';
+import { Role } from '../core/auth/roles';
 import { AlertConfig } from './alert-config.model';
 
 const URL = `${TEST_API_BASE_URL}/alert-configs`;
@@ -21,8 +22,14 @@ describe('AlertRulesPage (/alerting/rules)', () => {
   let app: Awaited<ReturnType<typeof openFleet>>;
   afterEach(() => app.http.verify());
 
-  async function open(rules: AlertConfig[] = []) {
-    app = await openFleet('/alerting/rules', () => Date.parse('2026-01-03T00:00:00.000Z'));
+  async function open(rules: AlertConfig[] = [], role: Role = 'admin') {
+    app = await openFleet(
+      '/alerting/rules',
+      () => Date.parse('2026-01-03T00:00:00.000Z'),
+      undefined,
+      undefined,
+      role,
+    );
     await flushList(rules);
   }
   /**
@@ -104,20 +111,43 @@ describe('AlertRulesPage (/alerting/rules)', () => {
         'below',
         '50 kW',
         'Info',
+        '', // the Enabled switch: named by aria-label
         'Edit rule: Power output below 50 kW Delete rule: Power output below 50 kW',
       ],
-      ['Blade pitch (°)', 'above', '30°', 'Warning', expect.stringContaining('Edit')],
-      ['Gearbox temperature (°C)', 'above', '120.5 °C', 'Error', expect.stringContaining('Edit')],
+      ['Blade pitch (°)', 'above', '30°', 'Warning', '', expect.stringContaining('Edit')],
+      [
+        'Gearbox temperature (°C)',
+        'above',
+        '120.5 °C',
+        'Error',
+        '',
+        expect.stringContaining('Edit'),
+      ],
+    ]);
+    expect([...q('rules')!.querySelectorAll('thead th')].map((th) => app.text(th))).toEqual([
+      'Metric',
+      'Condition',
+      'Threshold',
+      'Level',
+      'Enabled',
+      'Actions',
     ]);
     expect(
       [...app.root().querySelectorAll('[data-testid=rule-level]')].map((b) =>
         b.getAttribute('data-level'),
       ),
     ).toEqual(['info', 'warn', 'error']);
-    // Tabs: Rules is current; the side nav keeps Alerting current.
-    expect(q('alerting-tab-rules')!.getAttribute('aria-current')).toBe('page');
-    expect(q('alerting-tab-history')!.getAttribute('aria-current')).toBeNull();
+    // Tabs (Material tab nav bar, tablist "Alerting"): Rules is selected and the page is in the
+    // tab panel; the side nav keeps Alerting current.
+    expect(q('alerting-tabs')!.getAttribute('role')).toBe('tablist');
+    expect(q('alerting-tab-rules')!.getAttribute('aria-selected')).toBe('true');
+    expect(q('alerting-tab-history')!.getAttribute('aria-selected')).toBe('false');
+    expect(q('alerting-tab-rules')!.hasAttribute('aria-current')).toBe(false);
     expect(q('alerting-tab-history')!.getAttribute('href')).toBe('/alerting/history');
+    expect(q('alerting-tab-panel')!.getAttribute('aria-labelledby')).toBe(
+      q('alerting-tab-rules')!.id,
+    );
+    expect(q('alerting-tab-panel')!.contains(q('rules'))).toBe(true);
     // The Active tab is gone: History and Rules only.
     expect(
       [...app.root().querySelectorAll('nav[aria-label=Alerting] a')].map((a) => app.text(a)),
@@ -167,6 +197,7 @@ describe('AlertRulesPage (/alerting/rules)', () => {
       comparison: 'below',
       valueMetric: 2.5,
       alertLevel: 'info',
+      enabled: true, // on by default
     });
     const created = rule({ ...post.request.body });
     post.flush(created, { status: 201, statusText: 'Created' });
@@ -272,14 +303,8 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     await submit('rule-save');
 
     const patch = expectWrite('PATCH', `${URL}/${existing.id}`);
-    expect(patch.request.body).toEqual({
-      ...existing,
-      id: undefined,
-      enabled: undefined,
-      valueMetric: 28,
-    });
-    // Editing never touches `enabled` (a disabled rule stays disabled).
-    expect(Object.keys(patch.request.body)).not.toContain('enabled');
+    const { id: _id, ...fields } = existing;
+    expect(patch.request.body).toEqual({ ...fields, valueMetric: 28 }); // `enabled` as prefilled
     patch.flush({ ...existing, valueMetric: 28 });
     await settle();
     expect(isOpen('rule-dialog')).toBe(false);
@@ -299,6 +324,24 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     await settle();
     expect(app.text(q('rule-error'))).toBe('Internal server error.');
     expect(isOpen('rule-dialog')).toBe(true);
+  });
+
+  it('says the API is unreachable when saving fails on the network, keeps the dialog open and the list as is', async () => {
+    await open([]);
+    await click('add-rule');
+    await type('rule-value', '130');
+    await submit('rule-save');
+
+    expectWrite('POST', URL).error(new ProgressEvent('error'));
+    await settle();
+
+    expect(app.text(q('rule-error'))).toBe(
+      'Could not reach the API. Check your connection and try again.',
+    );
+    expect(isOpen('rule-dialog')).toBe(true);
+    expect(q<HTMLInputElement>('rule-value')!.value).toBe('130'); // nothing typed is lost
+    expect(q('rules-notice')?.textContent?.trim() ?? '').toBe('');
+    app.http.expectNone({ method: 'GET', url: URL }); // no reload: nothing changed
   });
 
   it('deletes a rule after confirmation', async () => {
@@ -331,23 +374,127 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     expect(q('no-rules')).not.toBeNull();
   });
 
-  it('keeps the delete dialog open with the reason from the API when the rule cannot be deleted (409)', async () => {
+  /** DELETE answers 409: readings triggered the rule (the API's text names its internal id). */
+  const flushTriggered = (req: TestRequest, id: string) =>
+    req.flush(
+      {
+        statusCode: 409,
+        message: `Alert config ${id} has triggered alerts on telemetry readings and cannot be deleted; disable it instead (enabled: false)`,
+      },
+      { status: 409, statusText: 'Conflict' },
+    );
+
+  it('explains in words why a rule that flagged readings cannot be deleted, and disables it instead', async () => {
+    const existing = rule();
+    await open([existing]);
+    await click('delete-rule', rows()[0]);
+    await click('confirm-delete');
+    flushTriggered(expectWrite('DELETE', `${URL}/${existing.id}`), existing.id);
+    await settle();
+
+    expect(isOpen('delete-dialog')).toBe(true);
+    expect(app.text(q('delete-dialog')!.querySelector('h2'))).toBe('This rule can’t be deleted');
+    expect(app.text(q('delete-triggered'))).toBe(
+      'This rule has flagged readings, so it can’t be deleted — they keep their history. ' +
+        'Disable it instead to stop it from being evaluated.',
+    );
+    expect(q('delete-triggered')!.getAttribute('role')).toBe('alert');
+    // Never the API's text or the internal id.
+    expect(app.text(q('delete-dialog'))).not.toContain(existing.id);
+    expect(app.text(q('delete-dialog'))).not.toContain('enabled: false');
+    expect(q('delete-error')).toBeNull();
+    expect(q('confirm-delete')).toBeNull(); // Delete is replaced by Disable rule
+    expect(document.activeElement).toBe(q('disable-rule'));
+    app.http.expectNone(URL); // nothing changed: no reload
+
+    await click('disable-rule');
+    expect(app.text(q('disable-rule'))).toBe('Disabling…');
+    const patch = expectWrite('PATCH', `${URL}/${existing.id}`);
+    expect(patch.request.body).toEqual({ enabled: false });
+    patch.flush({ ...existing, enabled: false });
+    await settle();
+
+    expect(isOpen('delete-dialog')).toBe(false);
+    expect(app.text(q('rules-notice'))).toBe('Rule disabled: Gearbox temperature above 120 °C.');
+    await flushList([{ ...existing, enabled: false }]);
+    expect(rows()[0].getAttribute('data-enabled')).toBe('false');
+    expect(app.text(rows()[0].querySelector('[data-testid=rule-disabled]'))).toBe('Disabled');
+  });
+
+  it('only offers Close when the rule that flagged readings is already disabled', async () => {
+    const existing = rule({ enabled: false });
+    await open([existing]);
+    await click('delete-rule', rows()[0]);
+    await click('confirm-delete');
+    flushTriggered(expectWrite('DELETE', `${URL}/${existing.id}`), existing.id);
+    await settle();
+
+    expect(app.text(q('delete-triggered'))).toBe(
+      'This rule has flagged readings, so it can’t be deleted — they keep their history. ' +
+        'It’s already disabled, so it isn’t evaluated.',
+    );
+    expect(q('disable-rule')).toBeNull();
+    expect(
+      [...q('delete-dialog')!.querySelectorAll('mat-dialog-actions button')].map((b) =>
+        app.text(b),
+      ),
+    ).toEqual(['Close']);
+    expect(document.activeElement).toBe(q('close-delete'));
+
+    await click('close-delete');
+    expect(isOpen('delete-dialog')).toBe(false);
+    expect(q('rules-notice')?.textContent?.trim()).toBe('');
+    app.http.expectNone(URL);
+  });
+
+  it('keeps the dialog open with the reason when disabling instead fails', async () => {
+    const existing = rule();
+    await open([existing]);
+    await click('delete-rule', rows()[0]);
+    await click('confirm-delete');
+    flushTriggered(expectWrite('DELETE', `${URL}/${existing.id}`), existing.id);
+    await settle();
+    await click('disable-rule');
+    expectWrite('PATCH', `${URL}/${existing.id}`).error(new ProgressEvent('error'));
+    await settle();
+
+    expect(isOpen('delete-dialog')).toBe(true);
+    expect(app.text(q('delete-error'))).toBe(
+      'Could not disable the rule. Could not reach the API. Check your connection and try again.',
+    );
+    expect(q<HTMLButtonElement>('disable-rule')!.disabled).toBe(false);
+  });
+
+  it('closes the dialog when the rule to disable is gone (404)', async () => {
+    const existing = rule();
+    await open([existing]);
+    await click('delete-rule', rows()[0]);
+    await click('confirm-delete');
+    flushTriggered(expectWrite('DELETE', `${URL}/${existing.id}`), existing.id);
+    await settle();
+    await click('disable-rule');
+    expectWrite('PATCH', `${URL}/${existing.id}`).flush(
+      { message: `Alert config ${existing.id} not found` },
+      { status: 404, statusText: 'Not Found' },
+    );
+    await settle();
+    expect(isOpen('delete-dialog')).toBe(false);
+    await flushList([]);
+  });
+
+  it('shows other delete failures in the dialog and keeps Delete', async () => {
     const existing = rule();
     await open([existing]);
     await click('delete-rule', rows()[0]);
     await click('confirm-delete');
     expectWrite('DELETE', `${URL}/${existing.id}`).flush(
-      {
-        message: `Alert config ${existing.id} has triggered alerts on telemetry readings and cannot be deleted; disable it instead (enabled: false)`,
-      },
-      { status: 409, statusText: 'Conflict' },
+      { statusCode: 500, message: 'Internal server error' },
+      { status: 500, statusText: 'Server Error' },
     );
     await settle();
-
-    expect(isOpen('delete-dialog')).toBe(true);
-    expect(app.text(q('delete-error'))).toContain('has triggered alerts on telemetry readings');
+    expect(app.text(q('delete-error'))).toBe('Internal server error.');
     expect(q<HTMLButtonElement>('confirm-delete')!.disabled).toBe(false);
-    app.http.expectNone(URL); // nothing changed: no reload
+    expect(q('delete-triggered')).toBeNull();
   });
 
   it('treats deleting a rule that is already gone (404) as done', async () => {
@@ -401,5 +548,243 @@ describe('AlertRulesPage (/alerting/rules)', () => {
     expect(
       ['rule-metric', 'rule-comparison', 'rule-value', 'rule-level-select'].map(label),
     ).toEqual(['Metric', 'Condition', 'Threshold', 'Level']);
+  });
+
+  it('lays the editor fields out in a grid inside the dialog content, not on it', async () => {
+    await open([]);
+    await click('add-rule');
+    // Material's unlayered `.mat-mdc-dialog-content { display: block }` beats a Tailwind `grid`
+    // class on mat-dialog-content (the fields stacked without gaps). jsdom applies no CSS, so this
+    // pins the structure; the layout itself is checked in a browser.
+    const fields = q('rule-fields')!;
+    expect(fields.tagName).toBe('DIV');
+    expect(fields.parentElement!.tagName).toBe('MAT-DIALOG-CONTENT');
+    const cell = (id: string) => q(id)!.closest('mat-form-field')!.parentElement;
+    for (const id of ['rule-metric', 'rule-comparison', 'rule-value', 'rule-level-select']) {
+      expect(cell(id)).toBe(fields);
+    }
+  });
+
+  describe('Enabled', () => {
+    /** A row's switch (mat-slide-toggle renders a button with role=switch). */
+    const toggle = (row: Element) =>
+      row.querySelector<HTMLButtonElement>('[data-testid=rule-enabled-toggle] button[role=switch]');
+    const state = (row: Element) => ({
+      checked: toggle(row)?.getAttribute('aria-checked'),
+      label: toggle(row)?.getAttribute('aria-label'),
+      disabled: toggle(row)?.disabled,
+      row: row.getAttribute('data-enabled'),
+      pill: app.text(row.querySelector('[data-testid=rule-disabled]')) ?? '',
+    });
+
+    it('gives owners a switch per rule, named by what it does, and marks disabled rules', async () => {
+      const off = rule({
+        measurementMetric: 'powerOutputKw',
+        comparison: 'below',
+        valueMetric: 100,
+      });
+      await open([rule(), { ...off, enabled: false }], 'owner');
+
+      expect(rows().map(state)).toEqual([
+        {
+          checked: 'true',
+          label: 'Disable Gearbox temperature above 120 °C',
+          disabled: false,
+          row: 'true',
+          pill: '',
+        },
+        {
+          checked: 'false',
+          label: 'Enable Power output below 100 kW',
+          disabled: false,
+          row: 'false',
+          pill: 'Disabled',
+        },
+      ]);
+      expect(q('rule-enabled-state')).toBeNull();
+    });
+
+    it('shows viewers the state in words, without a switch', async () => {
+      await open(
+        [rule(), rule({ valueMetric: 130, alertLevel: 'warn', enabled: false })],
+        'viewer',
+      );
+
+      expect(app.root().querySelector('[data-testid=rule-enabled-toggle]')).toBeNull();
+      expect(q('edit-rule')).toBeNull();
+      expect(rows().map((row) => cells(row)[4])).toEqual(['Enabled', 'Disabled']);
+      expect(app.text(rows()[0].querySelector('[data-testid=rule-enabled-state]'))).toBe('Enabled');
+      expect(app.text(rows()[1].querySelector('[data-testid=rule-disabled]'))).toBe('Disabled');
+      expect(rows()[1].getAttribute('data-enabled')).toBe('false');
+    });
+
+    it('switches a rule off at once (PATCH enabled), locked until the API answers, then announces it', async () => {
+      const existing = rule();
+      await open([existing], 'owner');
+
+      toggle(rows()[0])!.click();
+      await settle();
+      // Optimistic: shown off and locked while the request runs.
+      expect(state(rows()[0])).toEqual({
+        checked: 'false',
+        label: 'Enable Gearbox temperature above 120 °C',
+        disabled: true,
+        row: 'false',
+        pill: 'Disabled',
+      });
+      expect(rows()[0].querySelector('[data-pending]')).not.toBeNull();
+      const patch = expectWrite('PATCH', `${URL}/${existing.id}`);
+      expect(patch.request.body).toEqual({ enabled: false });
+      patch.flush({ ...existing, enabled: false });
+      await settle();
+
+      expect(state(rows()[0])).toMatchObject({ checked: 'false', disabled: false, row: 'false' });
+      expect(app.text(q('rules-notice'))).toBe('Rule disabled: Gearbox temperature above 120 °C.');
+      await flushList([{ ...existing, enabled: false }]);
+
+      toggle(rows()[0])!.click();
+      await settle();
+      expect(state(rows()[0])).toMatchObject({ checked: 'true', disabled: true, pill: '' });
+      const enable = expectWrite('PATCH', `${URL}/${existing.id}`);
+      expect(enable.request.body).toEqual({ enabled: true });
+      enable.flush(existing);
+      await settle();
+      expect(app.text(q('rules-notice'))).toBe('Rule enabled: Gearbox temperature above 120 °C.');
+      await flushList([existing]);
+      expect(state(rows()[0])).toMatchObject({ checked: 'true', disabled: false, row: 'true' });
+    });
+
+    it('rolls the switch back and says why when the change fails', async () => {
+      const existing = rule();
+      await open([existing], 'owner');
+
+      toggle(rows()[0])!.click();
+      await settle();
+      expectWrite('PATCH', `${URL}/${existing.id}`).error(new ProgressEvent('error'));
+      await settle();
+
+      expect(state(rows()[0])).toEqual({
+        checked: 'true',
+        label: 'Disable Gearbox temperature above 120 °C',
+        disabled: false,
+        row: 'true',
+        pill: '',
+      });
+      expect(app.text(q('rules-toggle-error'))).toBe(
+        'Could not disable “Gearbox temperature above 120 °C”. ' +
+          'Could not reach the API. Check your connection and try again.',
+      );
+      expect(q('rules-toggle-error')!.getAttribute('role')).toBe('alert');
+      expect(q('rules-notice')?.textContent?.trim()).toBe('');
+      await flushList([existing]); // reloaded: it may have changed elsewhere
+
+      // The next change clears the error.
+      toggle(rows()[0])!.click();
+      await settle();
+      expect(q('rules-toggle-error')).toBeNull();
+      expectWrite('PATCH', `${URL}/${existing.id}`).flush({ ...existing, enabled: false });
+      await settle();
+      await flushList([{ ...existing, enabled: false }]);
+    });
+
+    it('says a rule deleted elsewhere is gone, without its id', async () => {
+      const existing = rule({ enabled: false });
+      await open([existing], 'owner');
+
+      toggle(rows()[0])!.click();
+      await settle();
+      expectWrite('PATCH', `${URL}/${existing.id}`).flush(
+        { message: `Alert config ${existing.id} not found` },
+        { status: 404, statusText: 'Not Found' },
+      );
+      await settle();
+
+      expect(app.text(q('rules-toggle-error'))).toBe(
+        'Could not enable “Gearbox temperature above 120 °C”. ' +
+          'This rule no longer exists: it was deleted elsewhere.',
+      );
+      expect(state(rows()[0]).checked).toBe('false'); // rolled back
+      await flushList([]);
+      expect(q('no-rules')).not.toBeNull();
+    });
+
+    it('follows changes made in another browser (alert-config.changed)', async () => {
+      const existing = rule();
+      await open([existing], 'owner');
+
+      app.sse.pushEvent('alert-config.changed', { action: 'updated', id: existing.id });
+      await settle();
+      await flushList([{ ...existing, enabled: false }]);
+
+      expect(state(rows()[0])).toEqual({
+        checked: 'false',
+        label: 'Enable Gearbox temperature above 120 °C',
+        disabled: false,
+        row: 'false',
+        pill: 'Disabled',
+      });
+    });
+  });
+
+  describe('editor: Enabled', () => {
+    const editorSwitch = () =>
+      q('rule-enabled')!.querySelector<HTMLButtonElement>('button[role=switch]')!;
+
+    it('is on for a new rule and sends what is chosen', async () => {
+      await open([]);
+      await click('add-rule');
+      expect(editorSwitch().getAttribute('aria-checked')).toBe('true');
+      expect(app.text(q('rule-enabled'))).toBe('Enabled');
+      // Labelled by its text, described by the hint.
+      const describedBy = editorSwitch().getAttribute('aria-describedby')!;
+      expect(app.text(document.getElementById(describedBy))).toBe(
+        'Disabled rules are kept, but new readings aren’t checked against them.',
+      );
+
+      editorSwitch().click();
+      await settle();
+      expect(editorSwitch().getAttribute('aria-checked')).toBe('false');
+      await type('rule-value', '110');
+      await submit('rule-save');
+
+      const post = expectWrite('POST', URL);
+      expect(post.request.body).toMatchObject({ valueMetric: 110, enabled: false });
+      post.flush(rule({ ...post.request.body }), { status: 201, statusText: 'Created' });
+      await settle();
+      await flushList([rule({ valueMetric: 110, enabled: false })]);
+    });
+
+    it('is prefilled when editing and sent in the PATCH', async () => {
+      const existing = rule({ enabled: false });
+      await open([existing]);
+      await click('edit-rule', rows()[0]);
+      expect(editorSwitch().getAttribute('aria-checked')).toBe('false');
+
+      editorSwitch().click();
+      await settle();
+      await submit('rule-save');
+      const patch = expectWrite('PATCH', `${URL}/${existing.id}`);
+      expect(patch.request.body).toMatchObject({ enabled: true, valueMetric: 120 });
+      patch.flush({ ...existing, enabled: true });
+      await settle();
+      await flushList([{ ...existing, enabled: true }]);
+    });
+
+    it('says a rule deleted elsewhere while editing is gone, without its id', async () => {
+      const existing = rule();
+      await open([existing]);
+      await click('edit-rule', rows()[0]);
+      await submit('rule-save');
+      expectWrite('PATCH', `${URL}/${existing.id}`).flush(
+        { message: `Alert config ${existing.id} not found` },
+        { status: 404, statusText: 'Not Found' },
+      );
+      await settle();
+      expect(app.text(q('rule-error'))).toBe(
+        'This rule no longer exists: it was deleted elsewhere.',
+      );
+      expect(isOpen('rule-dialog')).toBe(true);
+      await flushList([]);
+    });
   });
 });

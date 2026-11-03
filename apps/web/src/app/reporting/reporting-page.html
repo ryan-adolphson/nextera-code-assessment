@@ -1,6 +1,6 @@
 <h1 class="text-3xl font-bold">Reporting</h1>
 <p class="mt-1 text-sm text-muted">
-  Every telemetry reading of a farm or a turbine over whole UTC days, with the alerts it triggered.
+  Every telemetry reading of a farm or a turbine over whole days, with the alerts it triggered.
 </p>
 
 <!-- The report: a farm or turbine (autocomplete) and the days (required); Run sends one request. -->
@@ -45,23 +45,25 @@
   </mat-form-field>
 
   <mat-form-field appearance="outline" subscriptSizing="dynamic" data-testid="report-range">
-    <mat-label>Dates (UTC)</mat-label>
-    <mat-date-range-input [rangePicker]="picker" [max]="maxDate">
+    <mat-label>Dates ({{ tz.tag() }})</mat-label>
+    <mat-date-range-input [rangePicker]="picker" [max]="maxDate()">
       <input
         matStartDate
         placeholder="Start date"
         data-testid="report-from"
         [formField]="reportForm.start"
+        [errorStateMatcher]="rangeErrorState()"
       />
       <input
         matEndDate
         placeholder="End date"
         data-testid="report-to"
         [formField]="reportForm.end"
+        [errorStateMatcher]="rangeErrorState()"
       />
     </mat-date-range-input>
     <mat-datepicker-toggle matIconSuffix [for]="picker" />
-    <mat-date-range-picker #picker />
+    <mat-date-range-picker #picker (opened)="onPicking(true)" (closed)="onPicking(false)" />
     <mat-error>Choose the start and end dates.</mat-error>
   </mat-form-field>
 
@@ -95,7 +97,7 @@
       r.scope.kind === 'farm'
         ? r.scope.name + ' (' + r.scope.id + ')'
         : r.scope.id + ' · ' + r.scope.name
-    }}, {{ r.from | date: 'MMM d, y' : 'UTC' }} – {{ lastDay() | date: 'MMM d, y' : 'UTC' }} (UTC)
+    }}, {{ r.from | appTime: 'MMM d, y' }} – {{ lastDay() | appTime: 'MMM d, y' }} ({{ tz.tag() }})
   }
 </p>
 
@@ -146,6 +148,14 @@
         Every reading of {{ r.scope.id }}.
       }
     </p>
+  }
+}
+
+<!-- The charts (ECharts, its own chunk) appear only once a report with readings has run. The
+     block exists from the start, so the chunk is prefetched while the browser is idle (usually
+     before Run is pressed); the group is deferred as a unit (shared crosshair and zoom). -->
+@defer (when hasCharts(); prefetch on idle) {
+  @if (hasCharts()) {
     @if (domain(); as window) {
       <app-chart-group
         label="Report charts"
@@ -157,55 +167,76 @@
         [resetKey]="report()"
       />
     }
-
-    <h2 class="mt-8 mb-3 text-lg font-semibold">Readings</h2>
-    <div
-      class="relative overflow-x-auto rounded-lg border border-line"
-      role="region"
-      aria-label="Report readings"
-      tabindex="0"
+  }
+} @placeholder {
+  <!-- Nothing before the first report; afterwards the charts' size. -->
+  @if (hasCharts()) {
+    <app-chart-skeleton [cards]="chartSkeleton" />
+  }
+} @loading (after 100ms; minimum 300ms) {
+  @if (hasCharts()) {
+    <app-chart-skeleton [cards]="chartSkeleton" [loading]="true" />
+  }
+} @error {
+  @if (hasCharts()) {
+    <p
+      class="rounded-lg border border-line bg-surface px-4 py-6 text-center"
+      role="alert"
+      data-testid="charts-load-error"
     >
-      <table
-        mat-table
-        class="[&_td]:tabular-nums"
-        data-testid="report-table"
-        [dataSource]="paging.page()"
-        [trackBy]="trackById"
-      >
-        <ng-container matColumnDef="measured">
-          <th mat-header-cell *matHeaderCellDef>Measured (UTC)</th>
-          <td mat-cell *matCellDef="let row">{{ row.timestamp | date: 'MMM d, HH:mm' : 'UTC' }}</td>
-        </ng-container>
-        <ng-container matColumnDef="turbine">
-          <th mat-header-cell *matHeaderCellDef>Turbine</th>
-          <td mat-cell *matCellDef="let row">{{ row.turbineId }}</td>
-        </ng-container>
-        @for (metric of metrics; track metric.key) {
-          <ng-container [matColumnDef]="metric.key">
-            <th mat-header-cell *matHeaderCellDef class="text-right!">
-              {{ metric.title }} ({{ metric.unit }})
-            </th>
-            <td mat-cell *matCellDef="let row" class="text-right!">
-              {{ row[metric.key] | number: '1.' + metric.decimals + '-' + metric.decimals }}
-            </td>
-          </ng-container>
-        }
-        <!-- The rules the reading triggered: worst level and count; the tooltip lists them. -->
-        <ng-container matColumnDef="alerts">
-          <th mat-header-cell *matHeaderCellDef>Alerts</th>
-          <td mat-cell *matCellDef="let row" data-testid="report-row-alerts">
-            <app-alerts-cell [reading]="row" />
+      The charts could not be loaded. Reload the page to try again; the readings are below.
+    </p>
+  }
+}
+
+@if (hasCharts()) {
+  <h2 class="mt-8 mb-3 text-lg font-semibold">Readings</h2>
+  <div
+    class="relative overflow-x-auto rounded-lg border border-line"
+    role="region"
+    aria-label="Report readings"
+    tabindex="0"
+  >
+    <table
+      mat-table
+      class="[&_td]:tabular-nums"
+      data-testid="report-table"
+      [dataSource]="paging.page()"
+      [trackBy]="trackById"
+    >
+      <ng-container matColumnDef="measured">
+        <th mat-header-cell *matHeaderCellDef>Measured ({{ tz.tag() }})</th>
+        <td mat-cell *matCellDef="let row">{{ row.timestamp | appTime: 'MMM d, HH:mm' }}</td>
+      </ng-container>
+      <ng-container matColumnDef="turbine">
+        <th mat-header-cell *matHeaderCellDef>Turbine</th>
+        <td mat-cell *matCellDef="let row">{{ row.turbineId }}</td>
+      </ng-container>
+      @for (metric of metrics; track metric.key) {
+        <ng-container [matColumnDef]="metric.key">
+          <th mat-header-cell *matHeaderCellDef class="text-right!">
+            {{ metric.title }} ({{ metric.unit }})
+          </th>
+          <td mat-cell *matCellDef="let row" class="text-right!">
+            {{ row[metric.key] | number: '1.' + metric.decimals + '-' + metric.decimals }}
           </td>
         </ng-container>
+      }
+      <!-- The rules the reading triggered: worst level and count; the tooltip lists them. -->
+      <ng-container matColumnDef="alerts">
+        <th mat-header-cell *matHeaderCellDef>Alerts</th>
+        <td mat-cell *matCellDef="let row" data-testid="report-row-alerts">
+          <app-alerts-cell [reading]="row" />
+        </td>
+      </ng-container>
 
-        <tr mat-header-row *matHeaderRowDef="columns()"></tr>
-        <tr mat-row *matRowDef="let row; columns: columns()" data-testid="report-row"></tr>
-      </table>
-    </div>
-    <mat-paginator
-      aria-label="Report reading pages"
-      data-testid="report-paginator"
-      [appPaging]="paging"
-    />
-  }
+      <tr mat-header-row *matHeaderRowDef="columns()"></tr>
+      <tr mat-row *matRowDef="let row; columns: columns()" data-testid="report-row"></tr>
+    </table>
+  </div>
+  <mat-paginator
+    aria-label="Report reading pages"
+    data-testid="report-paginator"
+    [appPaging]="paging"
+  />
 }

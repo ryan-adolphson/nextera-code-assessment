@@ -53,4 +53,20 @@ describe('validateEnv', () => {
     expect(run).toThrow(/PORT/);
     expect(run).toThrow(/REDIS_URL/);
   });
+
+  it('reports one line per variable, the common ones first', () => {
+    const run = () =>
+      validateEnv({ PORT: 'abc', REDIS_URL: 'http://x', JWT_ISSUER: '' });
+
+    expect(run).toThrow(
+      [
+        'Invalid environment configuration:',
+        '  PORT: PORT must not be greater than 65535, PORT must not be less than 1, PORT must be an integer number',
+        '  DATABASE_URL: DATABASE_URL must be a postgresql:// URL, DATABASE_URL must be a string',
+        '  REDIS_URL: REDIS_URL must be a redis:// URL',
+        '  JWT_SECRET: JWT_SECRET must be at least 32 characters, JWT_SECRET must be set',
+        '  JWT_ISSUER: JWT_ISSUER should not be empty',
+      ].join('\n'),
+    );
+  });
 });

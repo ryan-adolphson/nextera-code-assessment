@@ -6,8 +6,10 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import { filter } from 'rxjs';
 import { AuthStore } from '../core/auth/auth.store';
 import { ROLE_LABELS, Role } from '../core/auth/roles';
+import { TimeZoneSettings } from '../core/time-zone';
 import { IconName } from '../ui/icons';
 import { FleetStore, LiveStatus } from './fleet.store';
+import { FarmHistoryCache } from '../farm-history/farm-history-cache';
 
 const LIVE_LABELS: Record<LiveStatus, string> = {
   connecting: 'Connecting…',
@@ -30,7 +32,15 @@ export const NAV_ITEMS = [
     icon: 'notifications',
     minRole: 'viewer',
   },
+  {
+    id: 'unallocated',
+    path: '/unallocated',
+    label: 'Unallocated',
+    icon: 'help',
+    minRole: 'owner',
+  },
   { id: 'reporting', path: '/reporting', label: 'Reporting', icon: 'bar-chart', minRole: 'owner' },
+  { id: 'settings', path: '/settings', label: 'Settings', icon: 'settings', minRole: 'viewer' },
 ] as const satisfies readonly {
   id: string;
   path: string;
@@ -53,7 +63,8 @@ export const NAV_ITEMS = [
 @Component({
   selector: 'app-fleet-shell',
   imports: [MatButton, MatIcon, MatIconButton, RouterLink, RouterLinkActive, RouterOutlet],
-  providers: [FleetStore],
+  // FarmHistoryCache: the History tab's daily figures for this session (gone on sign-out).
+  providers: [FleetStore, FarmHistoryCache],
   templateUrl: './fleet-shell.html',
   host: { '(document:keydown.escape)': 'closeMenu()' },
 })
@@ -61,7 +72,7 @@ export class FleetShell implements OnInit {
   protected readonly store = inject(FleetStore);
   protected readonly liveLabel = computed(() => LIVE_LABELS[this.store.liveStatus()]);
   protected readonly auth = inject(AuthStore);
-  /** The sections the user's role may open (Reporting: owner and up). */
+  /** The sections the user's role may open (Unallocated and Reporting: owner and up). */
   protected readonly navItems = computed(() =>
     NAV_ITEMS.filter((item) => this.auth.can(item.minRole)),
   );
@@ -80,6 +91,9 @@ export class FleetShell implements OnInit {
   });
 
   constructor() {
+    // Times follow the signed-in user's setting (saved per user in this browser). Set before any
+    // page renders; signing out destroys the shell, and the next sign-in creates a new one.
+    inject(TimeZoneSettings).useAccount(this.auth.user()?.email ?? null);
     this.router.events
       .pipe(
         filter((e) => e instanceof NavigationEnd),

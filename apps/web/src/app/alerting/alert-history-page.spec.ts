@@ -1,12 +1,14 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { TestRequest } from '@angular/common/http/testing';
-import { TestBed } from '@angular/core/testing';
+import { DeferBlockBehavior, DeferBlockState, TestBed } from '@angular/core/testing';
 import { MatDateRangeInputHarness } from '@angular/material/datepicker/testing';
 import { MatPaginatorHarness } from '@angular/material/paginator/testing';
+import { MatTabNavBarHarness } from '@angular/material/tabs/testing';
 import { Title } from '@angular/platform-browser';
 import { Router } from '@angular/router';
+import { TimeZoneSettings } from '../core/time-zone';
 import { Telemetry } from '../fleet/fleet.model';
-import { TEST_API_BASE_URL, openFleet, reading } from '../fleet/testing';
+import { TEST_API_BASE_URL, openFleet, rangeCalendar, reading } from '../fleet/testing';
 import { AlertConfig } from './alert-config.model';
 
 const ALERTS_URL = `${TEST_API_BASE_URL}/alerts`;
@@ -111,6 +113,15 @@ describe('AlertHistoryPage (/alerting/history)', () => {
       .root()
       .querySelector<HTMLElement>(`[data-testid=history-detail][data-turbine-id=${turbineId}]`)!;
 
+  /** Esc in the focused overlay (CDK checks the legacy keyCode, which jsdom leaves at 0). */
+  async function pressEscape() {
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+    Object.defineProperty(event, 'keyCode', { get: () => 27 });
+    (document.activeElement ?? document.body).dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve)); // `closed` is emitted a task later
+    await app.stable();
+  }
+
   beforeEach(async () => {
     app = await openFleet('/alerting/history', () => CLOCK);
   });
@@ -133,7 +144,17 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     expect(q('history-range')!.querySelector('mat-datepicker-toggle button')).not.toBeNull();
     expect(await (await range.getEndInput()).getMax()).toBe('2026-01-03'); // ISO from the harness
     expect(TestBed.inject(Title).getTitle()).toBe('Alert history · Nextera');
-    expect(q('alerting-tab-history')!.getAttribute('aria-current')).toBe('page');
+    // Tabs (Material tab nav bar): History is the active link and the page is in its tab panel.
+    const tabs = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatTabNavBarHarness.with({ selector: '[data-testid=alerting-tabs]' }),
+    );
+    expect(await Promise.all((await tabs.getLinks()).map((l) => l.getLabel()))).toEqual([
+      'History',
+      'Rules',
+    ]);
+    expect(await (await tabs.getActiveLink()).getLabel()).toBe('History');
+    expect(await (await tabs.getPanel()).getTextContent()).toContain('No alerts in this range.');
+    expect(q('alerting-tab-history')!.getAttribute('aria-selected')).toBe('true');
     expect(app.text(q('history-empty'))).toBe('No alerts in this range.');
     expect(app.text(q('history-count'))).toBe('0 flagged readings on 0 turbines');
   });
@@ -275,6 +296,58 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     expect(app.text(q('history-range-error'))).toBe('Choose at most 31 days.');
   });
 
+  it('queries only a complete range picked in the calendar: nothing (and no error) halfway through', async () => {
+    await flush(flagged());
+    const calendar = rangeCalendar(q('history-range')!);
+    calendar.open();
+    await app.stable();
+    expect(calendar.isOpen()).toBe(true);
+
+    // The picker sets the start and clears the end: no request with the old end day (1/3).
+    calendar.previousMonth();
+    await app.stable();
+    calendar.pick(30);
+    await app.stable();
+    app.http.expectNone(ALERTS_URL);
+    expect(q('history-range-error')).toBeNull();
+    expect(all('history-turbine')).toHaveLength(2); // the last results stay
+    expect(app.text(q('history-count'))).toBe('4 flagged readings on 2 turbines');
+
+    // The end day completes the range; the calendar closes and one request goes out.
+    calendar.pick(31);
+    await new Promise((resolve) => setTimeout(resolve)); // `closed` is emitted a task later
+    const req = expectAlerts();
+    expect([req.request.params.get('from'), req.request.params.get('to')]).toEqual([
+      '2025-12-30T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z',
+    ]);
+    req.flush([]);
+    await app.stable();
+    expect(calendar.isOpen()).toBe(false);
+    expect(app.text(q('history-count'))).toBe('0 flagged readings on 0 turbines');
+  });
+
+  it('sends nothing when the calendar closes on the range shown, and asks for an end day after a half pick', async () => {
+    await flush(flagged());
+    const calendar = rangeCalendar(q('history-range')!);
+    calendar.open();
+    await app.stable();
+    await pressEscape();
+    expect(calendar.isOpen()).toBe(false);
+    app.http.expectNone(ALERTS_URL);
+    expect(q('history-range-error')).toBeNull();
+
+    calendar.open();
+    await app.stable();
+    calendar.pick(1);
+    await app.stable();
+    await pressEscape();
+    expect(calendar.isOpen()).toBe(false);
+    app.http.expectNone(ALERTS_URL);
+    expect(app.text(q('history-range-error'))).toBe('Choose an end date.');
+    expect(all('history-turbine')).toHaveLength(2);
+  });
+
   it('shows a load error with a retry', async () => {
     expectAlerts().flush('boom', { status: 500, statusText: 'Server Error' });
     await app.stable();
@@ -299,5 +372,131 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     for (const th of app.root().querySelectorAll('[data-testid=alert-history] thead th')) {
       expect(th.classList).toContain('mat-mdc-table-sticky');
     }
+  });
+});
+
+/** Local time (Settings → Local, browser zone America/Chicago): local days and times. */
+describe('AlertHistoryPage in local time', () => {
+  let app: Awaited<ReturnType<typeof openFleet>>;
+  const q = (id: string) => app.root().querySelector<HTMLElement>(`[data-testid=${id}]`);
+  const expectAlerts = (): TestRequest => {
+    TestBed.tick();
+    return app.http.expectOne((r) => r.method === 'GET' && r.url === ALERTS_URL);
+  };
+  const range = (req: TestRequest) => [
+    req.request.params.get('from'),
+    req.request.params.get('to'),
+  ];
+
+  beforeEach(async () => {
+    app = await openFleet('/alerting/history', () => CLOCK, undefined, undefined, 'admin', {
+      timeZone: 'local',
+    });
+  });
+  afterEach(() => app.http.verify());
+
+  it('asks for yesterday and today as local days (local midnights) and shows local times', async () => {
+    // 2026-01-03 00:00:30 UTC is Jan 2, 18:00 CST: yesterday and today are Jan 1 and Jan 2.
+    const req = expectAlerts();
+    expect(range(req)).toEqual(['2026-01-01T06:00:00.000Z', '2026-01-03T06:00:00.000Z']);
+    req.flush(flagged());
+    await app.stable();
+
+    const picker = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
+      MatDateRangeInputHarness,
+    );
+    expect(await picker.getValue()).toBe('1/1/2026 – 1/2/2026');
+    expect(await (await picker.getEndInput()).getMax()).toBe('2026-01-02'); // today, locally
+    expect(app.text(q('history-range')!.querySelector('mat-label'))).toBe('Dates (local)');
+    expect(app.text(app.root().querySelector('h1 + p'))).toBe(
+      'Readings that triggered alert rules when they arrived, by turbine. Times are local time (America/Chicago).',
+    );
+    const row = app.root().querySelector('[data-testid=history-turbine][data-turbine-id=TURB001]')!;
+    expect([...row.querySelectorAll('td')].map((td) => app.text(td))).toContain('Jan 2, 07:40');
+    expect(app.text(q('alert-history')!.querySelectorAll('thead th')[3])).toBe('Latest (local)');
+  });
+
+  it('keeps the picked calendar days and queries them again when the zone changes', async () => {
+    expectAlerts().flush([]);
+    await app.stable();
+
+    TestBed.inject(TimeZoneSettings).setMode('utc');
+    const req = expectAlerts();
+    expect(range(req)).toEqual(['2026-01-01T00:00:00.000Z', '2026-01-03T00:00:00.000Z']);
+    req.flush(flagged());
+    await app.stable();
+    expect(app.text(q('history-range')!.querySelector('mat-label'))).toBe('Dates (UTC)');
+  });
+});
+
+/** The detail rows' chips: `@defer (when isExpanded(…); prefetch on idle)`, driven by hand. */
+describe('AlertHistoryPage deferred chips (@defer)', () => {
+  let app: Awaited<ReturnType<typeof openFleet>>;
+  beforeEach(async () => {
+    app = await openFleet('/alerting/history', () => CLOCK, undefined, undefined, 'admin', {
+      deferBlockBehavior: DeferBlockBehavior.Manual,
+    });
+    TestBed.tick();
+    app.http.expectOne((r) => r.url === ALERTS_URL).flush(flagged());
+    await app.stable();
+  });
+  afterEach(() => app.http.verify());
+
+  const detail = (turbineId: string) =>
+    app
+      .root()
+      .querySelector<HTMLElement>(`[data-testid=history-detail][data-turbine-id=${turbineId}]`)!;
+  const expand = async (turbineId: string) => {
+    app
+      .root()
+      .querySelector<HTMLButtonElement>(
+        `[data-testid=history-turbine][data-turbine-id=${turbineId}] [data-testid=history-expand]`,
+      )!
+      .click();
+    await app.stable();
+  };
+
+  it('holds the expanded readings’ rows (their times) until the chips load, then shows the chips', async () => {
+    const blocks = await app.harness.fixture.getDeferBlocks();
+    expect(blocks).toHaveLength(2); // one per detail row
+    expect(app.root().querySelector('[data-testid=history-detail-placeholder]')).toBeNull();
+
+    await expand('TURB002');
+
+    const placeholder = detail('TURB002').querySelector(
+      '[data-testid=history-detail-placeholder]',
+    )!;
+    expect([...placeholder.querySelectorAll('li')].map((li) => app.text(li))).toEqual([
+      'Jan 2, 03:30',
+      'Jan 2, 03:25',
+      'Jan 2, 03:20',
+    ]);
+    expect(detail('TURB002').querySelector('[data-testid=alert-chip]')).toBeNull();
+    expect(detail('TURB001').querySelector('[data-testid=history-detail-placeholder]')).toBeNull();
+
+    for (const block of blocks) await block.render(DeferBlockState.Complete);
+    await app.stable();
+
+    expect(detail('TURB002').querySelector('[data-testid=history-detail-placeholder]')).toBeNull();
+    expect(detail('TURB002').querySelectorAll('[data-testid=history-reading]')).toHaveLength(3);
+    expect(detail('TURB002').querySelectorAll('[data-testid=alert-chip]')).toHaveLength(6);
+    // A collapsed row renders no readings even once the chips have loaded.
+    expect(detail('TURB001').querySelector('[data-testid=history-reading]')).toBeNull();
+  });
+
+  it('announces loading, and asks for a reload if the chips fail to load', async () => {
+    await expand('TURB002');
+    const blocks = await app.harness.fixture.getDeferBlocks();
+    for (const block of blocks) await block.render(DeferBlockState.Loading);
+    await app.stable();
+    const loading = detail('TURB002').querySelector('[data-testid=history-detail-loading]')!;
+    expect(app.text(loading.querySelector('[role=status]'))).toBe('Loading alerts…');
+    expect(loading.querySelectorAll('li')).toHaveLength(4); // the status + one per reading
+
+    for (const block of blocks) await block.render(DeferBlockState.Error);
+    await app.stable();
+    const error = detail('TURB002').querySelector('[data-testid=history-detail-load-error]')!;
+    expect(error.getAttribute('role')).toBe('alert');
+    expect(app.text(error)).toBe('The alerts could not be loaded. Reload the page to try again.');
   });
 });

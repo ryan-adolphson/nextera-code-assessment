@@ -3,46 +3,64 @@
 </nav>
 
 @if (farm(); as farm) {
-  <h1 class="mt-3 text-3xl font-bold">
-    {{ farm.name }} <span class="text-muted">{{ farm.id }}</span>
-  </h1>
-  <p class="text-sm text-muted">
-    {{ farm.latitude | number: '1.2-2' }}, {{ farm.longitude | number: '1.2-2' }}
-  </p>
-
-  <section
-    class="mt-6 grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-3"
-    aria-label="Farm summary"
-  >
-    <app-stat-tile label="Farm output" testId="farm-power"
-      >{{ farm.powerKw | number: '1.0-0' }} kW</app-stat-tile
+  <!-- Name, location and the farm's tabs (Overview here, Weather history at …/weather). -->
+  <app-farm-header [farm]="farm">
+    <section
+      class="mt-6 grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-3"
+      aria-label="Farm summary"
     >
-    <app-stat-tile label="Turbines reporting" testId="farm-reporting"
-      >{{ farm.reporting }} / {{ farm.turbineCount }}</app-stat-tile
-    >
-    <app-stat-tile label="Avg wind">{{
-      farm.avgWindMs === null ? '–' : (farm.avgWindMs | number: '1.1-1') + ' m/s'
-    }}</app-stat-tile>
-  </section>
+      <app-stat-tile label="Farm output" testId="farm-power"
+        >{{ farm.powerKw | number: '1.0-0' }} kW</app-stat-tile
+      >
+      <app-stat-tile label="Turbines reporting" testId="farm-reporting"
+        >{{ farm.reporting }} / {{ farm.turbineCount }}</app-stat-tile
+      >
+      <app-stat-tile label="Avg wind">{{
+        farm.avgWindMs === null ? '–' : (farm.avgWindMs | number: '1.1-1') + ' m/s'
+      }}</app-stat-tile>
+    </section>
 
-  <h2 class="mt-8 mb-3 text-lg font-semibold">Turbines</h2>
-  <app-map-view
-    class="mb-4 block [--map-height:20rem]"
-    [label]="'Map of turbines at ' + farm.name"
-    [markers]="markers()"
-    [legend]="turbines().length ? legend : []"
-    [maxZoom]="13"
-    (markerClick)="onMarkerClick($event)"
-  />
-  @if (turbines().length === 0) {
-    <p class="text-muted" data-testid="no-turbines">
-      No turbines are registered for this farm yet.
-    </p>
-  } @else {
-    <p class="text-sm text-muted">Select a turbine on the map or in the table to see its charts.</p>
-    <!-- The /turbines table, scoped to this farm (no Farm column; the text filter is by turbine id). -->
-    <app-turbine-table [turbines]="turbines()" [hiddenColumns]="hiddenColumns" />
-  }
-} @else {
+    <app-farm-weather [farmId]="farm.id" />
+
+    <h2 class="mt-8 mb-3 text-lg font-semibold">Turbines</h2>
+    <!-- Below the weather: Leaflet loads in its own chunk when the map scrolls into view
+       (prefetched when idle). The placeholder has the map's height and legend row. -->
+    @defer (on viewport; prefetch on idle) {
+      <app-map-view
+        class="mb-4 block [--map-height:20rem]"
+        [label]="'Map of turbines at ' + farm.name"
+        [markers]="markers()"
+        [legend]="turbines().length ? legend : []"
+        [maxZoom]="13"
+        (markerClick)="onMarkerClick($event)"
+      />
+    } @placeholder {
+      <app-map-placeholder class="mb-4 [--map-height:20rem]" [legend]="turbines().length > 0" />
+    } @loading (after 100ms; minimum 300ms) {
+      <app-map-placeholder
+        class="mb-4 [--map-height:20rem]"
+        state="loading"
+        [legend]="turbines().length > 0"
+      />
+    } @error {
+      <app-map-placeholder
+        class="mb-4 [--map-height:20rem]"
+        state="error"
+        [legend]="turbines().length > 0"
+      />
+    }
+    @if (turbines().length === 0) {
+      <p class="text-muted" data-testid="no-turbines">
+        No turbines are registered for this farm yet.
+      </p>
+    } @else {
+      <p class="text-sm text-muted">
+        Select a turbine on the map or in the table to see its charts.
+      </p>
+      <!-- The /turbines table, scoped to this farm (no Farm column; the text filter is by turbine id). -->
+      <app-turbine-table [turbines]="turbines()" [hiddenColumns]="hiddenColumns" />
+    }
+  </app-farm-header>
+} @else if (store.fleetLoadedOk()) {
   <p data-testid="farm-not-found">Farm {{ farmId() }} was not found.</p>
 }

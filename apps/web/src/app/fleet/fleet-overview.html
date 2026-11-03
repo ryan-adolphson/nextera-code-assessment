@@ -11,19 +11,29 @@
     >{{ store.fleet().reporting }} / {{ store.fleet().turbines }}</app-stat-tile
   >
   <app-stat-tile label="Wind farms">{{ store.fleet().farms }}</app-stat-tile>
-  <app-stat-tile label="Data as of" [small]="true"
-    >{{ store.fleetTime() | date: 'MMM d, HH:mm' : 'UTC' }} UTC</app-stat-tile
-  >
+  <app-stat-tile label="Data as of" [small]="true">{{
+    store.fleetTime() | appTime: 'MMM d, HH:mm' : true
+  }}</app-stat-tile>
 </section>
 
 <h2 class="mt-8 mb-1 text-lg font-semibold">Wind farms</h2>
 <p class="mb-3 text-sm text-muted">Select a farm on the map or in the table to see its turbines.</p>
-<app-map-view
-  label="Map of wind farms"
-  [markers]="markers()"
-  [legend]="legend"
-  (markerClick)="open($event)"
-/>
+<!-- Leaflet loads in its own chunk once the map's place is on screen (prefetched when idle), so
+     the tiles and the table above/below render without waiting for it. Same size throughout. -->
+@defer (on viewport; prefetch on idle) {
+  <app-map-view
+    label="Map of wind farms"
+    [markers]="markers()"
+    [legend]="legend"
+    (markerClick)="open($event)"
+  />
+} @placeholder {
+  <app-map-placeholder />
+} @loading (after 100ms; minimum 300ms) {
+  <app-map-placeholder state="loading" />
+} @error {
+  <app-map-placeholder state="error" />
+}
 
 <!-- Every farm is on the map above, so the table is not paginated. -->
 <div class="mt-6 overflow-x-auto">
@@ -31,8 +41,8 @@
     <ng-container matColumnDef="farm">
       <th mat-header-cell *matHeaderCellDef>Farm</th>
       <td mat-cell *matCellDef="let farm">
-        <a [routerLink]="['/farms', farm.id]" (click)="$event.stopPropagation()">{{ farm.name }}</a>
-        <span class="text-muted"> {{ farm.id }}</span>
+        <a [routerLink]="['/farms', farm.id]" (click)="$event.stopPropagation()">{{ farm.name }}</a
+        >&ngsp;<app-farm-pill [farmId]="farm.id" />
       </td>
     </ng-container>
     <ng-container matColumnDef="location">

@@ -1,41 +1,13 @@
-import { plainToInstance } from 'class-transformer';
 import {
-  IsIn,
-  IsInt,
-  IsNotEmpty,
-  IsString,
-  Matches,
-  Max,
-  Min,
-  MinLength,
-  validateSync,
-} from 'class-validator';
+  CommonEnvironmentVariables,
+  validateEnvironment,
+} from '@nextera/shared';
+import { IsNotEmpty, IsString, MinLength } from 'class-validator';
 
-export class EnvironmentVariables {
-  @IsIn(['development', 'test', 'production'])
-  NODE_ENV: 'development' | 'test' | 'production' = 'development';
-
-  @IsInt()
-  @Min(1)
-  @Max(65535)
-  PORT: number = 3000;
-
-  // Local: postgresql://user:pass@localhost:5433/db
-  // Cloud Run: postgresql://user:pass@localhost/db?host=/cloudsql/<connection-name>
-  @IsString()
-  @Matches(/^postgres(ql)?:\/\//, {
-    message: 'DATABASE_URL must be a postgresql:// URL',
-  })
-  DATABASE_URL: string;
-
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  DB_POOL_MAX: number = 5;
-
-  @IsString()
-  @Matches(/^rediss?:\/\//, { message: 'REDIS_URL must be a redis:// URL' })
-  REDIS_URL: string;
+/** NODE_ENV, DATABASE_URL, DB_POOL_MAX and REDIS_URL are the common ones (`@nextera/shared`). */
+export class EnvironmentVariables extends CommonEnvironmentVariables {
+  /** Validated by the base class (an integer, 1–65535); Cloud Run sets 8080. */
+  override PORT: number = 3000;
 
   /**
    * Browser origins allowed to call the API (comma-separated): the nextera-web run.app URL and
@@ -68,18 +40,5 @@ export class EnvironmentVariables {
 export function validateEnv(
   config: Record<string, unknown>,
 ): EnvironmentVariables {
-  const env = plainToInstance(EnvironmentVariables, config, {
-    enableImplicitConversion: true,
-  });
-  const errors = validateSync(env);
-  if (errors.length > 0) {
-    const details = errors.map(
-      (e) =>
-        `  ${e.property}: ${Object.values(e.constraints ?? {}).join(', ')}`,
-    );
-    throw new Error(
-      `Invalid environment configuration:\n${details.join('\n')}`,
-    );
-  }
-  return env;
+  return validateEnvironment(EnvironmentVariables, config);
 }

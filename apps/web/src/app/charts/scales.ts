@@ -1,6 +1,6 @@
-import { utc } from '@date-fns/utc';
-import { format, hoursToMilliseconds, minutesToMilliseconds } from 'date-fns';
+import { hoursToMilliseconds, minutesToMilliseconds, setHours, startOfDay } from 'date-fns';
 import { millisecondsInDay, millisecondsInHour, millisecondsInMinute } from 'date-fns/constants';
+import { UTC_ZONE, formatIn, zoneContext, zoneOffsetMs } from '../core/time-zone';
 
 export interface ChartPoint {
   /** Epoch milliseconds. */
@@ -16,11 +16,15 @@ function niceStep(value: number): number {
   return nice * 10 ** exponent;
 }
 
-/** Tick steps, finest first: 15 and 30 minutes, then 1, 2, 3, 6, 12, 24 and 48 hours. */
+/**
+ * Tick steps, finest first: 15 and 30 minutes, 1, 2, 3, 6, 12, 24 and 48 hours, then 4, 7, 14 and
+ * 28 days (months of daily candles). Day steps are whole wall-clock days, so they stay on midnight.
+ */
 const TIME_STEPS = [
   minutesToMilliseconds(15),
   minutesToMilliseconds(30),
   ...[1, 2, 3, 6, 12, 24, 48].map(hoursToMilliseconds),
+  ...[4, 7, 14, 28].map((days) => days * millisecondsInDay),
 ];
 
 export interface TimeTick {
@@ -28,33 +32,56 @@ export interface TimeTick {
   label: string;
 }
 
+/** `n` mod `m`, never negative. */
+function mod(n: number, m: number): number {
+  return ((n % m) + m) % m;
+}
+
+/** The wall-clock time at instant `t` in `zone`, as ms since the zone's 1970-01-01 00:00. */
+function wallTime(t: number, zone: string): number {
+  return t + zoneOffsetMs(zone, t);
+}
+
 /**
- * UTC-aligned time ticks spaced at least `minSpacingPx` apart: "HH:mm", or "MMM d" at midnight,
- * so a multi-day range shows where each day starts.
+ * Time ticks aligned in `zone` (UTC by default), spaced at least `minSpacingPx` apart: "HH:mm", or
+ * "MMM d" at the zone's midnight, so a multi-day range shows where each day starts. A tick is an
+ * instant whose wall-clock time is a multiple of the step, so across a DST change the ticks follow
+ * the clock (e.g. 00:00, 01:00, 03:00 on a spring-forward day) and a +5:30 zone gets its own hours.
  */
 export function timeTicks(
   from: number,
   to: number,
   widthPx: number,
   minSpacingPx = 80,
+  zone: string = UTC_ZONE,
 ): TimeTick[] {
   const maxTicks = Math.max(1, Math.floor(widthPx / minSpacingPx));
   const step = TIME_STEPS.find((s) => (to - from) / s <= maxTicks) ?? TIME_STEPS.at(-1)!;
+  const onStep = (t: number) => mod(wallTime(t, zone), step) === 0;
+  // Every zone's offset is a whole number of quarter hours, so each tick is on the absolute
+  // 15-minute grid: scan it for the first one, then step (scanning again past a DST change).
+  const grid = TIME_STEPS[0];
+  const nextTick = (after: number) => {
+    let t = after;
+    while (t <= to && !onStep(t)) t += grid;
+    return t;
+  };
   const ticks: TimeTick[] = [];
-  for (let t = Math.ceil(from / step) * step; t <= to; t += step) {
-    ticks.push({ t, label: formatTick(t) });
+  for (let t = nextTick(Math.ceil(from / grid) * grid); t <= to;) {
+    ticks.push({ t, label: formatTick(t, zone) });
+    t = onStep(t + step) ? t + step : nextTick(t + grid);
   }
   return ticks;
 }
 
-/** "HH:mm", or "MMM d" at UTC midnight. */
-function formatTick(t: number): string {
-  return format(t, t % millisecondsInDay === 0 ? 'MMM d' : 'HH:mm', { in: utc });
+/** "HH:mm", or "MMM d" at midnight in `zone`. */
+function formatTick(t: number, zone: string): string {
+  return formatIn(t, mod(wallTime(t, zone), millisecondsInDay) === 0 ? 'MMM d' : 'HH:mm', zone);
 }
 
-/** "Jan 2, 03:20 UTC": a time as the charts show it. */
-export function formatTimestamp(t: number): string {
-  return `${format(t, 'MMM d, HH:mm', { in: utc })} UTC`;
+/** "Jan 2, 03:20 UTC" (or "Jan 1, 21:20 CST" in local time): a time as the charts show it. */
+export function formatTimestamp(t: number, zone: string = UTC_ZONE): string {
+  return formatIn(t, 'MMM d, HH:mm', zone, true);
 }
 
 /** Index of the point nearest to `t` (points ascending by t), or -1 if there are none. */
@@ -138,6 +165,12 @@ export interface Candle {
   high: number;
   /** Readings in the bucket. */
   count: number;
+  /**
+   * Precomputed candles (e.g. one per day from the API): the period's name, replacing the time
+   * span ("Sat, Jan 3, 2026"), and what to say instead of "N readings" ("2 of 2 turbines reporting").
+   */
+  label?: string;
+  detail?: string;
 }
 
 /**
@@ -152,24 +185,46 @@ export function candleSizeFor(spanMs: number): number {
 }
 
 /**
- * Readings (ascending by t) as UTC-aligned candles of `sizeMs`. Buckets without readings get no
- * candle, so gaps stay visible.
+ * The candle bucket [start, end) of `sizeMs` holding instant `t`, aligned to the wall clock in
+ * `zone`. Up to an hour: whole minutes past the zone's hour (absolute length, so the repeated hour
+ * of an autumn DST change gets its own candles). Longer (4 h): hours of the zone's calendar day
+ * through date-fns in the zone's context, so a bucket across a DST change is 3 or 5 hours long.
  */
-export function toCandles(points: readonly ChartPoint[], sizeMs: number): Candle[] {
+function bucketOf(t: number, sizeMs: number, zone: string): { start: number; end: number } {
+  if (sizeMs <= millisecondsInHour) {
+    const start = t - mod(wallTime(t, zone), sizeMs);
+    return { start, end: start + sizeMs };
+  }
+  const ctx = zoneContext(zone);
+  const hours = sizeMs / millisecondsInHour;
+  const day = startOfDay(t, { in: ctx });
+  const first = Math.floor(ctx(t).getHours() / hours) * hours;
+  return { start: +setHours(day, first), end: +setHours(day, first + hours) };
+}
+
+/**
+ * Readings (ascending by t) as candles of `sizeMs` aligned in `zone` (UTC by default). Buckets
+ * without readings get no candle, so gaps stay visible.
+ */
+export function toCandles(
+  points: readonly ChartPoint[],
+  sizeMs: number,
+  zone: string = UTC_ZONE,
+): Candle[] {
   const candles: Candle[] = [];
   for (const p of points) {
-    const start = Math.floor(p.t / sizeMs) * sizeMs;
     const last = candles.at(-1);
-    if (last && last.start === start) {
+    if (last && p.t >= last.start && p.t < last.end) {
       last.close = p.v;
       last.low = Math.min(last.low, p.v);
       last.high = Math.max(last.high, p.v);
       last.count++;
     } else {
+      const { start, end } = bucketOf(p.t, sizeMs, zone);
       candles.push({
-        t: start + sizeMs / 2,
+        t: (start + end) / 2,
         start,
-        end: start + sizeMs,
+        end,
         open: p.v,
         close: p.v,
         low: p.v,

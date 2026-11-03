@@ -1,6 +1,17 @@
-import { seedFromCsv } from '@nextera/shared';
+import {
+  runFarmRollup,
+  seedFromCsv,
+  upsertFarmWeather,
+  type WeatherBucketRow,
+} from '@nextera/shared';
 import { SEED_DATA_DIR } from '@nextera/testing/seed-data';
-import { createTestApp, type TestApp } from './helpers.js';
+import {
+  createTestApp,
+  eventsUrl,
+  openSse,
+  publishReading,
+  type TestApp,
+} from './helpers.js';
 
 /** Runs against the provided CSV dataset (10 farms, 2 turbines, 2 days of telemetry). */
 describe('Fleet API (e2e, CSV seed data)', () => {
@@ -9,7 +20,7 @@ describe('Fleet API (e2e, CSV seed data)', () => {
   beforeAll(async () => {
     t = await createTestApp();
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farms`;
+      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
   });
 
@@ -21,6 +32,226 @@ describe('Fleet API (e2e, CSV seed data)', () => {
     fetch(`${t.url}/api${path}`, {
       headers: { ...t.auth('viewer'), ...headers },
     });
+
+  describe('PATCH /api/turbines/:id', () => {
+    const patch = (
+      id: string,
+      body: unknown,
+      headers: Record<string, string> = t.auth('owner'),
+    ) =>
+      fetch(`${t.url}/api/turbines/${id}`, {
+        method: 'PATCH',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    const stored = async (turbineId: string) =>
+      (await t.prisma.turbine.findUniqueOrThrow({ where: { turbineId } }))
+        .commissioned;
+
+    /**
+     * The fleet.changed events on `sse` until now: a marker published through the same stream
+     * arrives after anything published before it, so "none" needs no timeout.
+     */
+    const fleetEventsUntilNow = async (
+      sse: Awaited<ReturnType<typeof openSse>>,
+    ) => {
+      const marker = await publishReading(t);
+      const seen: unknown[] = [];
+      for (;;) {
+        const message = await sse.nextEvent();
+        if (message.event === 'fleet.changed') {
+          seen.push(JSON.parse(message.data));
+        } else if (JSON.parse(message.data).id === marker.id) {
+          return seen;
+        }
+      }
+    };
+
+    afterEach(async () => {
+      await t.prisma.turbine.updateMany({ data: { commissioned: false } });
+    });
+
+    it.each(['owner', 'admin'] as const)(
+      '%s: 200 with the updated turbine, and the value persists',
+      async (role) => {
+        for (const commissioned of [true, false]) {
+          const res = await patch('TURB001', { commissioned }, t.auth(role));
+
+          expect(res.status).toBe(200);
+          expect(await res.json()).toEqual({
+            id: 'TURB001',
+            farmId: 'FARM01',
+            latitude: 41.263,
+            longitude: -96.518,
+            commissioned,
+          });
+          expect(await stored('TURB001')).toBe(commissioned);
+        }
+      },
+    );
+
+    it('shows the new value on GET /api/farms and leaves the other turbine alone', async () => {
+      await patch('TURB002', { commissioned: true });
+
+      const farms = await (await get('/farms')).json();
+      const turbines = farms.flatMap(
+        (f: { turbines: { id: string; commissioned: boolean }[] }) =>
+          f.turbines,
+      );
+      expect(
+        turbines.map((x: { id: string; commissioned: boolean }) => [
+          x.id,
+          x.commissioned,
+        ]),
+      ).toEqual([
+        ['TURB001', false],
+        ['TURB002', true],
+      ]);
+    });
+
+    it('viewer: 404 with the body of an unknown route, before validation, and nothing changes', async () => {
+      for (const body of [{ commissioned: true }, {}]) {
+        const res = await patch('TURB001', body, t.auth('viewer'));
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({
+          statusCode: 404,
+          error: 'Not Found',
+          message: 'Cannot PATCH /api/turbines/TURB001',
+        });
+      }
+      expect(await stored('TURB001')).toBe(false);
+    });
+
+    it('no token: 401 with WWW-Authenticate', async () => {
+      const res = await patch('TURB001', { commissioned: true }, {});
+      expect(res.status).toBe(401);
+      expect(res.headers.get('www-authenticate')).toBe('Bearer');
+      expect(await stored('TURB001')).toBe(false);
+    });
+
+    it('unknown turbine: 404 and no event', async () => {
+      const sse = await openSse(eventsUrl(t));
+      try {
+        const res = await patch('TURB404', { commissioned: true });
+        expect(res.status).toBe(404);
+        expect(await res.json()).toMatchObject({
+          statusCode: 404,
+          message: 'Turbine TURB404 not found',
+        });
+        expect(await fleetEventsUntilNow(sse)).toEqual([]);
+      } finally {
+        sse.close();
+      }
+    });
+
+    it.each([
+      ['a missing value', {}, 'commissioned must be a boolean'],
+      ['a string', { commissioned: 'true' }, 'commissioned must be a boolean'],
+      ['a number', { commissioned: 1 }, 'commissioned must be a boolean'],
+      ['null', { commissioned: null }, 'commissioned must be a boolean'],
+      [
+        'an extra property',
+        { commissioned: true, farmId: 'FARM02' },
+        'property farmId should not exist',
+      ],
+    ])('rejects %s with 400', async (_case, body, message) => {
+      const res = await patch('TURB001', body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).message).toEqual([message]);
+      expect(await stored('TURB001')).toBe(false);
+    });
+
+    it('rejects a JSON array with 400', async () => {
+      const res = await patch('TURB001', [{ commissioned: true }]);
+      expect(res.status).toBe(400);
+      expect(await stored('TURB001')).toBe(false);
+    });
+
+    it('rejects a request without a body with 400', async () => {
+      const res = await fetch(`${t.url}/api/turbines/TURB001`, {
+        method: 'PATCH',
+        headers: t.auth('owner'),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('publishes fleet.changed once, after the commit, and not for the same value again', async () => {
+      const sse = await openSse(eventsUrl(t));
+      try {
+        expect((await patch('TURB002', { commissioned: true })).status).toBe(
+          200,
+        );
+        const event = await sse.nextEvent('fleet.changed');
+        expect(JSON.parse(event.data)).toEqual({ turbineId: 'TURB002' });
+        // Committed by the time the event arrives.
+        expect(await stored('TURB002')).toBe(true);
+        expect(await fleetEventsUntilNow(sse)).toEqual([]);
+
+        // Setting the same value: an idempotent 200 without an event.
+        const again = await patch('TURB002', { commissioned: true });
+        expect(again.status).toBe(200);
+        expect(await again.json()).toMatchObject({
+          id: 'TURB002',
+          commissioned: true,
+        });
+        expect(await fleetEventsUntilNow(sse)).toEqual([]);
+
+        // A real change back publishes again.
+        await patch('TURB002', { commissioned: false });
+        expect(await fleetEventsUntilNow(sse)).toEqual([
+          { turbineId: 'TURB002' },
+        ]);
+      } finally {
+        sse.close();
+      }
+    });
+
+    /**
+     * Deterministic: this test holds the row lock until both requests wait for it in their UPDATE,
+     * so both have read the old value by then. A read followed by a write would change the row
+     * twice and publish twice; the conditional UPDATE re-checks its WHERE after the wait.
+     */
+    it('publishes once when concurrent requests set the same value', async () => {
+      const sse = await openSse(eventsUrl(t));
+      try {
+        const requests = await t.prisma.$transaction(
+          async (tx) => {
+            await tx.$queryRaw`SELECT 1 FROM turbines WHERE turbine_id = 'TURB002' FOR UPDATE`;
+            const pending = [
+              patch('TURB002', { commissioned: true }),
+              patch('TURB002', { commissioned: true }),
+            ];
+            await expect
+              .poll(
+                async () => {
+                  const [{ waiting }] = await t.prisma.$queryRaw<
+                    { waiting: number }[]
+                  >`SELECT count(*)::int AS waiting FROM pg_stat_activity
+                    WHERE wait_event_type = 'Lock' AND query ILIKE 'UPDATE%turbines%'`;
+                  return waiting;
+                },
+                { timeout: 10_000, interval: 25 },
+              )
+              .toBe(2);
+            return pending;
+          },
+          { timeout: 15_000 },
+        );
+
+        const responses = await Promise.all(requests);
+        expect(responses.map((r) => r.status)).toEqual([200, 200]);
+        for (const res of responses) {
+          expect(await res.json()).toMatchObject({ commissioned: true });
+        }
+        expect(await fleetEventsUntilNow(sse)).toEqual([
+          { turbineId: 'TURB002' },
+        ]);
+      } finally {
+        sse.close();
+      }
+    });
+  });
 
   describe('GET /api/farms', () => {
     it('returns every farm with its turbines and their latest reading', async () => {
@@ -127,6 +358,483 @@ describe('Fleet API (e2e, CSV seed data)', () => {
       const turbine = farms.find((f: { id: string }) => f.id === 'FARM02')
         .turbines[0];
       expect(turbine.latest.timestamp).toBe('2026-01-02T23:55:00.000Z');
+    });
+  });
+
+  describe('weather: GET /api/farms/:farmId/weather and /api/turbines/:id/weather', () => {
+    const DAYS = 'from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z';
+    const HALF_HOUR_MS = 30 * 60 * 1000;
+    const bucket = (at: string | number, samples = 2): WeatherBucketRow => ({
+      time: new Date(at),
+      samples,
+      windSpeed10mMs: 5,
+      windSpeed80mMs: 10,
+      windDirection10mDeg: 180,
+      windDirection80mDeg: 180,
+      windGusts10mMs: 12,
+      temperature2mC: 2,
+      relativeHumidity2mPct: 80,
+      surfacePressureHpa: 990,
+      precipitationMm: 0.5,
+      cloudCoverPct: null,
+    });
+    /** Every 30-minute bucket in [from, to). */
+    const buckets = (from: string, to: string) =>
+      Array.from(
+        { length: (Date.parse(to) - Date.parse(from)) / HALF_HOUR_MS },
+        (_, i) => bucket(Date.parse(from) + i * HALF_HOUR_MS),
+      );
+
+    beforeAll(async () => {
+      await t.prisma.$executeRaw`TRUNCATE TABLE farm_weather`;
+      await upsertFarmWeather(t.prisma, 'FARM01', [
+        bucket('2026-01-01T00:00:00Z', 1),
+        bucket('2026-01-01T00:30:00Z'),
+        bucket('2026-01-02T00:00:00Z'),
+        bucket('2026-01-03T00:00:00Z'), // outside [from, to)
+        // America/Chicago falls back on 2026-11-01 (a 25-hour local day).
+        ...buckets('2026-10-31T00:00:00Z', '2026-11-03T00:00:00Z'),
+      ]);
+    });
+
+    it('returns 30-minute points by default (viewer)', async () => {
+      const res = await get(`/farms/FARM01/weather?${DAYS}`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toMatchObject({
+        farmId: 'FARM01',
+        interval: '30min',
+        timeZone: 'UTC',
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-01-03T00:00:00.000Z',
+      });
+      expect(body).not.toHaveProperty('turbineId');
+      expect(body.points.map((p: { time: string }) => p.time)).toEqual([
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:30:00.000Z',
+        '2026-01-02T00:00:00.000Z',
+      ]);
+      expect(body.points[0]).toEqual({
+        time: '2026-01-01T00:00:00.000Z',
+        samples: 1,
+        windSpeed10mMs: 5,
+        windSpeed80mMs: 10,
+        windDirection10mDeg: 180,
+        windDirection80mDeg: 180,
+        windGusts10mMs: 12,
+        temperature2mC: 2,
+        relativeHumidity2mPct: 80,
+        surfacePressureHpa: 990,
+        precipitationMm: 0.5,
+        cloudCoverPct: null,
+      });
+    });
+
+    it('returns UTC days with interval=daily', async () => {
+      const res = await get(`/farms/FARM01/weather?${DAYS}&interval=daily`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toMatchObject({ interval: 'daily', timeZone: 'UTC' });
+      expect(body.points).toEqual([
+        {
+          date: '2026-01-01',
+          samples: 2,
+          windSpeed10mMeanMs: 5,
+          windSpeed10mMaxMs: 5,
+          windSpeed80mMeanMs: 10,
+          windSpeed80mMaxMs: 10,
+          windDirection80mDeg: 180,
+          windGusts10mMaxMs: 12,
+          temperature2mMinC: 2,
+          temperature2mMaxC: 2,
+          temperature2mMeanC: 2,
+          relativeHumidity2mMeanPct: 80,
+          surfacePressureMeanHpa: 990,
+          precipitationSumMm: 1,
+          cloudCoverMeanPct: null,
+        },
+        expect.objectContaining({ date: '2026-01-02', samples: 1 }),
+      ]);
+    });
+
+    describe('GET /api/turbines/:id/weather', () => {
+      it("returns its farm's 30-minute points with the turbine id", async () => {
+        const res = await get(`/turbines/TURB001/weather?${DAYS}`);
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(Object.keys(body)).toEqual([
+          'farmId',
+          'turbineId',
+          'from',
+          'to',
+          'interval',
+          'timeZone',
+          'points',
+        ]);
+        expect(body).toMatchObject({
+          farmId: 'FARM01',
+          turbineId: 'TURB001',
+          interval: '30min',
+          timeZone: 'UTC',
+        });
+        expect(body.points).toHaveLength(3);
+      });
+
+      it('returns daily points', async () => {
+        const res = await get(
+          `/turbines/TURB001/weather?${DAYS}&interval=daily`,
+        );
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body).toMatchObject({ turbineId: 'TURB001', interval: 'daily' });
+        expect(
+          body.points.map((p: { date: string; samples: number }) => [
+            p.date,
+            p.samples,
+          ]),
+        ).toEqual([
+          ['2026-01-01', 2],
+          ['2026-01-02', 1],
+        ]);
+      });
+
+      it('returns no points for a turbine whose farm has no weather', async () => {
+        const body = await (
+          await get(`/turbines/TURB002/weather?${DAYS}`)
+        ).json();
+        expect(body).toMatchObject({ farmId: 'FARM02', points: [] });
+      });
+
+      it('returns 404 for an unknown turbine', async () => {
+        const res = await get(`/turbines/TURB999/weather?${DAYS}`);
+        expect(res.status).toBe(404);
+        expect(await res.json()).toMatchObject({
+          message: 'Turbine TURB999 not found',
+        });
+      });
+
+      it('returns 401 without a token', async () => {
+        const res = await fetch(
+          `${t.url}/api/turbines/TURB001/weather?${DAYS}`,
+        );
+        expect(res.status).toBe(401);
+      });
+    });
+
+    describe('timeZone', () => {
+      const days = async (path: string) => {
+        const res = await get(path);
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        return {
+          timeZone: body.timeZone,
+          days: body.points.map((p: { date: string; samples: number }) => [
+            p.date,
+            p.samples,
+          ]),
+        };
+      };
+      // Local midnight 2026-10-31 (CDT, −5) to local midnight 2026-11-02 (CST, −6).
+      const LOCAL = 'from=2026-10-31T05:00:00Z&to=2026-11-02T06:00:00Z';
+
+      it('buckets daily points by local day, 50 buckets on the fall-back day', async () => {
+        expect(
+          await days(
+            `/turbines/TURB001/weather?${LOCAL}&interval=daily&timeZone=America/Chicago`,
+          ),
+        ).toEqual({
+          timeZone: 'America/Chicago',
+          days: [
+            ['2026-10-31', 48],
+            ['2026-11-01', 50],
+          ],
+        });
+      });
+
+      it('gives UTC days for the same range without it', async () => {
+        expect(
+          await days(`/farms/FARM01/weather?${LOCAL}&interval=daily`),
+        ).toEqual({
+          timeZone: 'UTC',
+          days: [
+            ['2026-10-31', 38],
+            ['2026-11-01', 48],
+            ['2026-11-02', 12],
+          ],
+        });
+      });
+
+      it('leaves 30-minute times as UTC instants and echoes the zone', async () => {
+        const body = await (
+          await get(
+            '/farms/FARM01/weather?from=2026-11-01T06:00:00Z&to=2026-11-01T07:00:00Z&timeZone=America/Chicago',
+          )
+        ).json();
+        expect(body.timeZone).toBe('America/Chicago');
+        expect(body.points.map((p: { time: string }) => p.time)).toEqual([
+          '2026-11-01T06:00:00.000Z',
+          '2026-11-01T06:30:00.000Z',
+        ]);
+      });
+
+      it.each([
+        ['an unknown zone', 'Mars/Olympus'],
+        ['a POSIX spec', 'UTC%2B6'],
+        ['an empty zone', ''],
+        ['an injection attempt', "UTC'%3B%20DROP%20TABLE%20farms%3B--"],
+      ])('rejects %s with 400 on both endpoints', async (_case, zone) => {
+        for (const path of ['/farms/FARM01', '/turbines/TURB001']) {
+          const res = await get(
+            `${path}/weather?${DAYS}&interval=daily&timeZone=${zone}`,
+          );
+          expect(res.status).toBe(400);
+          expect((await res.json()).message).toBe(
+            'timeZone must be an IANA time zone name, e.g. "America/Chicago" (default "UTC")',
+          );
+        }
+      });
+    });
+
+    it.each([
+      ['the removed hourly interval', `${DAYS}&interval=hourly`],
+      ['an unknown interval', `${DAYS}&interval=weekly`],
+      ['a missing from', 'to=2026-01-03T00:00:00Z'],
+      [
+        'a zone-less timestamp',
+        'from=2026-01-01T00:00:00&to=2026-01-03T00:00:00Z',
+      ],
+      ['a reversed range', 'from=2026-01-03T00:00:00Z&to=2026-01-01T00:00:00Z'],
+      [
+        'a range over 31 days',
+        'from=2026-01-01T00:00:00Z&to=2026-03-01T00:00:00Z',
+      ],
+      ['an unknown parameter', `${DAYS}&limit=5`],
+      ['a repeated timeZone', `${DAYS}&timeZone=UTC&timeZone=UTC`],
+    ])('rejects %s with 400 (farm and turbine)', async (_case, query) => {
+      for (const path of ['/farms/FARM01', '/turbines/TURB001']) {
+        const res = await get(`${path}/weather?${query}`);
+        expect(res.status).toBe(400);
+      }
+    });
+
+    it('returns 404 for an unknown farm', async () => {
+      const res = await get(`/farms/FARM99/weather?${DAYS}`);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({
+        message: 'Farm FARM99 not found',
+      });
+    });
+
+    it('returns 401 without a token', async () => {
+      const res = await fetch(`${t.url}/api/farms/FARM01/weather?${DAYS}`);
+      expect(res.status).toBe(401);
+    });
+  });
+
+  describe('GET /api/farms/:farmId/telemetry/daily', () => {
+    const NOW = new Date('2026-01-03T00:00:00Z');
+    const DAYS = 'from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z';
+    const path = `/farms/FARM01/telemetry/daily?${DAYS}`;
+    // fetch() adds `Cache-Control: no-cache` to a request with If-None-Match (Fetch spec, cache
+    // mode no-store), and Express rightly answers that with a full 200; a browser revalidating
+    // its own cached copy (or curl) doesn't, so send what it would.
+    const revalidate = (etag: string) => ({
+      'If-None-Match': etag,
+      'Cache-Control': 'max-age=0',
+    });
+
+    beforeAll(async () => {
+      await t.prisma
+        .$executeRaw`TRUNCATE TABLE farm_telemetry_rollups, farm_rollup_state, farm_rollup_dirty`;
+      await runFarmRollup(t.prisma, { mode: { kind: 'full' }, now: NOW });
+    });
+
+    it('returns daily candles of the farm series from the rollups (viewer)', async () => {
+      const res = await get(path);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(Object.keys(body)).toEqual([
+        'farmId',
+        'from',
+        'to',
+        'timeZone',
+        'turbineCount',
+        'computedAt',
+        'days',
+      ]);
+      expect(body).toMatchObject({
+        farmId: 'FARM01',
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-01-03T00:00:00.000Z',
+        timeZone: 'UTC',
+        turbineCount: 1,
+      });
+      expect(Date.parse(body.computedAt)).not.toBeNaN();
+      expect(body.days.map((d: { date: string }) => d.date)).toEqual([
+        '2026-01-01',
+        '2026-01-02',
+      ]);
+
+      // FARM01 has one turbine (TURB001), so each day is that turbine's own OHLC: check it
+      // against the raw readings, computed independently of the rollups.
+      const expected = await t.prisma.$queryRaw<
+        {
+          day: string;
+          n: number;
+          open: number;
+          close: number;
+          high: number;
+          low: number;
+        }[]
+      >`
+        SELECT to_char(timestamp AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+               count(*)::int AS n,
+               (array_agg(power_output_kw ORDER BY timestamp))[1] AS open,
+               (array_agg(power_output_kw ORDER BY timestamp DESC))[1] AS close,
+               max(power_output_kw) AS high, min(power_output_kw) AS low
+        FROM telemetry WHERE farm_id = 'FARM01' GROUP BY 1 ORDER BY 1`;
+      expect(body.days).toEqual(
+        expected.map((e) => ({
+          date: e.day,
+          turbines: 1,
+          readings: e.n,
+          powerOutputKw: {
+            open: Math.round(e.open * 100) / 100,
+            close: Math.round(e.close * 100) / 100,
+            high: Math.round(e.high * 100) / 100,
+            low: Math.round(e.low * 100) / 100,
+          },
+          windSpeedMs: expect.any(Object),
+          rotorRpm: expect.any(Object),
+          bladePitchDeg: expect.any(Object),
+          gearboxTempC: expect.any(Object),
+        })),
+      );
+      // The TURB001 stop (0 kW in 15.8 m/s wind on 2026-01-01) is the day's low.
+      expect(body.days[0].powerOutputKw.low).toBe(0);
+    });
+
+    it('groups local days in timeZone', async () => {
+      const res = await get(
+        '/farms/FARM01/telemetry/daily?from=2026-01-01T06:00:00Z&to=2026-01-03T06:00:00Z&timeZone=America/Chicago',
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.timeZone).toBe('America/Chicago');
+      // 2026-01-01 00:00Z..06:00Z is still 2025-12-31 in Chicago, so it falls outside the range.
+      expect(body.days.map((d: { date: string }) => d.date)).toEqual([
+        '2026-01-01',
+        '2026-01-02',
+      ]);
+      expect(body.days[1].readings).toBeLessThan(288); // ends at 2026-01-02T23:55Z = 17:55 CST
+    });
+
+    it('sends a weak ETag and Cache-Control: private, no-cache, and 304 for If-None-Match', async () => {
+      const first = await get(path);
+      const etag = first.headers.get('etag');
+      expect(etag).toMatch(/^W\/"[A-Za-z0-9_-]{43}"$/);
+      expect(first.headers.get('cache-control')).toBe('private, no-cache');
+      expect((await get(path)).headers.get('etag')).toBe(etag); // stable
+
+      const notModified = await get(path, revalidate(etag!));
+      expect(notModified.status).toBe(304);
+      expect(await notModified.text()).toBe('');
+      expect(notModified.headers.get('etag')).toBe(etag);
+      expect(notModified.headers.get('cache-control')).toBe(
+        'private, no-cache',
+      );
+      // A reload (what fetch sends by default) gets the full body.
+      expect((await get(path, { 'If-None-Match': etag! })).status).toBe(200);
+
+      // Another range or zone is another representation.
+      const other = await get(
+        `/farms/FARM01/telemetry/daily?${DAYS}&timeZone=Asia/Kolkata`,
+        revalidate(etag!),
+      );
+      expect(other.status).toBe(200);
+      expect(other.headers.get('etag')).not.toBe(etag);
+    });
+
+    it('changes the ETag when a rollup run changes the data', async () => {
+      const before = (await get(path)).headers.get('etag')!;
+      const reading = await t.prisma.telemetry.create({
+        data: {
+          turbineId: 'TURB001',
+          farmId: 'FARM01',
+          timestamp: new Date('2026-01-01T00:02:30Z'), // a late reading
+          powerOutputKw: 9999,
+          windSpeedMs: 12,
+          rotorRpm: 15,
+          bladePitchDeg: 2,
+          gearboxTempC: 70,
+        },
+      });
+      try {
+        await runFarmRollup(t.prisma, { now: NOW });
+        const res = await get(path, revalidate(before));
+        expect(res.status).toBe(200);
+        expect(res.headers.get('etag')).not.toBe(before);
+        const body = await res.json();
+        expect(body.days[0].powerOutputKw.high).toBe(9999);
+      } finally {
+        await t.prisma.telemetry.delete({ where: { id: reading.id } });
+        await runFarmRollup(t.prisma, { mode: { kind: 'full' }, now: NOW });
+      }
+    });
+
+    it('returns no days and computedAt null for a farm without readings', async () => {
+      const res = await get(`/farms/FARM03/telemetry/daily?${DAYS}`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        farmId: 'FARM03',
+        turbineCount: 0,
+        computedAt: null,
+        days: [],
+      });
+    });
+
+    it('answers 404 for an unknown farm, without cache headers', async () => {
+      const res = await get(`/farms/FARM99/telemetry/daily?${DAYS}`);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({
+        message: 'Farm FARM99 not found',
+      });
+      expect(res.headers.get('cache-control')).not.toBe('private, no-cache');
+    });
+
+    it.each([
+      ['a missing to', 'from=2026-01-01T00:00:00Z', /to must be/],
+      [
+        'a reversed range',
+        'from=2026-01-03T00:00:00Z&to=2026-01-01T00:00:00Z',
+        /to must be after from/,
+      ],
+      [
+        'more than 183 days',
+        'from=2026-01-01T00:00:00Z&to=2026-07-04T00:00:00Z',
+        /at most 183 days/,
+      ],
+      ['an unknown zone', `${DAYS}&timeZone=Mars/Olympus`, /IANA time zone/],
+      ['a POSIX zone', `${DAYS}&timeZone=UTC%2B6`, /IANA time zone/],
+      [
+        'a zone-less timestamp',
+        'from=2026-01-01T00:00:00&to=2026-01-02T00:00:00Z',
+        /from/,
+      ],
+      [
+        'an unknown parameter',
+        `${DAYS}&limit=5`,
+        /property limit should not exist/,
+      ],
+    ])('answers 400 for %s', async (_, qs, message) => {
+      const res = await get(`/farms/FARM01/telemetry/daily?${qs}`);
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(await res.json())).toMatch(message);
+    });
+
+    it('answers 401 without a token', async () => {
+      const res = await fetch(`${t.url}/api${path}`);
+      expect(res.status).toBe(401);
     });
   });
 

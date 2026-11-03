@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { createTestApp } from './helpers.js';
-import type { EventStore, PrismaService } from '@nextera/shared';
+import {
+  HELD_RETENTION_MS,
+  MAX_PENDING_UNALLOCATED,
+  type EventStore,
+  type PrismaService,
+} from '@nextera/shared';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 
 /** A reading in telemetry.csv format, after the seed dataset's time range. */
@@ -51,7 +56,7 @@ describe('Ingestion worker (e2e, real Postgres + Redis)', () => {
   });
 
   beforeEach(async () => {
-    await prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry`;
+    await prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, held_telemetry, unallocated_turbines`;
     lastEventId = (await events.publish('test.marker', null)).id;
   });
 
@@ -136,22 +141,198 @@ describe('Ingestion worker (e2e, real Postgres + Redis)', () => {
     );
   });
 
-  it('rejects an unknown turbine with 400 (dead-lettered for replay once registered)', async () => {
-    const res = await push(url, reading({ turbine_id: 'TURB999' }));
+  describe('unallocated turbines (unknown turbine, farm mismatch)', () => {
+    const entries = () =>
+      prisma.unallocatedTurbine.findMany({
+        include: { held: { orderBy: { timestamp: 'asc' } } },
+        orderBy: [{ turbineId: 'asc' }, { reportedFarmId: 'asc' }],
+      });
 
-    expect(res.status).toBe(400);
-    expect(await prisma.telemetry.count()).toBe(0);
-    expect(await publishedEvents()).toHaveLength(0);
-  });
+    it('holds a reading of an unknown turbine (204): never in telemetry or telemetry.received', async () => {
+      const res = await push(url, reading({ turbine_id: 'TURB999' }));
 
-  it('rejects a reading whose farm_id is not its turbine’s farm', async () => {
-    const res = await push(url, reading({ farm_id: 'FARM02' }));
+      expect(res.status).toBe(204);
+      expect(await prisma.telemetry.count()).toBe(0);
+      const [entry] = await entries();
+      expect(entry).toMatchObject({
+        turbineId: 'TURB999',
+        reportedFarmId: 'FARM01',
+        kind: 'unknown_turbine',
+        status: 'pending',
+        blockedAt: null,
+      });
+      expect(entry.id).toMatch(UUID_V4);
+      expect(entry.held).toEqual([
+        expect.objectContaining({
+          turbineId: 'TURB999',
+          farmId: 'FARM01',
+          timestamp: new Date('2026-03-01T00:00:00Z'),
+          receivedAt: new Date('2026-03-01T00:01:30Z'),
+          powerOutputKw: 2331.2,
+        }),
+      ]);
+      expect(await publishedEvents()).toEqual([
+        expect.objectContaining({
+          type: 'unallocated-turbine.changed',
+          data: { action: 'held', id: entry.id, turbineId: 'TURB999' },
+        }),
+      ]);
+    });
 
-    expect(res.status).toBe(400);
-    expect((await res.json()).message).toBe(
-      'Turbine TURB001 belongs to FARM01, not FARM02',
-    );
-    expect(await prisma.telemetry.count()).toBe(0);
+    it('holds a reading whose farm_id is not its turbine’s farm as a farm mismatch', async () => {
+      const res = await push(url, reading({ farm_id: 'FARM02' }));
+
+      expect(res.status).toBe(204);
+      expect(await prisma.telemetry.count()).toBe(0);
+      expect(await entries()).toEqual([
+        expect.objectContaining({
+          turbineId: 'TURB001',
+          reportedFarmId: 'FARM02',
+          kind: 'farm_mismatch',
+          held: [expect.objectContaining({ farmId: 'FARM02' })],
+        }),
+      ]);
+    });
+
+    it('holds idempotently: redeliveries and concurrent deliveries keep one entry and one reading', async () => {
+      const unknown = reading({ turbine_id: 'TURB999' });
+      const responses = await Promise.all([
+        push(url, unknown, 'same-message'),
+        ...Array.from({ length: 5 }, () => push(url, unknown)),
+      ]);
+      expect((await push(url, unknown, 'same-message')).status).toBe(204);
+
+      expect(responses.every((r) => r.status === 204)).toBe(true);
+      const all = await entries();
+      expect(all).toHaveLength(1);
+      expect(all[0].held).toHaveLength(1);
+      expect(await publishedEvents()).toHaveLength(1); // only the creation
+    });
+
+    it('keeps an entry’s held readings to the 7 days before its newest', async () => {
+      const newest = new Date('2026-03-09T00:00:00Z');
+      const old = new Date(newest.getTime() - HELD_RETENTION_MS - 5 * 60_000);
+      const edge = new Date(newest.getTime() - HELD_RETENTION_MS);
+      for (const at of [old, edge, newest]) {
+        expect(
+          (
+            await push(
+              url,
+              reading({ turbine_id: 'TURB999', timestamp: at.toISOString() }),
+            )
+          ).status,
+        ).toBe(204);
+      }
+
+      const [entry] = await entries();
+      expect(entry.held.map((h) => h.timestamp)).toEqual([edge, newest]);
+    });
+
+    it('drops readings of a blocked pair (204) and keeps holding other farms’ readings', async () => {
+      await prisma.unallocatedTurbine.create({
+        data: {
+          turbineId: 'TURB999',
+          reportedFarmId: 'FARM01',
+          kind: 'unknown_turbine',
+          status: 'blocked',
+          blockedAt: new Date(),
+          firstSeenAt: new Date(),
+          lastSeenAt: new Date(),
+        },
+      });
+
+      expect((await push(url, reading({ turbine_id: 'TURB999' }))).status).toBe(
+        204,
+      );
+      expect(
+        (await push(url, reading({ turbine_id: 'TURB999', farm_id: 'FARM03' })))
+          .status,
+      ).toBe(204);
+      // A block of a known turbine's wrong farm leaves its correct readings flowing.
+      await prisma.unallocatedTurbine.create({
+        data: {
+          turbineId: 'TURB001',
+          reportedFarmId: 'FARM02',
+          kind: 'farm_mismatch',
+          status: 'blocked',
+          firstSeenAt: new Date(),
+          lastSeenAt: new Date(),
+        },
+      });
+      expect((await push(url, reading({ farm_id: 'FARM02' }))).status).toBe(
+        204,
+      );
+      expect((await push(url, reading())).status).toBe(204);
+
+      expect(
+        (await entries()).map((e) => [
+          e.turbineId,
+          e.reportedFarmId,
+          e.status,
+          e.held.length,
+        ]),
+      ).toEqual([
+        ['TURB001', 'FARM02', 'blocked', 0],
+        ['TURB999', 'FARM01', 'blocked', 0],
+        ['TURB999', 'FARM03', 'pending', 1],
+      ]);
+      expect(await prisma.telemetry.count()).toBe(1);
+    });
+
+    it('rejects a new pair with 400 at the pending cap, but keeps holding existing pairs', async () => {
+      await prisma.unallocatedTurbine.createMany({
+        data: Array.from({ length: MAX_PENDING_UNALLOCATED }, (_, i) => ({
+          turbineId: `JUNK${i}`,
+          reportedFarmId: 'FARM01',
+          kind: 'unknown_turbine' as const,
+          firstSeenAt: new Date(),
+          lastSeenAt: new Date(),
+        })),
+      });
+
+      const res = await push(url, reading({ turbine_id: 'TURB999' }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).message).toContain(
+        'Too many pending unallocated turbines',
+      );
+      expect(await prisma.unallocatedTurbine.count()).toBe(
+        MAX_PENDING_UNALLOCATED,
+      );
+
+      expect((await push(url, reading({ turbine_id: 'JUNK7' }))).status).toBe(
+        204,
+      );
+      expect(await prisma.heldTelemetry.count()).toBe(1);
+    });
+
+    it('stores readings in telemetry once the turbine is known again', async () => {
+      await push(url, reading({ turbine_id: 'TURB999' }));
+      await prisma.turbine.create({
+        data: {
+          turbineId: 'TURB999',
+          farmId: 'FARM01',
+          latitude: 41,
+          longitude: -96,
+        },
+      });
+      try {
+        expect(
+          (
+            await push(
+              url,
+              reading({
+                turbine_id: 'TURB999',
+                timestamp: '2026-03-01T00:05:00Z',
+              }),
+            )
+          ).status,
+        ).toBe(204);
+        expect(await prisma.telemetry.count()).toBe(1);
+      } finally {
+        await prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry`;
+        await prisma.turbine.delete({ where: { turbineId: 'TURB999' } });
+      }
+    });
   });
 
   it('enforces turbine/farm consistency in the database too (composite foreign key)', async () => {

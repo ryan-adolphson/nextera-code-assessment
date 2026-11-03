@@ -3,7 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { API_BASE_URL } from '../core/api-base-url';
 import { AuthStore } from '../core/auth/auth.store';
-import { FarmOverview, Telemetry, TelemetryStats } from './fleet.model';
+import { FarmOverview, Telemetry, TelemetryStats, TurbineResponse } from './fleet.model';
 
 /** A telemetry query: [from, to) on measurement time, the newest `limit` readings. */
 export interface TelemetryWindow {
@@ -46,6 +46,13 @@ export class FleetApi {
   telemetryStats(turbineId: string, window: TelemetryWindow): Observable<TelemetryStats> {
     return this.http.get<TelemetryStats>(`${this.baseUrl}/turbines/${turbineId}/telemetry/stats`, {
       params: windowParams(window),
+    });
+  }
+
+  /** Marks a turbine commissioned or not (owner and up; the API answers 404 for lower roles). */
+  setCommissioned(turbineId: string, commissioned: boolean): Observable<TurbineResponse> {
+    return this.http.patch<TurbineResponse>(`${this.baseUrl}/turbines/${turbineId}`, {
+      commissioned,
     });
   }
 }

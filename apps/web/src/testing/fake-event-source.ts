@@ -32,6 +32,25 @@ export class FakeEventSource {
     this.listeners.get(type)?.forEach((listener) => listener(event));
   }
 
+  /**
+   * A named event whose `data` is sent as is (not JSON-encoded), e.g. a malformed payload. Like a
+   * browser dispatching an event, a listener that throws doesn't stop the others or the
+   * connection: the browser reports the exception as uncaught (window `error`). Returns what the
+   * listeners threw, so a test can assert whether anything would reach that global handler.
+   */
+  emitRaw(type: string, data: string, lastEventId = '1-0'): unknown[] {
+    const event = new MessageEvent(type, { data, lastEventId });
+    const thrown: unknown[] = [];
+    for (const listener of this.listeners.get(type) ?? []) {
+      try {
+        listener(event);
+      } catch (error) {
+        thrown.push(error);
+      }
+    }
+    return thrown;
+  }
+
   /** Network drop: the browser will retry by itself (same EventSource, sends Last-Event-ID). */
   drop(): void {
     this.readyState = FakeEventSource.CONNECTING;

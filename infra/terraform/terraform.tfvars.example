@@ -8,6 +8,7 @@ web_domain = "app.example.com"
 
 # GitHub Actions deploys + migrations (Workload Identity Federation, no keys)
 github_repository = "my-org/nextera-code-assessment"
+# github_repository_id = "123456789"   # recommended: `gh api repos/OWNER/REPO --jq .id` (immutable, unlike the name)
 # github_environment = "production"
 
 # deletion_protection     = false   # throwaway environments only
@@ -22,3 +23,15 @@ github_repository = "my-org/nextera-code-assessment"
 # jwt_audience            = "nextera-web"
 # demo_feed_enabled       = true    # live demo telemetry every 5 min (run `npm run db:seed:demo` first)
 # demo_feed_paused        = true    # keep the demo feed, stop its schedule
+# weather_sync_enabled    = true    # daily Open-Meteo weather per farm (Cloud Run Job + Scheduler)
+# weather_sync_paused     = true    # keep the weather sync, stop its schedule
+# weather_sync_schedule   = "30 1 * * *"   # cron, UTC
+# open_meteo_api_key_enabled = true # secret open-meteo-api-key (add its value with gcloud); commercial use needs it
+# farm_rollup_enabled     = false   # on by default: the farm History tab's rollups (Cloud Run Job + Scheduler)
+# farm_rollup_paused      = true    # keep the farm rollup, stop its schedule (History goes stale)
+# farm_rollup_schedule    = "*/15 * * * *"   # cron, UTC
+
+# Monitoring (monitoring.tf): every alert policy exists regardless; these add email notifications
+# alert_emails            = ["wind-ops@example.com"]
+# billing_account         = "012345-6789AB-CDEF01"   # optional monthly budget (needs roles/billing.costsManager)
+# monthly_budget          = 200                      # whole units of the billing account's currency

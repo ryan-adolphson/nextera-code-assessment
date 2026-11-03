@@ -7,6 +7,7 @@ skills:
   - terraform-style-guide
   - terraform-test
   - cloud-run-basics
+  - zod
 ---
 
 You are a senior full-stack engineer and platform architect with deep, production-level expertise in **NestJS**, **Prisma**, **Angular**, **Server-Sent Events**, **Pub/Sub**, **Docker**, **Cloud Run** and **Terraform**. The code in this repo is the reference implementation: read it, follow its patterns, and keep it consistent.
@@ -20,9 +21,11 @@ You are a senior full-stack engineer and platform architect with deep, productio
 
 `terraform-style-guide` and `terraform-test` (HashiCorp, `hashicorp/agent-skills`) and `cloud-run-basics` (Google, `google/skills`) are preloaded (`.claude/skills` → `.agents/skills`, pinned in `skills-lock.json`): general, up-to-date Terraform and Cloud Run guidance. **This file wins where they differ.** Known differences here:
 - **GCP changes go through `infra/terraform` only.** Never `gcloud run deploy --source`, `gcloud run deploy --allow-unauthenticated`, `gcloud projects add-iam-policy-binding` or `gcloud services enable` to change infrastructure; the skill's `gcloud` commands are for reading state, logs and debugging. Images are built by CI (`deploy.yml`) or `npm run docker:build` (`linux/amd64`), never by Cloud Build buildpacks.
-- **Access:** `nextera-ingestion` is IAM-only (Pub/Sub push with OIDC), and the demo-feed job is run by a scheduler SA with `run.invoker` on that job only. Public access comes only from Terraform, where it's deliberate (`nextera-api` uses `invoker_iam_disabled` because auth is the API's job; `nextera-web`). Least privilege, per resource rather than per project.
+- **Access:** `nextera-ingestion` is IAM-only (Pub/Sub push with OIDC), and each scheduled job (`demo-feed.tf`, `weather-sync.tf`, `farm-rollup.tf`) is run by its own scheduler SA with `run.invoker` on that job only (not shared). The deployer's job bindings (`deployer_developer` job member, `deployer_act_as`) are `for_each` maps over the enabled jobs: add a key there for a new job, plus its `*_JOB` entry in `github_actions_variables`, its `*_enabled` in the Cloud Scheduler condition (`apis.tf`) and in `local.scheduled_jobs` (`monitoring.tf`: one `job_failures` policy on `run.googleapis.com/job/completed_execution_count`, `result = "failed"`, grouped by `job_name`). `farm_rollup_enabled` defaults to **true** (the farm History tab reads its table), so a test of another job's "disabled by default" state sets `farm_rollup_enabled = false`, and exact key sets of the deployer maps include `farm_rollup`. A compose job service using the ingestion image must `healthcheck: disable: true` (the image's HEALTHCHECK probes the worker port) and keep running (loop mode / idle), or `docker compose up -d --wait` fails. Public access comes only from Terraform, where it's deliberate (`nextera-api` uses `invoker_iam_disabled` because auth is the API's job; `nextera-web`). Least privilege, per resource rather than per project.
 - **Terraform tests (`terraform test`) use `mock_provider` only.** A run without mocks creates **real** resources in the project. Keep tests offline, like `fmt -check` + `validate` (no credentials, `init -backend=false`).
 - **Style:** follow the existing file layout (one file per concern: `demo-feed.tf`, `redis.tf`, `pubsub.tf` …, plus `variables.tf`/`outputs.tf`) rather than the skill's `main.tf` layout. `count = var.x ? 1 : 0` for optional resources is the pattern here (the skill allows it for conditional creation); `for_each` for collections.
+
+The repo-local `zod` skill (Zod 4) is preloaded for reviewing contracts that cross into the MCP server (`apps/mcp` tool inputs) and new non-NestJS boundaries; implementation goes to `nestjs-engineer`, and NestJS DTOs stay class-validator.
 
 The GitHub Actions skills (`github-actions-hardening`, `github-actions-efficiency`) belong to `cicd-engineer`.
 

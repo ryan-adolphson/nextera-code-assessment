@@ -4,8 +4,9 @@ import { TurbineTable } from './turbine-table';
 
 /**
  * /turbines: every turbine of every farm with its status and latest reading, live (FleetStore),
- * in the shared `TurbineTable`: sortable by any column (default: turbine id), filterable by text
- * (turbine id, farm id or name), status and commissioning.
+ * in the shared `TurbineTable`: sortable by any column (default: last reading, newest first),
+ * filterable by text (turbine id, farm id or name), status and commissioning, hiding turbines that
+ * have never reported unless asked.
  */
 @Component({
   selector: 'app-turbine-list',

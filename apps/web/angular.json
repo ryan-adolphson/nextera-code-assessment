@@ -98,7 +98,12 @@
           "builder": "@angular/build:unit-test",
           "options": {
             "setupFiles": ["src/testing/test-setup.ts"],
-            "runnerConfig": "vitest-base.config.mts"
+            "runnerConfig": "vitest-base.config.mts",
+            "coverageInclude": ["src/app/**/*.ts"],
+            "coverageExclude": ["src/**/*.spec.ts", "src/app/fleet/testing.ts", "src/testing/**"],
+            "coverageReporters": ["text-summary", "html", "lcov"],
+            // Ratchet: the measured coverage rounded down. Thresholds only go up.
+            "coverageThresholds": { "statements": 98, "branches": 97, "functions": 98, "lines": 99 }
           }
         }
       }

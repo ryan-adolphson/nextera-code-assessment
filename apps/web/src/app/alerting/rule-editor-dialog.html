@@ -1,17 +1,23 @@
 <h2 mat-dialog-title>{{ editing ? 'Edit alert rule' : 'Add alert rule' }}</h2>
 <form [formRoot]="ruleForm">
-  <mat-dialog-content class="grid gap-4">
-    <!-- Material outline fields; the selects stay native (matNativeControl). -->
-    <mat-form-field appearance="outline" subscriptSizing="dynamic">
-      <mat-label>Metric</mat-label>
-      <select matNativeControl data-testid="rule-metric" [formField]="ruleForm.metric">
-        @for (m of metrics; track m.value) {
-          <option [value]="m.value">{{ m.label }} ({{ m.unit }})</option>
-        }
-      </select>
-    </mat-form-field>
+  <mat-dialog-content>
+    <!--
+      The grid is a div inside mat-dialog-content, not on it: Material's unlayered
+      `.mat-mdc-dialog-content { display: block }` beats Tailwind's layered `grid`, which left the
+      fields stacked with no gap (labels on the field above) at their content width.
+      Metric spans both columns, then Condition | Threshold, then Level; one column on phones.
+      `items-start`: a field showing its error grows only itself. The selects stay native.
+    -->
+    <div class="grid grid-cols-1 items-start gap-4 sm:grid-cols-2" data-testid="rule-fields">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic" class="sm:col-span-2">
+        <mat-label>Metric</mat-label>
+        <select matNativeControl data-testid="rule-metric" [formField]="ruleForm.metric">
+          @for (m of metrics; track m.value) {
+            <option [value]="m.value">{{ m.label }} ({{ m.unit }})</option>
+          }
+        </select>
+      </mat-form-field>
 
-    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
         <mat-label>Condition</mat-label>
         <select matNativeControl data-testid="rule-comparison" [formField]="ruleForm.comparison">
@@ -36,26 +42,40 @@
         <span matTextSuffix class="pl-1 text-muted" id="rule-value-unit">{{ unit() }}</span>
         <mat-error data-testid="rule-value-error">{{ valueError() }}</mat-error>
       </mat-form-field>
+
+      <mat-form-field appearance="outline" subscriptSizing="dynamic" class="sm:col-span-2">
+        <mat-label>Level</mat-label>
+        <select matNativeControl data-testid="rule-level-select" [formField]="ruleForm.level">
+          @for (l of levels; track l.value) {
+            <option [value]="l.value">{{ l.label }}</option>
+          }
+        </select>
+      </mat-form-field>
+
+      <!-- A switch (role=switch) named by its label; on for new rules. -->
+      <div class="sm:col-span-2">
+        <mat-slide-toggle
+          data-testid="rule-enabled"
+          aria-describedby="rule-enabled-hint"
+          [formField]="ruleForm.enabled"
+        >
+          Enabled
+        </mat-slide-toggle>
+        <p class="m-0 mt-1 text-sm text-muted" id="rule-enabled-hint">
+          Disabled rules are kept, but new readings aren’t checked against them.
+        </p>
+      </div>
+
+      @if (error(); as error) {
+        <p
+          class="m-0 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger sm:col-span-2"
+          role="alert"
+          data-testid="rule-error"
+        >
+          {{ error }}
+        </p>
+      }
     </div>
-
-    <mat-form-field appearance="outline" subscriptSizing="dynamic">
-      <mat-label>Level</mat-label>
-      <select matNativeControl data-testid="rule-level-select" [formField]="ruleForm.level">
-        @for (l of levels; track l.value) {
-          <option [value]="l.value">{{ l.label }}</option>
-        }
-      </select>
-    </mat-form-field>
-
-    @if (error(); as error) {
-      <p
-        class="m-0 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger"
-        role="alert"
-        data-testid="rule-error"
-      >
-        {{ error }}
-      </p>
-    }
   </mat-dialog-content>
 
   <mat-dialog-actions align="end">

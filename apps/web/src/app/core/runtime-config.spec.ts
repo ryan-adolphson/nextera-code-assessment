@@ -34,8 +34,25 @@ describe('loadApiBaseUrl', () => {
     ['an empty apiBaseUrl', () => jsonResponse({ apiBaseUrl: ' ' }), /no apiBaseUrl/],
     ['a non-string apiBaseUrl', () => jsonResponse({ apiBaseUrl: 42 }), /no apiBaseUrl/],
     ['a JSON null', () => jsonResponse(null), /no apiBaseUrl/],
+    ['a JSON string', () => jsonResponse('"https://api.nextera.energy/api"'), /no apiBaseUrl/],
   ])('fails on %s', async (_, response, message) => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(response());
     await expect(loadApiBaseUrl({ apiBaseUrl: null }, fetchFn)).rejects.toThrow(message);
+  });
+
+  describe('without a fetch function (as src/main.ts calls it)', () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("uses the browser's fetch", async () => {
+      const fetchFn = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(jsonResponse({ apiBaseUrl: 'https://api.nextera.energy/api' }));
+      vi.stubGlobal('fetch', fetchFn);
+
+      await expect(loadApiBaseUrl({ apiBaseUrl: null })).resolves.toBe(
+        'https://api.nextera.energy/api',
+      );
+      expect(fetchFn).toHaveBeenCalledExactlyOnceWith('/config.json', { cache: 'no-store' });
+    });
   });
 });

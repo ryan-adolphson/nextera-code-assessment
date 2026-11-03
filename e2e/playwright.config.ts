@@ -17,6 +17,13 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: process.env.E2E_WEB_URL ?? 'http://localhost:8082',
+    // The app formats times with date-fns Date subclasses (UTCDate in UTC mode, @date-fns/tz's
+    // TZDate in Local mode, Settings). Playwright's page.clock replaces Date with a function whose
+    // constructor returns a plain Date, so subclass instances lose their zone and times render in
+    // the browser's zone. A UTC browser keeps them right under page.clock (and matches CI's
+    // runners). Specs that run in another zone (tests/settings/time-zone.spec.ts, America/Chicago)
+    // fix the clock with support/clock.ts's fixBrowserDate instead, which keeps subclasses intact.
+    timezoneId: 'UTC',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

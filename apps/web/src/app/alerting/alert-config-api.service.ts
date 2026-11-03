@@ -4,7 +4,7 @@ import { Observable } from 'rxjs';
 import { API_BASE_URL } from '../core/api-base-url';
 import { AlertConfig, AlertConfigInput } from './alert-config.model';
 
-/** /api/alert-configs. Known gap: writes are unauthenticated for now, like the rest of the API. */
+/** /api/alert-configs (reads: viewer; writes: owner, enforced by the API). */
 @Injectable({ providedIn: 'root' })
 export class AlertConfigApi {
   private readonly http = inject(HttpClient);
@@ -21,6 +21,11 @@ export class AlertConfigApi {
 
   update(id: string, changes: Partial<AlertConfigInput>): Observable<AlertConfig> {
     return this.http.patch<AlertConfig>(`${this.url}/${encodeURIComponent(id)}`, changes);
+  }
+
+  /** Enables or disables a rule (disabled rules are kept but not evaluated). */
+  setEnabled(id: string, enabled: boolean): Observable<AlertConfig> {
+    return this.update(id, { enabled });
   }
 
   remove(id: string): Observable<void> {

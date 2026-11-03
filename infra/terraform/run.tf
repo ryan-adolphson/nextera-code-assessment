@@ -35,7 +35,6 @@ resource "google_cloud_run_v2_service" "api" {
     service_account                  = google_service_account.api.email
     timeout                          = "3600s" # max request duration: SSE streams are closed after 60 min and EventSource reconnects
     max_instance_request_concurrency = var.api_concurrency
-    session_affinity                 = true
 
     scaling {
       min_instance_count = var.api_min_instances
@@ -133,7 +132,9 @@ resource "google_cloud_run_v2_service" "api" {
         http_get {
           path = "/api/health/live"
         }
-        period_seconds = 30
+        period_seconds    = 30
+        timeout_seconds   = 5 # the default 1 s restarts a busy instance on one slow event-loop tick
+        failure_threshold = 3
       }
     }
   }
@@ -181,7 +182,7 @@ resource "google_cloud_run_v2_service" "ingestion" {
 
   template {
     service_account                  = google_service_account.ingestion.email
-    timeout                          = "60s" # below the subscription's ack deadline
+    timeout                          = "60s" # < the 90 s ack deadline (pubsub.tf); not lower: CSV uploads share it
     max_instance_request_concurrency = var.ingestion_concurrency
 
     scaling {
@@ -321,7 +322,9 @@ resource "google_cloud_run_v2_service" "web" {
         http_get {
           path = "/health/live"
         }
-        period_seconds = 30
+        period_seconds    = 30
+        timeout_seconds   = 5
+        failure_threshold = 3
       }
     }
   }

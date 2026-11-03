@@ -6,13 +6,17 @@ import {
   QueryInputError,
   QueryNotFoundError,
   alertsInRange,
+  checkTimeZone,
+  farmWeather,
   getTurbine,
   listAlertRules,
+  listUnallocated,
   parseRange,
   reportSummary,
   reportTelemetry,
   telemetryStats,
   turbineTelemetry,
+  turbineWeather,
 } from './queries.js';
 
 const RANGE = { from: '2026-01-01T00:00:00Z', to: '2026-01-03T00:00:00Z' };
@@ -392,6 +396,185 @@ describe('read queries', () => {
         metrics: { powerOutputKw: null, gearboxTempC: null },
         flaggedReadings: 0,
       });
+    });
+  });
+
+  describe('listUnallocated', () => {
+    beforeEach(() => {
+      prisma.unallocatedTurbine.findMany.mockResolvedValue([]);
+    });
+
+    it.each([
+      ['no filter: pending', undefined, { status: 'pending' }],
+      ['a status', { status: 'blocked' as const }, { status: 'blocked' }],
+      [
+        'a turbine id',
+        { turbineId: 'TURB003' },
+        { status: 'pending', turbineId: 'TURB003' },
+      ],
+    ])('filters by %s', async (_, filter, where) => {
+      expect(await listUnallocated(prisma, filter)).toEqual([]);
+
+      expect(prisma.unallocatedTurbine.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where }),
+      );
+      // No entries: nothing else is read.
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('checkTimeZone', () => {
+    const ZONE_ERROR = new QueryInputError(
+      'timeZone must be an IANA time zone name, e.g. "America/Chicago" (default "UTC")',
+    );
+
+    it('accepts UTC without asking Postgres', async () => {
+      expect(await checkTimeZone(prisma, 'UTC')).toBe('UTC');
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('asks pg_timezone_names once per zone, with the name bound', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ known: true }]);
+
+      expect(await checkTimeZone(prisma, 'America/Chicago')).toBe(
+        'America/Chicago',
+      );
+      expect(await checkTimeZone(prisma, 'America/Chicago')).toBe(
+        'America/Chicago',
+      );
+
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = prisma.$queryRaw.mock
+        .calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
+      const sql = Prisma.sql(strings, ...values);
+      expect(sql.sql).toContain('FROM pg_timezone_names WHERE name = ?');
+      expect(sql.values).toEqual(['America/Chicago']);
+    });
+
+    it('rejects a name Postgres does not know', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ known: false }]);
+      await expect(checkTimeZone(prisma, 'Mars/Olympus')).rejects.toThrow(
+        ZONE_ERROR,
+      );
+      // Not cached: asked again.
+      await expect(checkTimeZone(prisma, 'Mars/Olympus')).rejects.toThrow(
+        ZONE_ERROR,
+      );
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+      ['a POSIX offset spec', 'UTC+6:00'],
+      ['SQL', "UTC'; DROP TABLE farms; --"],
+      ['an empty name', ''],
+      ['a path', '../etc/passwd'],
+      ['a long name', `A/${'b'.repeat(70)}`],
+    ])('rejects %s before querying', async (_, zone) => {
+      await expect(checkTimeZone(prisma, zone)).rejects.toThrow(ZONE_ERROR);
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('farmWeather / turbineWeather', () => {
+    const DAY = { from: '2026-11-01T00:00:00Z', to: '2026-11-02T00:00:00Z' };
+
+    it('turbineWeather throws QueryNotFoundError for an unknown turbine', async () => {
+      prisma.turbine.findUnique.mockResolvedValue(null);
+
+      await expect(
+        turbineWeather(prisma, 'TURB999', { ...DAY, interval: '30min' }),
+      ).rejects.toThrow(new QueryNotFoundError('Turbine TURB999 not found'));
+      expect(prisma.farmWeather.findMany).not.toHaveBeenCalled();
+    });
+
+    it("turbineWeather reads the turbine's farm, with the turbine id", async () => {
+      prisma.turbine.findUnique.mockResolvedValue({
+        farmId: 'FARM02',
+      } as never);
+      prisma.farmWeather.findMany.mockResolvedValue([]);
+
+      const result = await turbineWeather(prisma, 'TURB002', {
+        ...DAY,
+        interval: '30min',
+      });
+
+      expect(prisma.turbine.findUnique).toHaveBeenCalledWith({
+        where: { turbineId: 'TURB002' },
+        select: { farmId: true },
+      });
+      expect(prisma.farm.findUnique).not.toHaveBeenCalled();
+      expect(prisma.farmWeather.findMany).toHaveBeenCalledWith({
+        where: {
+          farmId: 'FARM02',
+          time: { gte: new Date(DAY.from), lt: new Date(DAY.to) },
+        },
+        orderBy: { time: 'asc' },
+      });
+      expect(Object.keys(result)).toEqual([
+        'farmId',
+        'turbineId',
+        'from',
+        'to',
+        'interval',
+        'timeZone',
+        'points',
+      ]);
+      expect(result).toEqual({
+        farmId: 'FARM02',
+        turbineId: 'TURB002',
+        from: '2026-11-01T00:00:00.000Z',
+        to: '2026-11-02T00:00:00.000Z',
+        interval: '30min',
+        timeZone: 'UTC',
+        points: [],
+      });
+    });
+
+    it('buckets daily points by local day in the bound zone', async () => {
+      prisma.farm.findUnique.mockResolvedValue({ id: 'FARM01' } as never);
+      prisma.$queryRaw
+        .mockResolvedValueOnce([{ known: true }]) // pg_timezone_names
+        .mockResolvedValueOnce([]);
+
+      const result = await farmWeather(prisma, 'FARM01', {
+        ...DAY,
+        interval: 'daily',
+        timeZone: 'Europe/Berlin',
+      });
+
+      expect(result).toMatchObject({
+        interval: 'daily',
+        timeZone: 'Europe/Berlin',
+        points: [],
+      });
+      const [strings, ...values] = prisma.$queryRaw.mock
+        .calls[1] as unknown as [TemplateStringsArray, ...unknown[]];
+      const sql = Prisma.sql(strings, ...values);
+      expect(sql.sql.replace(/\s+/g, ' ')).toContain(
+        "to_char(w.time AT TIME ZONE ?::text, 'YYYY-MM-DD') AS day",
+      );
+      expect(sql.values).toEqual([
+        'Europe/Berlin',
+        'FARM01',
+        new Date(DAY.from),
+        new Date(DAY.to),
+      ]);
+    });
+
+    it('rejects a bad range before checking the zone', async () => {
+      prisma.turbine.findUnique.mockResolvedValue({
+        farmId: 'FARM02',
+      } as never);
+
+      await expect(
+        turbineWeather(prisma, 'TURB002', {
+          from: DAY.to,
+          to: DAY.from,
+          interval: 'daily',
+          timeZone: 'Asia/Tokyo',
+        }),
+      ).rejects.toThrow(new QueryInputError('to must be after from'));
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
 });

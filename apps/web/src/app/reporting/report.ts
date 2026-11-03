@@ -2,7 +2,8 @@ import { alertSeries } from '../charts/alert-series';
 import { ChartMarker } from '../charts/line-chart';
 import { ChartPoint } from '../charts/scales';
 import { Telemetry } from '../fleet/fleet.model';
-import { isoDay, lastUtcDay } from '../core/utc-days';
+import { isoDay, lastDay } from '../core/days';
+import { UTC_ZONE } from '../core/time-zone';
 import { METRICS, Metric } from '../fleet/metrics';
 import { TelemetryReport } from './report-api.service';
 
@@ -115,9 +116,13 @@ function csvField(value: string): string {
   return /[",\r\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
 }
 
-/** "report-TURB002-2026-01-01-2026-01-02.csv": the scope and the chosen days (to is exclusive). */
-export function csvFileName(report: TelemetryReport): string {
-  return `report-${report.scope.id}-${isoDay(report.from)}-${isoDay(lastUtcDay(report.to))}.csv`;
+/**
+ * "report-TURB002-2026-01-01-2026-01-02.csv": the scope and the chosen days (to is exclusive), named
+ * in the zone the days were chosen in (the rows' timestamps stay ISO UTC).
+ */
+export function csvFileName(report: TelemetryReport, zone: string = UTC_ZONE): string {
+  const first = isoDay(report.from, zone);
+  return `report-${report.scope.id}-${first}-${isoDay(lastDay(report.to, zone), zone)}.csv`;
 }
 
 /** Saves `csv` as a file through a temporary download link (no server round trip). */

@@ -80,6 +80,24 @@ describe('FleetApi', () => {
     expect(await result).toEqual(stats);
   });
 
+  it("changes a turbine's commissioned state with a PATCH and returns the updated turbine", async () => {
+    const turbine = {
+      id: 'TURB001',
+      farmId: 'FARM01',
+      latitude: 41.2,
+      longitude: -96.5,
+      commissioned: true,
+    };
+    const result = firstValueFrom(api.setCommissioned('TURB001', true));
+    const req = http.expectOne({
+      method: 'PATCH',
+      url: 'https://api.example.com/api/turbines/TURB001',
+    });
+    expect(req.request.body).toEqual({ commissioned: true });
+    req.flush(turbine);
+    expect(await result).toEqual(turbine);
+  });
+
   it('exposes the SSE endpoint on the same base URL', () => {
     expect(api.eventsUrl).toBe('https://api.example.com/api/events');
   });

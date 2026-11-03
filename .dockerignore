@@ -13,6 +13,8 @@ apps/web
 .env
 .env.*
 !.env.example
+# Credentials file google-github-actions/auth writes into the workspace (deploy.yml).
+gha-creds-*.json
 
 .claude
 infra

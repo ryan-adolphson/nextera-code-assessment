@@ -16,12 +16,14 @@ import {
 } from 'rxjs';
 import { AuthStore } from '../core/auth/auth.store';
 import { NOW } from '../core/clock';
+import { errorMessage, statusOf } from '../core/http-errors';
 import { SseEvent, SseService, SseStatus } from '../core/sse.service';
 import { FleetApi, TelemetryWindow } from './fleet-api.service';
 import {
   CLOCK_TICK_MS,
   DEFAULT_HISTORY_RANGE_MS,
   FarmOverview,
+  LIVE_FUTURE_TOLERANCE_MS,
   MAX_HISTORY_READINGS,
   TurbineOverview,
   READING_INTERVAL_MS,
@@ -30,12 +32,17 @@ import {
   TelemetryStats,
 } from './fleet.model';
 import { ALERT_CONFIG_CHANGED } from '../alerting/alert-config.model';
+import {
+  FLEET_CHANGED,
+  FleetChangedEvent,
+  UNALLOCATED_CHANGED,
+} from '../unallocated/unallocated.model';
+import { Staleness, freshestStaleness, stalenessOf } from './staleness';
 
 const FLEET_LOAD_ERROR = 'Could not load the fleet.';
 
 /** Every SSE event type the shell's one connection listens for. */
-const LIVE_EVENTS = [...TELEMETRY_EVENTS, ALERT_CONFIG_CHANGED];
-import { Staleness, freshestStaleness, stalenessOf } from './staleness';
+const LIVE_EVENTS = [...TELEMETRY_EVENTS, ALERT_CONFIG_CHANGED, UNALLOCATED_CHANGED, FLEET_CHANGED];
 
 /**
  * The live connection: `connecting` (first attempt), `open`, `reconnecting` (the browser's own
@@ -57,6 +64,22 @@ export const RECONNECT_MAX_MS = secondsToMilliseconds(30);
 export function reconnectDelayMs(failures: number, random = Math.random()): number {
   const capped = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** failures);
   return Math.round(capped * (1 - random / 2));
+}
+
+/** How long a turbine counts as just updated: the row's flash (`--animate-flash` in styles.css). */
+export const FLASH_MS = secondsToMilliseconds(2);
+
+/** Why a commissioned change failed, in words (the API's 404 text names no reason). */
+function commissionedErrorMessage(
+  error: unknown,
+  turbineId: string,
+  commissioned: boolean,
+): string {
+  const reason =
+    statusOf(error) === 404
+      ? 'The turbine no longer exists, or your account can no longer change it.'
+      : errorMessage(error);
+  return `Could not mark ${turbineId} as ${commissioned ? 'commissioned' : 'not commissioned'}. ${reason}`;
 }
 
 /** A turbine with its farm's name, its latest reading (by measurement time) and staleness. */
@@ -94,8 +117,30 @@ export class FleetStore {
 
   private readonly farmList = signal<FarmOverview[]>([]);
   private readonly latestByTurbine = signal(new Map<string, Telemetry>());
+  /** The turbine ids the loaded fleet lists: live readings for any other id are ignored. */
+  private readonly listedTurbineIds = computed(
+    () => new Set(this.farmList().flatMap((f) => f.turbines.map((t) => t.id))),
+  );
+  /** Whether a fleet load has succeeded yet (until then, the listed ids are not known). */
+  private fleetLoaded = false;
+  /** Unlisted turbine ids already warned about (one warning per id). */
+  private readonly warnedUnlisted = new Set<string>();
+  /**
+   * Turbines announced by `fleet.changed` (assigned or moved) that the loaded fleet may not list
+   * yet: their live readings are accepted until a fleet load started after the announcement
+   * succeeds. The API sends `fleet.changed` before the imported reading's `telemetry.received`,
+   * while the reload it triggers is still in flight, so without this that reading would be dropped.
+   */
+  private readonly announcedTurbineIds = new Set<string>();
   private historySub?: Subscription;
   private farmsSub?: Subscription;
+  /** Fleet loads sent so far: tells `setCommissioned` whether one overlapped its request. */
+  private loadsSent = 0;
+  /**
+   * The commissioned value being saved, per turbine. `turbines` shows it over whatever the loaded
+   * fleet says, so a reload answered meanwhile can't flip the value back.
+   */
+  private readonly commissionedSaving = signal<ReadonlyMap<string, boolean>>(new Map());
   /** The selected turbine's loaded and live readings, newest first (may extend past the window). */
   private readonly loadedHistory = signal<Telemetry[]>([]);
   /** Live readings received while the history request is pending (merged into its response). */
@@ -115,9 +160,30 @@ export class FleetStore {
    * here or in another browser): pages showing rules reload when it changes.
    */
   readonly alertConfigVersion = signal(0);
+  /**
+   * Bumped on every `unallocated-turbine.changed` event (an entry was held, resolved, blocked or
+   * unblocked) and after a resync: the Unallocated pages reload when it changes.
+   */
+  readonly unallocatedVersion = signal(0);
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
-  readonly recentlyUpdated = signal<string | null>(null);
+  /**
+   * The fleet finished loading and no error is showing, so `farms` can be trusted: a farm missing
+   * from it really doesn't exist. After a failed load the list is just empty.
+   */
+  readonly fleetLoadedOk = computed(() => !this.loading() && !this.error());
+  /**
+   * The turbines a live reading updated in the last `FLASH_MS`, so every row of a burst flashes for
+   * its full length. Another reading for a turbine in the set restarts its time.
+   */
+  readonly recentlyUpdated = signal<ReadonlySet<string>>(new Set());
+  private readonly flashTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** The turbines whose commissioned change is being saved (their control waits). */
+  readonly commissionedPending = computed<ReadonlySet<string>>(
+    () => new Set(this.commissionedSaving().keys()),
+  );
+  /** Why the last commissioned change failed; cleared by the next change. */
+  readonly commissionedError = signal<string | null>(null);
   readonly selectedTurbineId = signal<string | null>(null);
   readonly historyLoading = signal(false);
   readonly historyRangeMs = signal(DEFAULT_HISTORY_RANGE_MS);
@@ -146,7 +212,10 @@ export class FleetStore {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((stats) => this.stats.set(stats));
-    this.destroyRef.onDestroy(() => this.stopTicking());
+    this.destroyRef.onDestroy(() => {
+      this.stopTicking();
+      this.flashTimers.forEach((timer) => clearTimeout(timer));
+    });
   }
 
   /** Newest measurement time across the fleet ("data as of"; staleness uses the client clock). */
@@ -165,6 +234,7 @@ export class FleetStore {
         const latest = this.latestByTurbine().get(t.id) ?? null;
         return {
           ...t,
+          commissioned: this.commissionedSaving().get(t.id) ?? t.commissioned,
           farmName: farm.name,
           latest,
           staleness: stalenessOf(latest, this.now()),
@@ -279,6 +349,9 @@ export class FleetStore {
           if (event.kind === 'status') this.liveStatus.set(event.status);
           else if (event.type === ALERT_CONFIG_CHANGED)
             this.alertConfigVersion.update((v) => v + 1);
+          else if (event.type === UNALLOCATED_CHANGED) this.unallocatedVersion.update((v) => v + 1);
+          else if (event.type === FLEET_CHANGED)
+            this.reloadFleet((event.data as FleetChangedEvent).turbineId);
           else this.receive(event.data as Telemetry);
         },
         error: () => this.liveStatus.set('offline'),
@@ -289,14 +362,30 @@ export class FleetStore {
    * After our own reconnect: the API replays nothing to a new EventSource, so reload what the
    * outage may have missed. The live stream is already open, so nothing arriving from now on is
    * lost (as in `init`): latest readings (`applyLatest` keeps whichever is newer), the selected
-   * turbine's history and stats (same range, kept on screen while they reload), and the rule pages
-   * (missed `alert-config.changed`).
+   * turbine's history and stats (same range, kept on screen while they reload), the rule pages
+   * (missed `alert-config.changed`) and the Unallocated pages (missed
+   * `unallocated-turbine.changed`).
    */
   private resync(): void {
     this.loadFarms({ resync: true });
     const selected = this.selectedTurbineId();
     if (selected) this.select(selected);
     this.alertConfigVersion.update((v) => v + 1);
+    this.unallocatedVersion.update((v) => v + 1);
+  }
+
+  /**
+   * The fleet changed on the server (`fleet.changed`: a turbine was assigned to a farm or moved, or
+   * this browser just did that): reloads the farms quietly, like a resync. `turbineId`'s live
+   * readings are accepted from now on, also before that reload lists it, so the imported reading
+   * the API announces right after `fleet.changed` is not dropped as unlisted.
+   */
+  reloadFleet(turbineId?: string): void {
+    if (turbineId) {
+      this.announcedTurbineIds.add(turbineId);
+      this.warnedUnlisted.delete(turbineId);
+    }
+    this.loadFarms({ resync: true });
   }
 
   /**
@@ -306,13 +395,24 @@ export class FleetStore {
    */
   private loadFarms({ resync }: { resync: boolean }): void {
     const quiet = resync && !this.loading();
+    // A load sent now lists every turbine announced so far (they were committed before the event).
+    const announced = [...this.announcedTurbineIds];
     this.farmsSub?.unsubscribe();
+    this.loadsSent++;
     this.farmsSub = this.api
       .farms()
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (farms) => {
           this.farmList.set(farms);
+          this.fleetLoaded = true;
+          for (const id of announced) this.announcedTurbineIds.delete(id);
+          // Live readings that arrived before this load may be for turbines it doesn't list:
+          // keep only the listed turbines (also drops turbines removed since the last load).
+          const listed = this.listedTurbineIds();
+          this.latestByTurbine.update(
+            (current) => new Map([...current].filter(([id]) => listed.has(id))),
+          );
           for (const turbine of farms.flatMap((f) => f.turbines)) {
             if (turbine.latest) this.applyLatest(turbine.latest);
           }
@@ -325,6 +425,56 @@ export class FleetStore {
           this.loading.set(false);
         },
       });
+  }
+
+  /**
+   * Marks a turbine commissioned or not: shown at once, then PATCHed (one request per turbine at a
+   * time; a call while one is pending is ignored). A failure goes back to what the server last said
+   * (not to the value before the click: a reload meanwhile may know better), sets
+   * `commissionedError` and reloads. This is not a reading: no flash, and no change to the latest.
+   *
+   * On success, a fleet load that overlapped the request can't be trusted for this turbine: one
+   * still in flight may have read the row before the commit, and one sent since may hold someone
+   * else's newer change that this answer just overwrote. So such a load is replaced by a new one,
+   * sent after the commit. `fleet.changed` usually reloads anyway, but arrives in its own time, and
+   * not at all for a value that was already set.
+   */
+  setCommissioned(turbineId: string, commissioned: boolean): void {
+    if (this.commissionedSaving().has(turbineId)) return;
+    this.commissionedError.set(null);
+    this.commissionedSaving.update((saving) => new Map(saving).set(turbineId, commissioned));
+    const loadsBefore = this.loadsSent;
+    this.api
+      .setCommissioned(turbineId, commissioned)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (updated) => {
+          this.farmList.update((farms) =>
+            farms.map((farm) => ({
+              ...farm,
+              turbines: farm.turbines.map((t) =>
+                t.id === turbineId ? { ...t, commissioned: updated.commissioned } : t,
+              ),
+            })),
+          );
+          this.endCommissionedSave(turbineId);
+          if (this.loadsSent !== loadsBefore || this.farmsSub?.closed === false) this.reloadFleet();
+        },
+        error: (error: unknown) => {
+          this.endCommissionedSave(turbineId);
+          this.commissionedError.set(commissionedErrorMessage(error, turbineId, commissioned));
+          // The change may have committed (a lost answer). A 401 just signed out: nothing to load.
+          if (this.auth.isAuthenticated()) this.reloadFleet();
+        },
+      });
+  }
+
+  private endCommissionedSave(turbineId: string): void {
+    this.commissionedSaving.update((saving) => {
+      const rest = new Map(saving);
+      rest.delete(turbineId);
+      return rest;
+    });
   }
 
   /**
@@ -397,8 +547,34 @@ export class FleetStore {
       });
   }
 
+  /**
+   * A live reading: becomes its turbine's latest if newer, and joins the selected turbine's history.
+   * Ignored (with a console warning) when dated more than `LIVE_FUTURE_TOLERANCE_MS` ahead of the
+   * client clock, or once the fleet has loaded, for a turbine it doesn't list (warned once per id)
+   * and that `fleet.changed` did not announce (see `reloadFleet`).
+   * Ingestion rejects both already; this keeps a bad event from moving "data as of", the highlight,
+   * staleness or the charts. Before the first successful load the listed turbines aren't known, so
+   * such readings are kept, and `loadFarms` then drops any for turbines it doesn't list.
+   */
   private receive(reading: Telemetry): void {
-    if (this.applyLatest(reading)) this.recentlyUpdated.set(reading.turbineId);
+    if (Date.parse(reading.timestamp) > this.clock() + LIVE_FUTURE_TOLERANCE_MS) {
+      console.warn(
+        `Ignoring a live reading for ${reading.turbineId} dated in the future: ${reading.timestamp}`,
+      );
+      return;
+    }
+    if (
+      this.fleetLoaded &&
+      !this.listedTurbineIds().has(reading.turbineId) &&
+      !this.announcedTurbineIds.has(reading.turbineId)
+    ) {
+      if (!this.warnedUnlisted.has(reading.turbineId)) {
+        this.warnedUnlisted.add(reading.turbineId);
+        console.warn(`Ignoring live readings for ${reading.turbineId}: not in the loaded fleet`);
+      }
+      return;
+    }
+    if (this.applyLatest(reading)) this.markUpdated(reading.turbineId);
     if (reading.turbineId !== this.selectedTurbineId()) return;
     this.now.set(this.clock());
     // A late reading older than the window is not charted and cannot change the range's stats.
@@ -458,6 +634,24 @@ export class FleetStore {
   private stopTicking(): void {
     clearTimeout(this.tickTimer);
     this.tickTimer = undefined;
+  }
+
+  private markUpdated(turbineId: string): void {
+    clearTimeout(this.flashTimers.get(turbineId));
+    this.flashTimers.set(
+      turbineId,
+      setTimeout(() => {
+        this.flashTimers.delete(turbineId);
+        this.recentlyUpdated.update((ids) => {
+          const rest = new Set(ids);
+          rest.delete(turbineId);
+          return rest;
+        });
+      }, FLASH_MS),
+    );
+    if (!this.recentlyUpdated().has(turbineId)) {
+      this.recentlyUpdated.update((ids) => new Set(ids).add(turbineId));
+    }
   }
 
   /** Returns true if the reading became the turbine's latest. */

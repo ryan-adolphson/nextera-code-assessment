@@ -15,6 +15,9 @@ import {
 } from './demo-feed.js';
 
 const NOW = Date.parse('2026-10-08T12:07:30Z'); // tick at 12:05
+const STOPPED: string[] = DEMO_ANOMALIES.stopped.map((s) => s.turbineId);
+/** One per demo turbine but the 6 stopped ones, plus the unallocated TURB999. */
+const PER_TICK = DEMO_TURBINES.length - STOPPED.length + 1;
 
 describe('demo feed', () => {
   const publishMessage = vi.fn();
@@ -65,12 +68,13 @@ describe('demo feed', () => {
 
     expect(createPubSub).toHaveBeenCalledWith(undefined);
     expect(topic).toHaveBeenCalledWith('telemetry');
-    expect(published()).toHaveLength(DEMO_TURBINES.length - 1);
+    expect(published()).toHaveLength(PER_TICK);
+    expect(PER_TICK).toBe(195);
     expect(sleep).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it('publishes valid payloads at the current 5-minute boundary, continuing the seed curve, without the stopped turbine', async () => {
+  it('publishes valid payloads at the current 5-minute boundary, continuing the seed curve, without the stopped turbines', async () => {
     await run(
       {
         DEMO_FEED_ENABLED: 'true',
@@ -83,12 +87,30 @@ describe('demo feed', () => {
     expect(createPubSub).toHaveBeenCalledWith('nextera-local');
     expect(topic).toHaveBeenCalledWith('demo-topic');
     const readings = published();
+    const lagging = DEMO_ANOMALIES.lagging.map((l) => l.turbineId);
     expect(
-      readings.every((r) => r.timestamp === '2026-10-08T12:05:00.000Z'),
+      readings
+        .filter((r) => !lagging.includes(r.turbine_id))
+        .every((r) => r.timestamp === '2026-10-08T12:05:00.000Z'),
     ).toBe(true);
-    expect(readings.map((r) => r.turbine_id)).not.toContain(
-      DEMO_ANOMALIES.stopped.turbineId,
+    for (const id of STOPPED) {
+      expect(readings.map((r) => r.turbine_id)).not.toContain(id);
+    }
+    // The unallocated turbine: not in the fleet, one reading claiming FARM01.
+    expect(DEMO_TURBINES.map((t) => t.turbineId)).not.toContain(
+      DEMO_ANOMALIES.unallocated.turbineId,
     );
+    expect(
+      readings.filter(
+        (r) => r.turbine_id === DEMO_ANOMALIES.unallocated.turbineId,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        turbine_id: 'TURB999',
+        farm_id: 'FARM01',
+        timestamp: '2026-10-08T12:05:00.000Z',
+      }),
+    ]);
     // Same values as the seed for that time; received_at is left to Pub/Sub's publishTime.
     const seeded = generateTelemetry({
       turbines: DEMO_TURBINES,
@@ -125,7 +147,7 @@ describe('demo feed', () => {
 
     expect(sleep).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(60_000, controller.signal);
-    expect(published()).toHaveLength(2 * (DEMO_TURBINES.length - 1));
+    expect(published()).toHaveLength(2 * PER_TICK);
     expect(close).toHaveBeenCalledOnce();
   });
 
@@ -165,6 +187,92 @@ describe('demo feed', () => {
       expect(createPubSub).not.toHaveBeenCalled();
     },
   );
+
+  describe('lagging and stopped turbines', () => {
+    const timestampOf = (
+      readings: { turbine_id: string; timestamp: string }[],
+      id: string,
+    ) => readings.filter((r) => r.turbine_id === id).map((r) => r.timestamp);
+    // Ticks at various offsets inside a 5-minute step and across an hour.
+    const ticks = [
+      '2026-10-08T12:00:00Z',
+      '2026-10-08T12:04:59.999Z',
+      '2026-10-08T12:07:30Z',
+      '2026-10-08T12:58:10Z',
+      '2026-10-08T13:01:00Z',
+    ];
+
+    it.each(ticks)(
+      'at %s publishes every lagging turbine its lag behind the boundary (TURB011 20 min, TURB018 45 min), on a boundary',
+      (tick) => {
+        const readings = demoFeedReadings(Date.parse(tick));
+        const boundary = Math.floor(Date.parse(tick) / 300_000) * 300_000;
+        const iso = (minutesBack: number) =>
+          new Date(boundary - minutesBack * 60_000).toISOString();
+        expect(timestampOf(readings, 'TURB011')).toEqual([iso(20)]);
+        expect(timestampOf(readings, 'TURB018')).toEqual([iso(45)]);
+        expect(timestampOf(readings, 'TURB003')).toEqual([iso(0)]);
+        // Staleness at the tick stays within its pill: (15, 30] and (30, 60] minutes.
+        const age = (id: string) =>
+          (Date.parse(tick) - Date.parse(timestampOf(readings, id)[0])) /
+          60_000;
+        for (const { turbineId, lagMinutes } of DEMO_ANOMALIES.lagging) {
+          expect(timestampOf(readings, turbineId), turbineId).toEqual([
+            iso(lagMinutes),
+          ]);
+          const [min, max] = lagMinutes === 20 ? [15, 30] : [30, 60];
+          expect(age(turbineId), turbineId).toBeGreaterThan(min);
+          expect(age(turbineId), turbineId).toBeLessThan(max);
+        }
+        // Everyone else (but the stopped ones) at the boundary.
+        const lagging: string[] = DEMO_ANOMALIES.lagging.map(
+          (l) => l.turbineId,
+        );
+        const atBoundary = readings.filter(
+          (r) => !lagging.includes(r.turbine_id),
+        );
+        expect(atBoundary).toHaveLength(PER_TICK - lagging.length);
+        expect(atBoundary.every((r) => r.timestamp === iso(0))).toBe(true);
+      },
+    );
+
+    it.each(ticks)('at %s never publishes the 6 stopped turbines', (tick) => {
+      const readings = demoFeedReadings(Date.parse(tick));
+      expect(STOPPED).toHaveLength(6);
+      expect(STOPPED).toContain('TURB013');
+      for (const id of STOPPED) expect(timestampOf(readings, id)).toEqual([]);
+      expect(readings).toHaveLength(PER_TICK);
+      expect(new Set(readings.map((r) => r.turbine_id)).size).toBe(
+        readings.length,
+      );
+    });
+
+    it('continues the seeded curve of a lagging turbine (same values as the seed for that time)', () => {
+      const readings = demoFeedReadings(Date.parse('2026-10-08T13:02:00Z'));
+      // A seed ending at 13:00 stops TURB011 at 12:40; a later seed has the 12:40 reading too.
+      const seeded = generateTelemetry({
+        turbines: DEMO_TURBINES,
+        end: Date.parse('2026-10-08T14:00:00Z'),
+        hours: 2,
+        seed: DEMO_SEED,
+      });
+      for (const { turbineId: id } of DEMO_ANOMALIES.lagging) {
+        const reading = readings.find((r) => r.turbine_id === id)!;
+        const { received_at: _r, ...expected } = seeded.find(
+          (r) => r.turbine_id === id && r.timestamp === reading.timestamp,
+        )!;
+        expect(reading).toEqual(expected);
+      }
+    });
+
+    it('logs the count, the stale turbines and the time it took', async () => {
+      await run({ DEMO_FEED_ENABLED: 'true' }, { argv: ['--once'] });
+      expect(log.log).toHaveBeenCalledWith(
+        'Demo feed: published 195 readings for 2026-10-08T12:05:00.000Z ' +
+          '(14 lagging (8 × 20 min, 6 × 45 min), 6 stopped not published) to telemetry in 0 ms',
+      );
+    });
+  });
 
   it('demoFeedReadings floors the time to the 5-minute boundary', () => {
     expect(demoFeedReadings(NOW)).toEqual(

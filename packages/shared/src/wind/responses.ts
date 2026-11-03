@@ -1,6 +1,7 @@
 import type {
   AlertConfig,
   Farm,
+  FarmWeather,
   Prisma,
   Telemetry,
   Turbine,
@@ -10,6 +11,7 @@ import {
   type AlertConfigResponse,
 } from './alert-config.js';
 import { compareAlertsWorstFirst } from './evaluate-alerts.js';
+import { FARM_ROLLUP_METRICS } from './farm-rollup.js';
 
 /** SSE event published by the ingestion worker for every newly stored reading. */
 export const TELEMETRY_RECEIVED = 'telemetry.received';
@@ -186,5 +188,220 @@ export function toTelemetryResponse(
       .map(({ alert }) => alert)
       .sort(compareAlertsWorstFirst)
       .map(toAlertConfigResponse),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Farm weather (Open-Meteo forecast models, 30-minute farm_weather)
+
+/** 30 minutes of a farm's weather (GET /api/farms/:farmId/weather?interval=30min). */
+export interface WeatherHalfHourResponse {
+  /** Start of the 30-minute UTC bucket (ISO; :00 or :30). */
+  time: string;
+  /** 15-minute values the bucket was aggregated from (1 or 2). */
+  samples: number;
+  /** Means of the 15-minute values (gusts: max, precipitation: sum, directions: vector mean). */
+  windSpeed10mMs: number | null;
+  /** 80 m: the Open-Meteo level closest to hub height. */
+  windSpeed80mMs: number | null;
+  windDirection10mDeg: number | null;
+  windDirection80mDeg: number | null;
+  windGusts10mMs: number | null;
+  temperature2mC: number | null;
+  relativeHumidity2mPct: number | null;
+  surfacePressureHpa: number | null;
+  precipitationMm: number | null;
+  cloudCoverPct: number | null;
+}
+
+/** One day of a farm's weather in the query's time zone, aggregated from its 30-minute buckets (interval=daily). */
+export interface WeatherDayResponse {
+  /** The local calendar day in the query's `timeZone` (YYYY-MM-DD; UTC by default). */
+  date: string;
+  /**
+   * 30-minute buckets stored for the day within the range: 48 for a complete day, 46 or 50 for a
+   * complete local day with a DST change.
+   */
+  samples: number;
+  windSpeed10mMeanMs: number | null;
+  windSpeed10mMaxMs: number | null;
+  windSpeed80mMeanMs: number | null;
+  windSpeed80mMaxMs: number | null;
+  /** Dominant 80 m wind direction: the vector mean of the 30-minute directions, 0–360. */
+  windDirection80mDeg: number | null;
+  windGusts10mMaxMs: number | null;
+  temperature2mMinC: number | null;
+  temperature2mMaxC: number | null;
+  temperature2mMeanC: number | null;
+  relativeHumidity2mMeanPct: number | null;
+  surfacePressureMeanHpa: number | null;
+  precipitationSumMm: number | null;
+  cloudCoverMeanPct: number | null;
+}
+
+export type WeatherInterval = '30min' | 'daily';
+
+/** GET /api/farms/:farmId/weather. */
+export type FarmWeatherResponse = {
+  farmId: string;
+  /** The requested [from, to) range (ISO). */
+  from: string;
+  to: string;
+  /** IANA zone of the daily buckets (default `UTC`); 30-minute `time`s are UTC instants regardless. */
+  timeZone: string;
+} & (
+  | { interval: '30min'; points: WeatherHalfHourResponse[] }
+  | { interval: 'daily'; points: WeatherDayResponse[] }
+);
+
+/** GET /api/turbines/:id/weather: the weather of the turbine's current farm. */
+export type TurbineWeatherResponse = FarmWeatherResponse & {
+  /** The turbine's business key ('TURB001'). */
+  turbineId: string;
+};
+
+export function toWeatherHalfHourResponse(
+  row: FarmWeather,
+): WeatherHalfHourResponse {
+  return {
+    time: row.time.toISOString(),
+    samples: row.samples,
+    windSpeed10mMs: row.windSpeed10mMs,
+    windSpeed80mMs: row.windSpeed80mMs,
+    windDirection10mDeg: row.windDirection10mDeg,
+    windDirection80mDeg: row.windDirection80mDeg,
+    windGusts10mMs: row.windGusts10mMs,
+    temperature2mC: row.temperature2mC,
+    relativeHumidity2mPct: row.relativeHumidity2mPct,
+    surfacePressureHpa: row.surfacePressureHpa,
+    precipitationMm: row.precipitationMm,
+    cloudCoverPct: row.cloudCoverPct,
+  };
+}
+
+/** A row of the daily weather query (snake_case aliases; numbers may arrive as strings). */
+export interface WeatherDayRow {
+  /** The local calendar day (YYYY-MM-DD), formatted in Postgres. */
+  day: string;
+  samples: number | bigint;
+  wind_speed_10m_mean: unknown;
+  wind_speed_10m_max: unknown;
+  wind_speed_80m_mean: unknown;
+  wind_speed_80m_max: unknown;
+  wind_direction_80m: unknown;
+  wind_gusts_10m_max: unknown;
+  temperature_2m_min: unknown;
+  temperature_2m_max: unknown;
+  temperature_2m_mean: unknown;
+  relative_humidity_2m_mean: unknown;
+  surface_pressure_mean: unknown;
+  precipitation_sum: unknown;
+  cloud_cover_mean: unknown;
+}
+
+/** Rounded to 2 decimals (means of doubles carry float noise); null stays null. */
+const round2 = (value: unknown): number | null =>
+  value === null || value === undefined
+    ? null
+    : Math.round(Number(value) * 100) / 100;
+
+export function toWeatherDayResponse(row: WeatherDayRow): WeatherDayResponse {
+  const direction = round2(row.wind_direction_80m);
+  return {
+    date: row.day,
+    samples: Number(row.samples),
+    windSpeed10mMeanMs: round2(row.wind_speed_10m_mean),
+    windSpeed10mMaxMs: round2(row.wind_speed_10m_max),
+    windSpeed80mMeanMs: round2(row.wind_speed_80m_mean),
+    windSpeed80mMaxMs: round2(row.wind_speed_80m_max),
+    // 359.999 rounds to 360, which is north: report it as 0.
+    windDirection80mDeg: direction === null ? null : direction % 360,
+    windGusts10mMaxMs: round2(row.wind_gusts_10m_max),
+    temperature2mMinC: round2(row.temperature_2m_min),
+    temperature2mMaxC: round2(row.temperature_2m_max),
+    temperature2mMeanC: round2(row.temperature_2m_mean),
+    relativeHumidity2mMeanPct: round2(row.relative_humidity_2m_mean),
+    surfacePressureMeanHpa: round2(row.surface_pressure_mean),
+    precipitationSumMm: round2(row.precipitation_sum),
+    cloudCoverMeanPct: round2(row.cloud_cover_mean),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Farm daily history (GET /api/farms/:farmId/telemetry/daily), from the farm rollups
+
+/** A candle: the first, last, highest and lowest value of a series over a period. */
+export interface Ohlc {
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+}
+
+/**
+ * One local day of a farm's series (power summed over the turbines reporting at each timestamp,
+ * the other metrics averaged): open = the day's first point, close = its last, high/low over the
+ * day. Values rounded to 2 decimals.
+ */
+export interface FarmDayResponse {
+  /** The local calendar day in the response's timeZone (YYYY-MM-DD). */
+  date: string;
+  /** The most distinct turbines that reported in any 30 minutes of the day. */
+  turbines: number;
+  /** Readings in the day. */
+  readings: number;
+  powerOutputKw: Ohlc;
+  windSpeedMs: Ohlc;
+  rotorRpm: Ohlc;
+  bladePitchDeg: Ohlc;
+  gearboxTempC: Ohlc;
+}
+
+/** GET /api/farms/:farmId/telemetry/daily. */
+export interface FarmDailyHistoryResponse {
+  farmId: string;
+  /** The requested [from, to) (ISO, UTC). */
+  from: string;
+  to: string;
+  /** IANA zone of the days (default UTC). */
+  timeZone: string;
+  /** Turbines on the farm now. */
+  turbineCount: number;
+  /** When the rollup job last wrote any of the range's rows (ISO); null when there are none. */
+  computedAt: string | null;
+  /** Oldest first; days without readings are omitted. */
+  days: FarmDayResponse[];
+}
+
+/** One row of the daily query: the day, its counts and `<prefix>_open|_close|_high|_low`. */
+export interface FarmDayRow {
+  day: string;
+  turbines: number | bigint;
+  readings: number | bigint;
+  computed_at: Date;
+  [column: string]: unknown;
+}
+
+const round = (value: unknown): number => Math.round(Number(value) * 100) / 100;
+
+export function toFarmDayResponse(row: FarmDayRow): FarmDayResponse {
+  const ohlc = (metric: TelemetryMetric): Ohlc => {
+    const p = FARM_ROLLUP_METRICS[metric].prefix;
+    return {
+      open: round(row[`${p}_open`]),
+      close: round(row[`${p}_close`]),
+      high: round(row[`${p}_high`]),
+      low: round(row[`${p}_low`]),
+    };
+  };
+  return {
+    date: row.day,
+    turbines: Number(row.turbines),
+    readings: Number(row.readings),
+    powerOutputKw: ohlc('powerOutputKw'),
+    windSpeedMs: ohlc('windSpeedMs'),
+    rotorRpm: ohlc('rotorRpm'),
+    bladePitchDeg: ohlc('bladePitchDeg'),
+    gearboxTempC: ohlc('gearboxTempC'),
   };
 }

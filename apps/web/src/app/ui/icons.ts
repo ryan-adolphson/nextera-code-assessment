@@ -5,9 +5,12 @@ import barChart from '@material-symbols/svg-400/outlined/bar_chart.svg';
 import check from '@material-symbols/svg-400/outlined/check.svg';
 import chevronRight from '@material-symbols/svg-400/outlined/chevron_right.svg';
 import close from '@material-symbols/svg-400/outlined/close.svg';
+import help from '@material-symbols/svg-400/outlined/help.svg';
 import map from '@material-symbols/svg-400/outlined/map.svg';
 import menu from '@material-symbols/svg-400/outlined/menu.svg';
+import moreVert from '@material-symbols/svg-400/outlined/more_vert.svg';
 import notifications from '@material-symbols/svg-400/outlined/notifications.svg';
+import settings from '@material-symbols/svg-400/outlined/settings.svg';
 import windPower from '@material-symbols/svg-400/outlined/wind_power.svg';
 
 /**
@@ -19,9 +22,12 @@ export const ICONS = {
   check,
   'chevron-right': chevronRight,
   close,
+  help,
   map,
   menu,
+  'more-vert': moreVert,
   notifications,
+  settings,
   'wind-power': windPower,
 } as const satisfies Record<string, string>;
 

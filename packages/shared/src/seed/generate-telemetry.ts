@@ -74,12 +74,49 @@ export const DEMO_ANOMALIES = {
     gearboxTempC: 126.5,
   },
   /**
-   * TURB013 stops reporting: its last reading is 40 min before `end` ("No data in 30 min"), and
-   * the live feed never publishes for it, so it goes on to "No data in 60 min".
+   * Turbines that stopped reporting (red, "No data in 60 min"): the seed ends their readings
+   * `offsetMinutes` (a multiple of 5) before `end`, 90 min to 5 h, and the live feed never publishes
+   * them, so they stay red. TURB013 is the original one.
    */
-  stopped: { turbineId: 'TURB013', offsetMinutes: 40 },
+  stopped: [
+    { turbineId: 'TURB013', offsetMinutes: 90 }, // FARM05
+    { turbineId: 'TURB053', offsetMinutes: 120 }, // FARM02
+    { turbineId: 'TURB091', offsetMinutes: 150 }, // FARM04
+    { turbineId: 'TURB139', offsetMinutes: 180 }, // FARM07
+    { turbineId: 'TURB160', offsetMinutes: 240 }, // FARM08
+    { turbineId: 'TURB195', offsetMinutes: 300 }, // FARM10
+  ],
+  /**
+   * Turbines that report, but late by a constant `lagMinutes` (a multiple of 5): the seed ends their
+   * readings `lagMinutes` before `end`, and the live feed publishes, on each tick, their reading for
+   * the boundary at or before now − lagMinutes. So their staleness pill stays put while someone
+   * presents: 20 min → "No data in 15 min" (yellow), 45 min → "No data in 30 min" (orange).
+   * TURB011 and TURB018 are the original ones. With the stopped ones: 20 of the 200 turbines
+   * (10 %), on every farm, none with another anomaly or a DEMO_UNALLOCATED plan.
+   */
+  lagging: [
+    { turbineId: 'TURB011', lagMinutes: 20 }, // FARM04
+    { turbineId: 'TURB030', lagMinutes: 20 }, // FARM01
+    { turbineId: 'TURB047', lagMinutes: 20 }, // FARM02
+    { turbineId: 'TURB063', lagMinutes: 20 }, // FARM03
+    { turbineId: 'TURB102', lagMinutes: 20 }, // FARM05
+    { turbineId: 'TURB117', lagMinutes: 20 }, // FARM06
+    { turbineId: 'TURB152', lagMinutes: 20 }, // FARM08
+    { turbineId: 'TURB186', lagMinutes: 20 }, // FARM10
+    { turbineId: 'TURB018', lagMinutes: 45 }, // FARM07
+    { turbineId: 'TURB036', lagMinutes: 45 }, // FARM01
+    { turbineId: 'TURB070', lagMinutes: 45 }, // FARM03
+    { turbineId: 'TURB085', lagMinutes: 45 }, // FARM04
+    { turbineId: 'TURB124', lagMinutes: 45 }, // FARM06
+    { turbineId: 'TURB173', lagMinutes: 45 }, // FARM09
+  ],
   /** TURB008: 4 readings missing (a 20-minute hole). */
   gap: { turbineId: 'TURB008', offsetMinutes: 20 * 60, readings: 4 },
+  /**
+   * TURB999 claims FARM01 but isn't in the fleet (outside TURB001–TURB200, never seeded): only the
+   * live feed publishes it, so ingestion holds its readings as an unallocated (unknown) turbine.
+   */
+  unallocated: { turbineId: 'TURB999', farmId: 'FARM01' },
   /** Readings that arrived late: received_at = timestamp + delayMinutes. */
   late: [
     { turbineId: 'TURB005', offsetMinutes: 12 * 60, delayMinutes: 10 },
@@ -87,6 +124,25 @@ export const DEMO_ANOMALIES = {
     { turbineId: 'TURB021', offsetMinutes: 36 * 60, delayMinutes: 20 },
   ],
 } as const;
+
+/** Each stale demo turbine's minutes behind `end` (stopped: its offset; lagging: its lag). */
+const REPORTING_LAG_MINUTES: ReadonlyMap<string, number> = new Map([
+  ...DEMO_ANOMALIES.stopped.map((s) => [s.turbineId, s.offsetMinutes] as const),
+  ...DEMO_ANOMALIES.lagging.map((l) => [l.turbineId, l.lagMinutes] as const),
+]);
+
+/**
+ * Minutes before `end` of a demo turbine's newest reading: a stopped turbine's offset, a lagging
+ * turbine's lag, else 0. The one rule the seed (generateTelemetry) and the live feed both go by.
+ */
+export function demoReportingLagMinutes(turbineId: string): number {
+  return REPORTING_LAG_MINUTES.get(turbineId) ?? 0;
+}
+
+/** Whether the live feed never publishes this turbine (a stopped one). */
+export function isDemoStopped(turbineId: string): boolean {
+  return DEMO_ANOMALIES.stopped.some((s) => s.turbineId === turbineId);
+}
 
 /** `time` floored to a 5-minute boundary. */
 export function floorToTelemetryStep(time: Date | number): Date {
@@ -96,7 +152,8 @@ export function floorToTelemetryStep(time: Date | number): Date {
 
 /**
  * Rows for every turbine at end, end - 5 min, … (hours × 12 steps), oldest first, then in
- * `turbines` order; minus the gap and the stopped turbine's last 40 minutes.
+ * `turbines` order; minus the gap and each stale turbine's last minutes: a stopped one's offset,
+ * a lagging one's `lagMinutes` (demoReportingLagMinutes).
  */
 export function generateTelemetry({
   turbines,
@@ -124,9 +181,7 @@ export function generateTelemetry({
     for (const { turbineId, farmId } of turbines) {
       const is = (anomaly: { turbineId: string }) =>
         anomaly.turbineId === turbineId;
-      if (is(a.stopped) && minutesBeforeEnd < a.stopped.offsetMinutes) {
-        continue;
-      }
+      if (minutesBeforeEnd < demoReportingLagMinutes(turbineId)) continue;
       if (is(a.gap) && within(a.gap, a.gap.readings)) continue;
 
       const row = normalReading(seed, turbineId, farmId, time);

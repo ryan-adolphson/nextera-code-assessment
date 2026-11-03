@@ -15,9 +15,11 @@ import { PubSubPushEnvelope } from './pubsub-push.dto.js';
 
 /**
  * Pub/Sub push endpoint. Response codes drive delivery:
- * - 2xx: acknowledged (stored, or a duplicate of a stored reading).
+ * - 2xx: acknowledged: stored, a duplicate of a stored reading, held (an unknown turbine or a farm
+ *   mismatch, for an owner to resolve in the Unallocated tab), or dropped (a blocked pair).
  * - 4xx / 5xx: nacked and retried with backoff; after max delivery attempts the message goes to
- *   the dead-letter topic. Invalid payloads therefore end up in the DLQ for inspection.
+ *   the dead-letter topic. Invalid payloads (and new unallocated pairs over the cap) therefore end
+ *   up in the DLQ for inspection.
  * Only Pub/Sub can call this in GCP: the service requires IAM (run.invoker) and the push
  * subscription authenticates with an OIDC token.
  */

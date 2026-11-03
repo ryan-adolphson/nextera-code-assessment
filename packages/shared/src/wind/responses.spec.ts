@@ -3,6 +3,8 @@ import {
   toTelemetryResponse,
   toTelemetryStatsResponse,
   toTurbineResponse,
+  toWeatherDayResponse,
+  toWeatherHalfHourResponse,
 } from './responses.js';
 
 describe('toTurbineResponse', () => {
@@ -152,5 +154,103 @@ describe('toTelemetryResponse', () => {
       ['a', 'info'],
     ]);
     expect(alerts[0]).toEqual({ ...rule('b', 'error') });
+  });
+});
+
+describe('toWeatherDayResponse', () => {
+  const row = {
+    day: '2026-01-01',
+    samples: 48n,
+    wind_speed_10m_mean: 5.123456,
+    wind_speed_10m_max: '9.5',
+    wind_speed_80m_mean: 8,
+    wind_speed_80m_max: 12,
+    wind_direction_80m: 359.9999999,
+    wind_gusts_10m_max: 14.2,
+    temperature_2m_min: -1,
+    temperature_2m_max: 4,
+    temperature_2m_mean: 1.5,
+    relative_humidity_2m_mean: 80,
+    surface_pressure_mean: 990.25,
+    precipitation_sum: null,
+    cloud_cover_mean: 50,
+  };
+
+  it('keeps the local day, rounds to 2 decimals and keeps nulls, in the contract order', () => {
+    const day = toWeatherDayResponse(row);
+    expect(day).toEqual({
+      date: '2026-01-01',
+      samples: 48,
+      windSpeed10mMeanMs: 5.12,
+      windSpeed10mMaxMs: 9.5,
+      windSpeed80mMeanMs: 8,
+      windSpeed80mMaxMs: 12,
+      windDirection80mDeg: 0, // 360 is north
+      windGusts10mMaxMs: 14.2,
+      temperature2mMinC: -1,
+      temperature2mMaxC: 4,
+      temperature2mMeanC: 1.5,
+      relativeHumidity2mMeanPct: 80,
+      surfacePressureMeanHpa: 990.25,
+      precipitationSumMm: null,
+      cloudCoverMeanPct: 50,
+    });
+    expect(Object.keys(day)).toEqual([
+      'date',
+      'samples',
+      'windSpeed10mMeanMs',
+      'windSpeed10mMaxMs',
+      'windSpeed80mMeanMs',
+      'windSpeed80mMaxMs',
+      'windDirection80mDeg',
+      'windGusts10mMaxMs',
+      'temperature2mMinC',
+      'temperature2mMaxC',
+      'temperature2mMeanC',
+      'relativeHumidity2mMeanPct',
+      'surfacePressureMeanHpa',
+      'precipitationSumMm',
+      'cloudCoverMeanPct',
+    ]);
+  });
+});
+
+describe('toWeatherHalfHourResponse', () => {
+  it('maps a bucket without farm_id and fetched_at, in the contract order', () => {
+    const point = toWeatherHalfHourResponse({
+      farmId: 'FARM01',
+      time: new Date('2026-01-01T00:30:00Z'),
+      samples: 2,
+      windSpeed10mMs: 4.28,
+      windSpeed80mMs: 10.67,
+      windDirection10mDeg: 332,
+      windDirection80mDeg: 334.5,
+      windGusts10mMs: 9.2,
+      temperature2mC: 6.85,
+      relativeHumidity2mPct: 47,
+      surfacePressureHpa: 968.55,
+      precipitationMm: null,
+      cloudCoverPct: 0,
+      fetchedAt: new Date(),
+    });
+    expect(Object.keys(point)).toEqual([
+      'time',
+      'samples',
+      'windSpeed10mMs',
+      'windSpeed80mMs',
+      'windDirection10mDeg',
+      'windDirection80mDeg',
+      'windGusts10mMs',
+      'temperature2mC',
+      'relativeHumidity2mPct',
+      'surfacePressureHpa',
+      'precipitationMm',
+      'cloudCoverPct',
+    ]);
+    expect(point).toMatchObject({
+      time: '2026-01-01T00:30:00.000Z',
+      samples: 2,
+      precipitationMm: null,
+    });
   });
 });
