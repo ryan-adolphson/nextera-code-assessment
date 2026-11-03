@@ -1,0 +1,99 @@
+# Design decisions
+
+Why the system is built this way, and what each choice gives up. For what it does and how to run it, see the [README](../README.md).
+
+## Assumptions
+
+This is a proof of concept. The assumptions below were made to support a reasonable load and scope. A production application would need further detail on requirements, expected volumes and service levels.
+
+- **Data:** each turbine reports power, wind speed, rotor speed, blade pitch and gearbox temperature every 5 minutes. Readings can be late, missing or wrong, and some come from turbines we don't know about.
+- **Users:** the primary users are assumed to be farm owners, with NextEra also managing the application for a small subset of farms.
+- **Roles:** the viewer, owner and admin roles are placeholders, included to show how a user hierarchy would look and work.
+- **Timeliness:** live means within seconds, not milliseconds.
+- **Business impact:** the main cost is assumed to be a turbine that is down or underperforming without anyone noticing, since it loses generation until the problem is found. Missing or stale data is therefore shown, not hidden. A production application would need this quantified.
+- **Scale:** the demo runs 200 turbines, which is assumed to be a reasonable load for a proof of concept. The architecture leaves room to grow, but its limit hasn't been measured (see [Scaling](#scaling)). A production application would need target fleet sizes and growth estimates.
+
+## Key decisions
+
+These decisions were made to keep the proof of concept reasonably simple, with a clear understanding of the limitations of an application that isn't production-ready. Where a choice would need to change at larger scale, the [Scaling](#scaling) section covers it.
+
+### Pub/Sub push with a dead-letter queue, not direct calls from turbines
+- **Why:** turbines and the worker are decoupled. Pub/Sub absorbs bursts and retries failures with backoff. After 5 failed deliveries, a message moves to a dead-letter topic instead of being lost.
+- **Cost:** delivery is at-least-once, so ingestion must be idempotent. It is: readings are unique on `(turbine_id, timestamp)`, and duplicates are skipped.
+- **Business effect:** a worker outage delays data but doesn't lose it, within the 7-day retention.
+
+### Postgres and Redis, not a time-series database
+- **Why:** the data is relational (farms, turbines, rules, users, alert links), and the alert rules and readings need to be written in one transaction. One well-understood database is less to run and to explain.
+- **Cost:** Postgres needs more care at high row counts: indexes, rollups and eventually partitioning.
+- **Redis** handles the live side only: fan-out to every API instance, plus a capped stream of 1,000 events so a reconnecting client can catch up. Postgres stays the source of truth, and losing Redis loses no data.
+
+### Server-Sent Events, not WebSockets or polling
+- **Why:** updates only flow from server to browser, and SSE gives that over plain HTTP with built-in reconnect and `Last-Event-ID` resume.
+- **Cost:** `EventSource` can't send headers, so the token goes in the URL for that one route and appears in request logs. See [Accepted shortcuts](#accepted-shortcuts).
+- **Business effect:** operators see new readings without reloading, without the load of every browser polling.
+
+### Hold readings from unknown turbines, don't reject them
+- **Why:** rejecting them sends real data to the dead-letter queue, where no operator sees it. A new turbine or a mistaken farm setting is an operational question. So these readings are held for 7 days, and an owner assigns, keeps, moves or blocks the turbine, and the held readings are imported with alerts evaluated.
+- **Cost:** extra tables and a workflow. A flood of junk IDs is capped at 500 pending entries; beyond that, new pairs return to the dead-letter path.
+- **Business effect:** a commissioning mistake doesn't lose a week of production data.
+
+### Scheduled rollup for farm history, not calculating on ingest
+- **Why:** a farm's total for a timestamp isn't known until its turbines have reported. Recalculating on ingest would put extra work on every reading and have a farm's turbines contending for the same row. A job every 15 minutes recalculates only what changed, including late readings, backfills and turbine moves.
+- **Cost:** the History tab can be up to 15 minutes behind, and the page says so. There's one more job to monitor, so failed runs raise an alert.
+- **Storage:** 30-minute buckets, grouped into days when read. That lets one table answer for UTC or local days, including days when the clocks change.
+- **Business effect:** six months of history stays fast without slowing the path that matters most.
+
+### Weather per farm, not per turbine
+- **Why:** Open-Meteo's model grid is 9–25 km, and a farm's turbines sit within a few km, so per-turbine calls would mostly return duplicates. It's stored every 30 minutes from 15-minute model data.
+- **Cost:** it's model data at 80 m, not a measurement at each turbine.
+- **Business effect:** it helps separate "there was no wind" from "the turbine has a problem".
+
+### Cloud Run, not Kubernetes or VMs
+- **Why:** three stateless containers and scheduled jobs don't need a cluster. Scaling and rollouts are handled for me, and Terraform defines everything.
+- **Cost:** per-instance limits matter. Every instance holds database connections, so instance counts and pool sizes have to stay within what Postgres allows. SSE streams also reconnect when requests hit Cloud Run's time limit.
+
+## Scaling
+
+**I have no capacity numbers yet.** The [load test harness](load-test.md) has only had a low-rate smoke run on a laptop, which proves the harness works and says nothing about limits. Everything below is reasoning, to be tested.
+
+| Turbines | Readings per second, on average | Rows per year |
+|---|---|---|
+| 200 | 0.67 | about 21 million |
+| 2,000 | 6.7 | about 210 million |
+| 10,000 | 33 | about 1.05 billion |
+
+What I'd expect to hit first, in order, and what I'd do:
+
+1. **Bursts of per-reading transactions.** Turbines report on the same 5-minute boundary, so the average understates the peak. Production limits today are 5 ingestion instances × 20 concurrent requests, with 4 database connections each. Fix: batched inserts through a pull subscriber.
+2. **Live events to every browser.** Each reading goes to each connected client, and the 1,000-event replay history would cover well under one tick at 10,000 turbines. Fix: send clients batched summaries per tick, and let them fetch details as needed.
+3. **Table size.** `telemetry` isn't partitioned. Fix: monthly partitions and a retention policy, with raw readings kept for a set period and rollups kept longer. This needs a migration, because the partition key has to be part of the primary key.
+4. **Database size.** The default `db-g1-small` tier is a demo choice, and the first thing I'd raise.
+
+## Accepted shortcuts
+
+These are proof-of-concept choices I'd change before production.
+
+| Shortcut | Risk | Fix |
+|---|---|---|
+| Token kept in localStorage | Readable by a cross-site scripting attack | Short-lived tokens with an httpOnly refresh cookie |
+| SSE token in the URL | Appears in request logs | A short-lived, single-use stream ticket |
+| No login rate limiting | Password guessing | Rate limit at the edge and per account |
+| Tokens can't be revoked individually (24 h life) | A stolen token works until it expires, unless the user is deactivated | Shorter life and refresh tokens |
+| Free Open-Meteo API | Non-commercial use only | Paid key; the app already supports `OPEN_METEO_API_KEY` |
+| Alerts are static thresholds | Misses a stuck sensor, or low output in strong wind | See below |
+
+## With another week
+
+1. **Run the load test** at the planned rates against a deployed environment, and fix the first real bottleneck.
+2. **Better anomaly detection:** a value that stops changing, and low power for the measured wind speed.
+3. **Estimate lost output** from those anomalies, so a fault has a cost attached and operators can prioritise.
+4. **Keyboard focus:** make focus visible on Material controls, and keep it on the tab after switching tabs (a known bug, recorded as an expected-failure test).
+
+## How I used AI
+
+I used Claude Code with specialist agents for each area (web, Material UI, backend, infrastructure, CI, front-end testing), with project rules in the repo. I made the product and design decisions, and treated agent output as work to verify.
+
+- **I set the direction and changed it when it was wrong.** For example, I had weather built into the turbine page, then moved it to the farm page so users can quickly see a weather overview. Rollups on ingest vs on a schedule was my call, after looking at the tradeoffs.
+- **Testing caught real mistakes.** Browser tests found that Refresh was being answered from the browser's HTTP cache, and that rows jumped during live updates when the table was scrolled. A flaky test first looked like a rendering stall, but the trace showed the clock moving backward during a map animation.
+- **Reference material was checked against the code.** The Angular Material guidance was verified against the installed package, where it showed the docs and the code disagree on one option name.
+- **Its costs got caught too.** Adding Artillery to the root project pulled in a browser download and changed a production dependency, so it moved to its own project.
