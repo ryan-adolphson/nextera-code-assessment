@@ -347,6 +347,16 @@ tr.mat-mdc-row.detail-row[hidden] {
   display: none;
 }
 
+/*
+ * Data-row hover, for every `mat-table` (header, footer and expandable detail rows excluded): a 7%
+ * wash of --text over the --surface rows, so it reads in light and dark and the text keeps its
+ * contrast (>= 4.5:1 either way). Rows that open something also set `cursor-pointer` in the page.
+ * A live-update flash (animate-flash) still plays over it.
+ */
+tr.mat-mdc-row:not(.history-detail-row):not(.detail-row):hover {
+  background-color: color-mix(in srgb, var(--text) 7%, var(--surface));
+}
+
 /* `mat-menu class="app-menu"`: a hairline around the panel (it sits on --surface table rows). */
 .app-menu {
   @apply border border-line;
