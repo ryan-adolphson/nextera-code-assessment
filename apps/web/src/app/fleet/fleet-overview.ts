@@ -1,6 +1,7 @@
 import { DecimalPipe } from '@angular/common';
 import { AppTimePipe } from '../core/app-time.pipe';
 import { Component, computed, inject } from '@angular/core';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { Router, RouterLink } from '@angular/router';
 import { MapPlaceholder } from '../map/map-placeholder';
 import { MapView } from '../map/map-view';
@@ -19,6 +20,7 @@ import { FarmSummary, FleetStore } from './fleet.store';
     AppTimePipe,
     DecimalPipe,
     FarmPill,
+    MatProgressSpinnerModule,
     RouterLink,
     MapPlaceholder,
     MapView,
@@ -36,6 +38,10 @@ export class FleetOverview {
     const kwh = this.anomalies.value()?.estimatedLostKwh;
     return kwh === undefined ? '–' : formatEnergy(kwh);
   });
+  /** Spinner only while there is no answer yet (and no failure), so a reload never hides a value. */
+  protected readonly lostOutputLoading = computed(
+    () => this.anomalies.value() === null && !this.anomalies.failed(),
+  );
   protected readonly markers = computed(() => farmMarkers(this.store.farms()));
   protected readonly columns = ['farm', 'location', 'turbines', 'reporting', 'power', 'wind'];
   protected readonly trackById = (_: number, farm: FarmSummary) => farm.id;

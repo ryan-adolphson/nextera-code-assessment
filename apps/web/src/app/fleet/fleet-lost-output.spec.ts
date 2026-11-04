@@ -1,4 +1,4 @@
-import { of, throwError } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { AnomalyReport } from '../alerting/anomaly.model';
 import { openFleet } from './testing';
 
@@ -45,8 +45,32 @@ describe('Fleet overview: estimated lost output tile', () => {
   it('shows a dash when the request fails, and the rest of the page is unaffected', async () => {
     const { app, text } = await open(() => throwError(() => new Error('500')));
     expect(text).toBe('–');
+    expect(app.root().querySelector('[data-testid=fleet-lost-output] mat-spinner')).toBeNull();
     expect(app.root().querySelector('[data-testid=fleet-power]')).not.toBeNull();
     expect(app.root().querySelector('[data-testid=farms]')).not.toBeNull();
     expect(app.root().querySelector('[data-testid=fleet-error]')).toBeNull();
+  });
+
+  it('shows a spinner and no link while the request is pending, then the value', async () => {
+    const answer = new Subject<AnomalyReport>();
+    const app = await openFleet(
+      '/farms',
+      () => CLOCK,
+      undefined,
+      ({ anomalies }) => anomalies.list.mockImplementation((() => answer) as never),
+    );
+    const tile = () => app.root().querySelector<HTMLElement>('[data-testid=fleet-lost-output]')!;
+    await new Promise((r) => setTimeout(r));
+    expect(tile().querySelector('mat-spinner')).not.toBeNull();
+    expect(tile().querySelector('mat-spinner')!.getAttribute('aria-label')).toBe(
+      'Loading estimated lost output',
+    );
+    expect(tile().querySelector('a')).toBeNull();
+    answer.next(report(12_345));
+    answer.complete();
+    await app.stable();
+    expect(tile().querySelector('mat-spinner')).toBeNull();
+    expect(app.text(tile())).toBe('12.3 MWh');
+    expect(tile().querySelector('a')).not.toBeNull();
   });
 });
