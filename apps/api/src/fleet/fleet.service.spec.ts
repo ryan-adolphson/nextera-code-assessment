@@ -6,6 +6,7 @@ import {
   Prisma,
   PrismaService,
 } from '@nextera/shared';
+import { FarmsCacheService } from '../farms-cache/farms-cache.service.js';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { FleetService } from './fleet.service.js';
 import { WeatherQueryDto } from './dto/weather-query.dto.js';
@@ -44,15 +45,18 @@ describe('FleetService', () => {
   let service: FleetService;
   let prisma: DeepMockProxy<PrismaService>;
   let events: DeepMockProxy<EventStore>;
+  let farmsCache: DeepMockProxy<FarmsCacheService>;
 
   beforeEach(async () => {
     prisma = mockDeep<PrismaService>();
     events = mockDeep<EventStore>();
+    farmsCache = mockDeep<FarmsCacheService>();
     const moduleRef = await Test.createTestingModule({
       providers: [
         FleetService,
         { provide: PrismaService, useValue: prisma },
         { provide: EventStore, useValue: events },
+        { provide: FarmsCacheService, useValue: farmsCache },
       ],
     }).compile();
     service = moduleRef.get(FleetService);
@@ -93,6 +97,7 @@ describe('FleetService', () => {
       expect(events.publish).toHaveBeenCalledWith(FLEET_CHANGED, {
         turbineId: 'TURB001',
       });
+      expect(farmsCache.invalidate).toHaveBeenCalledOnce();
     });
 
     it('un-commissions a turbine the same way', async () => {
@@ -123,6 +128,7 @@ describe('FleetService', () => {
         'Turbine TURB404 not found',
       );
       expect(events.publish).not.toHaveBeenCalled();
+      expect(farmsCache.invalidate).not.toHaveBeenCalled();
     });
 
     it('returns the turbine without an event when the value is already set', async () => {

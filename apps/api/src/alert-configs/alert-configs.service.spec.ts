@@ -11,6 +11,7 @@ import {
   PrismaService,
   type AlertConfig,
 } from '@nextera/shared';
+import { FarmsCacheService } from '../farms-cache/farms-cache.service.js';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { AlertConfigsService } from './alert-configs.service.js';
 
@@ -36,19 +37,49 @@ describe('AlertConfigsService', () => {
   let service: AlertConfigsService;
   let prisma: DeepMockProxy<PrismaService>;
   let events: DeepMockProxy<EventStore>;
+  let farmsCache: DeepMockProxy<FarmsCacheService>;
 
   beforeEach(async () => {
     prisma = mockDeep<PrismaService>();
     events = mockDeep<EventStore>();
+    farmsCache = mockDeep<FarmsCacheService>();
     events.publish.mockResolvedValue({ id: '1-0', type: '', data: null });
     const moduleRef = await Test.createTestingModule({
       providers: [
         AlertConfigsService,
         { provide: PrismaService, useValue: prisma },
         { provide: EventStore, useValue: events },
+        { provide: FarmsCacheService, useValue: farmsCache },
       ],
     }).compile();
     service = moduleRef.get(AlertConfigsService);
+  });
+
+  describe('farms cache', () => {
+    it('is invalidated by a create, an update and a delete (latest.alerts joins the current rules)', async () => {
+      prisma.alertConfig.create.mockResolvedValue(row());
+      prisma.alertConfig.update.mockResolvedValue(row());
+      prisma.alertConfig.delete.mockResolvedValue(row());
+
+      await service.create({
+        measurementMetric: 'gearboxTempC',
+        comparison: 'above',
+        valueMetric: 120,
+        alertLevel: 'error',
+      });
+      await service.update(ID, { valueMetric: 130 });
+      await service.remove(ID);
+
+      expect(farmsCache.invalidate).toHaveBeenCalledTimes(3);
+    });
+
+    it('is left alone by a write that failed', async () => {
+      prisma.alertConfig.delete.mockRejectedValue(prismaError('P2025'));
+
+      await service.remove(ID).catch(() => undefined);
+
+      expect(farmsCache.invalidate).not.toHaveBeenCalled();
+    });
   });
 
   describe('list', () => {

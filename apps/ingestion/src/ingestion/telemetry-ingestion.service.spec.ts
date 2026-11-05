@@ -1,4 +1,5 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import {
   EventStore,
@@ -11,6 +12,7 @@ import {
 } from '@nextera/shared';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { IngestTelemetryDto } from './ingest-telemetry.dto.js';
+import { TelemetryBatcher } from './telemetry-batcher.js';
 import { TelemetryIngestionService } from './telemetry-ingestion.service.js';
 
 const dto: IngestTelemetryDto = {
@@ -51,7 +53,7 @@ const rule = (overrides: Partial<AlertConfig> = {}): AlertConfig => ({
 describe('TelemetryIngestionService', () => {
   let service: TelemetryIngestionService;
   let prisma: DeepMockProxy<PrismaService>;
-  const events = { publish: vi.fn() };
+  const events = { publish: vi.fn(), publishMany: vi.fn() };
 
   beforeEach(async () => {
     prisma = mockDeep<PrismaService>();
@@ -75,10 +77,16 @@ describe('TelemetryIngestionService', () => {
       (fn as (tx: PrismaService) => Promise<unknown>)(prisma),
     );
     events.publish.mockReset();
+    events.publishMany.mockReset();
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         TelemetryIngestionService,
+        TelemetryBatcher,
+        {
+          provide: ConfigService,
+          useValue: { get: (_key: string, fallback: unknown) => fallback },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: EventStore, useValue: events },
       ],
@@ -107,14 +115,16 @@ describe('TelemetryIngestionService', () => {
       ],
       skipDuplicates: true,
     });
-    expect(events.publish).toHaveBeenCalledWith(
-      TELEMETRY_RECEIVED,
-      expect.objectContaining({
-        id: 'r1',
-        turbineId: 'TURB001',
-        timestamp: '2026-01-01T00:00:00.000Z',
-      }),
-    );
+    expect(events.publishMany).toHaveBeenCalledWith([
+      {
+        type: TELEMETRY_RECEIVED,
+        data: expect.objectContaining({
+          id: 'r1',
+          turbineId: 'TURB001',
+          timestamp: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    ]);
   });
 
   it('stores the enabled rules the reading triggers in the same transaction, and publishes them', async () => {
@@ -144,7 +154,7 @@ describe('TelemetryIngestionService', () => {
         { telemetryId: 'r1', alertId: 'rule-gearbox-info' },
       ],
     });
-    const [, payload] = events.publish.mock.calls[0];
+    const [[{ data: payload }]] = events.publishMany.mock.calls[0];
     expect(
       payload.alerts.map((a: AlertConfig) => [a.id, a.alertLevel]),
     ).toEqual([
@@ -159,7 +169,7 @@ describe('TelemetryIngestionService', () => {
     await service.ingest(dto);
 
     expect(prisma.telemetryAlert.createMany).not.toHaveBeenCalled();
-    expect(events.publish.mock.calls[0][1].alerts).toEqual([]);
+    expect(events.publishMany.mock.calls[0][0][0].data.alerts).toEqual([]);
   });
 
   it('looks turbines up by their business key (turbine_id), not the UUID id', async () => {
@@ -192,9 +202,10 @@ describe('TelemetryIngestionService', () => {
     prisma.telemetry.createManyAndReturn.mockResolvedValue([]);
 
     await expect(service.ingest(dto)).resolves.toBe('duplicate');
+    expect(events.publishMany).not.toHaveBeenCalled();
     expect(events.publish).not.toHaveBeenCalled();
     // Idempotent: a re-sent reading adds no alert rows either.
-    expect(prisma.alertConfig.findMany).not.toHaveBeenCalled();
+    // (A batch reads the rules once, before the insert; the duplicate adds no alert rows.)
     expect(prisma.telemetryAlert.createMany).not.toHaveBeenCalled();
   });
 
@@ -351,7 +362,8 @@ describe('TelemetryIngestionService', () => {
   );
 
   it('keeps the committed row and acks when publishing fails (the live event is best-effort)', async () => {
-    events.publish.mockRejectedValue(new Error('redis down'));
+    events.publishMany.mockRejectedValue(new Error('redis down'));
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
     await expect(service.ingest(dto)).resolves.toBe('stored');
     expect(prisma.telemetry.delete).not.toHaveBeenCalled();

@@ -19,6 +19,10 @@ import {
   type TurbineResponse,
   type TurbineWeatherResponse,
 } from '@nextera/shared';
+import {
+  FarmsCacheService,
+  type CachedBody,
+} from '../farms-cache/farms-cache.service.js';
 import { httpQuery } from '../common/query-errors.js';
 import { FarmDailyQueryDto } from './dto/farm-daily-query.dto.js';
 import { WeatherQueryDto } from './dto/weather-query.dto.js';
@@ -37,11 +41,17 @@ export class FleetService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventStore,
+    private readonly farmsCache: FarmsCacheService,
   ) {}
 
   /** Every farm with its turbines and each turbine's latest reading: the fleet overview. */
   overview(): Promise<FarmOverview[]> {
     return listFarms(this.prisma);
+  }
+
+  /** `overview()` as cached JSON bytes + ETag (see FarmsCacheService); what GET /api/farms sends. */
+  cachedOverview(): Promise<CachedBody> {
+    return this.farmsCache.get(() => this.overview());
   }
 
   /** A turbine's readings, newest first, within an optional time range. */
@@ -110,6 +120,7 @@ export class FleetService {
       data: { commissioned },
     });
     if (updated) {
+      this.farmsCache.invalidate(); // before the event: this instance's next read must see it
       await this.publishFleetChanged({ turbineId });
       return toTurbineResponse(updated);
     }

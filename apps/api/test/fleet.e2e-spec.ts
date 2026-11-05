@@ -1,10 +1,12 @@
 import {
+  FLEET_CHANGED,
   runFarmRollup,
   seedFromCsv,
   upsertFarmWeather,
   type WeatherBucketRow,
 } from '@nextera/shared';
 import { SEED_DATA_DIR } from '@nextera/testing/seed-data';
+import { FarmsCacheService } from '../src/farms-cache/farms-cache.service.js';
 import {
   createTestApp,
   eventsUrl,
@@ -32,6 +34,22 @@ describe('Fleet API (e2e, CSV seed data)', () => {
     fetch(`${t.url}/api${path}`, {
       headers: { ...t.auth('viewer'), ...headers },
     });
+
+  // fetch() adds `Cache-Control: no-cache` to a request with If-None-Match (Fetch spec, cache
+  // mode no-store), and Express rightly answers that with a full 200; a browser revalidating
+  // its own cached copy (or curl) doesn't, so send what it would.
+  const revalidate = (etag: string) => ({
+    'If-None-Match': etag,
+    'Cache-Control': 'max-age=0',
+  });
+
+  /**
+   * Tests that write through Prisma directly (as the ingestion worker does, which only reaches the
+   * API through events) drop the in-process farms cache the way fleet.changed would; writes through
+   * the API invalidate it themselves and are tested as such.
+   */
+  const invalidateFarms = () => t.app.get(FarmsCacheService).invalidate();
+  beforeEach(invalidateFarms);
 
   describe('PATCH /api/turbines/:id', () => {
     const patch = (
@@ -69,6 +87,7 @@ describe('Fleet API (e2e, CSV seed data)', () => {
     };
 
     afterEach(async () => {
+      invalidateFarms();
       await t.prisma.turbine.updateMany({ data: { commissioned: false } });
     });
 
@@ -283,6 +302,90 @@ describe('Fleet API (e2e, CSV seed data)', () => {
       });
     });
 
+    describe('cache (FARMS_CACHE_TTL_MS)', () => {
+      it('sends JSON with an ETag and Cache-Control: private, no-cache', async () => {
+        const res = await get('/farms');
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get('content-type')).toMatch(/^application\/json/);
+        expect(res.headers.get('etag')).toMatch(/^W\/"[A-Za-z0-9_-]{43}"$/);
+        expect(res.headers.get('cache-control')).toBe('private, no-cache');
+        expect(Array.isArray(await res.json())).toBe(true);
+      });
+
+      it('answers a matching If-None-Match with 304 and no body, and a stale one with 200', async () => {
+        const etag = (await get('/farms')).headers.get('etag')!;
+
+        const same = await get('/farms', revalidate(etag));
+        expect(same.status).toBe(304);
+        expect(await same.text()).toBe('');
+        expect(same.headers.get('etag')).toBe(etag);
+
+        const other = await get('/farms', revalidate('W/"other"'));
+        expect(other.status).toBe(200);
+        expect(other.headers.get('etag')).toBe(etag);
+      });
+
+      it('still runs the guards first: no token is 401, a cached body is never served', async () => {
+        await get('/farms');
+        expect((await fetch(`${t.url}/api/farms`)).status).toBe(401);
+      });
+
+      it('shows a commissioned change at once (the PATCH invalidates), with a new ETag', async () => {
+        const first = await get('/farms');
+        const etag = first.headers.get('etag')!;
+        const commissioned = async (res: Response) =>
+          (await res.json())
+            .flatMap((f: { turbines: { id: string }[] }) => f.turbines)
+            .find((x: { id: string }) => x.id === 'TURB001').commissioned;
+        expect(await commissioned(first)).toBe(false);
+
+        try {
+          await fetch(`${t.url}/api/turbines/TURB001`, {
+            method: 'PATCH',
+            headers: {
+              ...t.auth('owner'),
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ commissioned: true }),
+          });
+
+          const after = await get('/farms', revalidate(etag));
+          expect(after.status).toBe(200);
+          expect(after.headers.get('etag')).not.toBe(etag);
+          expect(await commissioned(after)).toBe(true);
+        } finally {
+          await t.prisma.turbine.updateMany({ data: { commissioned: false } });
+        }
+      });
+
+      it('serves a row written behind its back until fleet.changed arrives, then shows it before the event reaches SSE clients', async () => {
+        const turbines = async () =>
+          (await (await get('/farms')).json()).flatMap(
+            (f: { turbines: { id: string; commissioned: boolean }[] }) =>
+              f.turbines,
+          );
+        expect((await turbines())[0].commissioned).toBe(false);
+
+        const sse = await openSse(eventsUrl(t));
+        try {
+          await t.prisma.turbine.update({
+            where: { turbineId: 'TURB001' },
+            data: { commissioned: true },
+          });
+          expect((await turbines())[0].commissioned).toBe(false); // cached
+
+          await t.events.publish(FLEET_CHANGED, { turbineId: 'TURB001' });
+          await sse.nextEvent('fleet.changed');
+          // The Redis subscriber invalidated before the event was emitted to the stream.
+          expect((await turbines())[0].commissioned).toBe(true);
+        } finally {
+          sse.close();
+          await t.prisma.turbine.updateMany({ data: { commissioned: false } });
+        }
+      });
+    });
+
     it('lists farms without turbines with an empty list', async () => {
       const farms = await (await get('/farms')).json();
       expect(
@@ -306,6 +409,7 @@ describe('Fleet API (e2e, CSV seed data)', () => {
         data: { commissioned: true },
       });
 
+      invalidateFarms();
       try {
         // Idempotent: upserts by turbine_id, so the UUIDs and the flag survive a re-seed.
         await seedFromCsv(t.prisma, SEED_DATA_DIR);
@@ -353,6 +457,7 @@ describe('Fleet API (e2e, CSV seed data)', () => {
           gearboxTempC: 1,
         },
       });
+      invalidateFarms();
 
       const farms = await (await get('/farms')).json();
       const turbine = farms.find((f: { id: string }) => f.id === 'FARM02')
@@ -635,14 +740,6 @@ describe('Fleet API (e2e, CSV seed data)', () => {
     const NOW = new Date('2026-01-03T00:00:00Z');
     const DAYS = 'from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z';
     const path = `/farms/FARM01/telemetry/daily?${DAYS}`;
-    // fetch() adds `Cache-Control: no-cache` to a request with If-None-Match (Fetch spec, cache
-    // mode no-store), and Express rightly answers that with a full 200; a browser revalidating
-    // its own cached copy (or curl) doesn't, so send what it would.
-    const revalidate = (etag: string) => ({
-      'If-None-Match': etag,
-      'Cache-Control': 'max-age=0',
-    });
-
     beforeAll(async () => {
       await t.prisma
         .$executeRaw`TRUNCATE TABLE farm_telemetry_rollups, farm_rollup_state, farm_rollup_dirty`;
@@ -951,6 +1048,7 @@ describe('Fleet API (e2e, CSV seed data)', () => {
       await t.prisma.telemetryAlert.create({
         data: { telemetryId: latest.id, alertId: rule.id },
       });
+      invalidateFarms();
 
       try {
         const farms = await (await get('/farms')).json();

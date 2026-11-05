@@ -8,12 +8,14 @@ import { ConfigService } from '@nestjs/config';
 import {
   EVENT_CHANNEL,
   EVENT_ID_PATTERN,
+  FLEET_CHANGED,
   EventStore,
   compareEventIds,
   type AppEvent,
 } from '@nextera/shared';
 import { Redis } from 'ioredis';
 import { Observable, Subject } from 'rxjs';
+import { FarmsCacheService } from '../farms-cache/farms-cache.service.js';
 
 /**
  * Read side of the event bus, used only by the API: subscribes to the Redis channel that every
@@ -31,6 +33,7 @@ export class EventsService implements OnModuleInit, OnModuleDestroy {
   constructor(
     config: ConfigService,
     private readonly store: EventStore,
+    private readonly farmsCache: FarmsCacheService,
   ) {
     this.subscriber = new Redis(config.getOrThrow<string>('REDIS_URL'));
   }
@@ -38,7 +41,11 @@ export class EventsService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     this.subscriber.on('message', (_channel: string, raw: string) => {
       try {
-        this.live$.next(JSON.parse(raw) as AppEvent);
+        const event = JSON.parse(raw) as AppEvent;
+        // Before the event reaches any SSE client: the web app reloads /api/farms on it and must
+        // not get the cached, pre-change response. Runs on every instance (each has a subscriber).
+        if (event.type === FLEET_CHANGED) this.farmsCache.invalidate();
+        this.live$.next(event);
       } catch {
         this.logger.warn(`Dropping malformed event: ${raw}`);
       }

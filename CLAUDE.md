@@ -50,7 +50,7 @@ turbines → Pub/Sub "telemetry" ─push→ Ingestion Worker ─→ Postgres + R
 
 ```
 apps/
-  api/                  # @nextera/api        NestJS 12: GET /api/farms, GET /api/turbines/:id/telemetry,
+  api/                  # @nextera/api        NestJS 12: GET /api/farms (in-process cache + ETag), GET /api/turbines/:id/telemetry,
                         #                     GET /api/turbines/:id/telemetry/stats (median/high/low per metric over the same rows),
                         #                     PATCH /api/turbines/:id { commissioned: boolean } (owner; the updated turbine, fleet.changed if the value changed),
                         #                     GET /api/farms/:farmId/weather and GET /api/turbines/:id/weather (the turbine's farm)
@@ -65,7 +65,7 @@ apps/
                         #                     POST :id/assign|keep|move|block|unblock),
                         #                     SSE GET /api/events; POST /api/auth/login, GET /api/auth/me (sign-in, roles);
                         #                     CORS for the web app. Dockerfile -> image "api"
-  ingestion/            # @nextera/ingestion  NestJS 12: Pub/Sub push POST /pubsub/telemetry,
+  ingestion/            # @nextera/ingestion  NestJS 12: Pub/Sub push POST /pubsub/telemetry (group commit, 503 when its queue is full),
                         #                     CSV upload POST /ingest/telemetry (multipart field "file"). Dockerfile -> image "ingestion"
     src/demo-feed/      #   live demo feed, not part of the worker: `node dist/demo-feed/main.js [--once]` in the same image
     src/farm-rollup/    #   farm rollup job, not part of the worker: `node dist/farm-rollup/main.js [--full | --from YYYY-MM-DD] [--every <s>]`

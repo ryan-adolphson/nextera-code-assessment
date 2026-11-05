@@ -132,6 +132,36 @@ describe('Ingestion worker (e2e, real Postgres + Redis)', () => {
     expect(await publishedEvents()).toHaveLength(1);
   });
 
+  it('groups a burst of concurrent pushes: all stored once, one event each, and the unallocated mix handled', async () => {
+    const minute = (m: number) =>
+      new Date(Date.UTC(2026, 2, 1, 0, m)).toISOString();
+    const burst = [
+      ...Array.from({ length: 40 }, (_, m) =>
+        reading({ turbine_id: 'TURB001', timestamp: minute(m) }),
+      ),
+      ...Array.from({ length: 40 }, (_, m) =>
+        reading({
+          turbine_id: 'TURB002',
+          farm_id: 'FARM02',
+          timestamp: minute(m),
+        }),
+      ),
+      reading({ turbine_id: 'TURB999', timestamp: minute(0) }), // unknown: held
+    ];
+    // Every reading twice, concurrently: redeliveries inside one batch.
+    const responses = await Promise.all(
+      [...burst, ...burst].map((payload) => push(url, payload)),
+    );
+
+    expect(responses.every((r) => r.status === 204)).toBe(true);
+    expect(await prisma.telemetry.count()).toBe(80);
+    expect(await prisma.heldTelemetry.count()).toBe(1);
+    const received = (await publishedEvents()).filter(
+      (e) => e.type === 'telemetry.received',
+    );
+    expect(received).toHaveLength(80); // one per stored reading
+  });
+
   it('stores abnormal readings such as the CSV’s overheating gearbox', async () => {
     expect((await push(url, reading({ gearbox_temp_c: 126.5 }))).status).toBe(
       204,
@@ -474,6 +504,36 @@ describe('Ingestion worker (e2e, real Postgres + Redis)', () => {
       expect(
         (event.data as { alerts: { id: string }[] }).alerts.map((a) => a.id),
       ).toEqual([error.id, warn.id]); // worst first
+    });
+
+    it('stores the alerts of every reading in a concurrent burst and puts them in each event', async () => {
+      const error = await rule(120, 'error');
+      const responses = await Promise.all(
+        Array.from({ length: 30 }, (_, m) =>
+          push(
+            url,
+            reading({
+              timestamp: new Date(Date.UTC(2026, 2, 1, 0, m)).toISOString(),
+              gearbox_temp_c: 126.5,
+            }),
+          ),
+        ),
+      );
+
+      expect(responses.every((r) => r.status === 204)).toBe(true);
+      expect(await prisma.telemetry.count()).toBe(30);
+      expect(
+        await prisma.telemetryAlert.count({ where: { alertId: error.id } }),
+      ).toBe(30);
+      const received = (await publishedEvents()).filter(
+        (e) => e.type === 'telemetry.received',
+      );
+      expect(received).toHaveLength(30);
+      expect(
+        received.every(
+          (e) => (e.data as { alerts: unknown[] }).alerts.length === 1,
+        ),
+      ).toBe(true);
     });
 
     it('stores no alert rows for a normal reading or a re-sent duplicate', async () => {

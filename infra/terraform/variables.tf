@@ -104,17 +104,17 @@ variable "ingestion_max_instances" {
 }
 
 variable "ingestion_concurrency" {
-  description = "Concurrent Pub/Sub pushes per worker instance."
+  description = "Concurrent Pub/Sub pushes per worker instance. High on purpose: the worker batches pushes into one DB flush at a time, so DB connections do not grow with concurrency, and the batch (INGEST_BATCH_MAX) and queue limit (INGEST_MAX_QUEUED, 500) can only fill if more requests than that can be in flight."
   type        = number
-  default     = 20
+  default     = 100
 }
 
 # --- Pub/Sub ----------------------------------------------------------------
 
 variable "pubsub_max_delivery_attempts" {
-  description = "Deliveries before a message moves to the dead-letter topic (5-100)."
+  description = "Deliveries before a message moves to the dead-letter topic (5-100). 10 attempts with the 10-600 s backoff in pubsub.tf is about 40 minutes of retries: the worker answers 503 when its queue is full (counted as a failed delivery), so valid readings survive an overload, while an invalid payload takes that long to reach the dead-letter topic."
   type        = number
-  default     = 5
+  default     = 10
 }
 
 variable "ingestion_invokers" {

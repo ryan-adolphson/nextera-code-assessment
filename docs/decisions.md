@@ -18,7 +18,7 @@ This is a proof of concept. The assumptions below were made to support a reasona
 These decisions were made to keep the proof of concept reasonably simple, with a clear understanding of the limitations of an application that isn't production-ready. Where a choice would need to change at larger scale, the [Scaling](#scaling) section covers it.
 
 ### Pub/Sub push with a dead-letter queue, not direct calls from turbines
-- **Why:** turbines and the worker are decoupled. Pub/Sub absorbs bursts and retries failures with backoff. After 5 failed deliveries, a message moves to a dead-letter topic instead of being lost.
+- **Why:** turbines and the worker are decoupled. Pub/Sub absorbs bursts and retries failures with backoff. After 10 failed deliveries (about 40 minutes of backoff retries), a message moves to a dead-letter topic instead of being lost.
 - **Cost:** delivery is at-least-once, so ingestion must be idempotent. It is: readings are unique on `(turbine_id, timestamp)`, and duplicates are skipped.
 - **Business effect:** a worker outage delays data but doesn't lose it, within the 7-day retention.
 

@@ -1,0 +1,14 @@
+nextera-load-ingestion-1 cpu=0.00% mem=77.36MiB / 512MiB
+nextera-load-postgres-1 cpu=2.45% mem=62.28MiB / 7.748GiB
+nextera-load-ingestion-1 cpu=34.32% mem=84.62MiB / 512MiB
+nextera-load-postgres-1 cpu=5.31% mem=66.08MiB / 7.748GiB
+nextera-load-ingestion-1 cpu=20.40% mem=83.51MiB / 512MiB
+nextera-load-postgres-1 cpu=5.30% mem=66.79MiB / 7.748GiB
+nextera-load-ingestion-1 cpu=24.00% mem=84.04MiB / 512MiB
+nextera-load-postgres-1 cpu=7.74% mem=66.67MiB / 7.748GiB
+nextera-load-ingestion-1 cpu=23.43% mem=84.3MiB / 512MiB
+nextera-load-postgres-1 cpu=5.25% mem=66.59MiB / 7.748GiB
+nextera-load-ingestion-1 cpu=22.08% mem=83.96MiB / 512MiB
+nextera-load-postgres-1 cpu=6.60% mem=65.03MiB / 7.748GiB
+nextera-load-ingestion-1 cpu=0.01% mem=83.88MiB / 512MiB
+nextera-load-postgres-1 cpu=0.33% mem=64.21MiB / 7.748GiB

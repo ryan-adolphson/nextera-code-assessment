@@ -1,3 +1,4 @@
+import { FarmsCacheService } from '../src/farms-cache/farms-cache.service.js';
 import {
   classifyReadings,
   enabledAlertRules,
@@ -48,6 +49,7 @@ describe('Unallocated turbines API (e2e)', () => {
     await t.prisma
       .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, held_telemetry, unallocated_turbines, turbines, farm_weather, farm_telemetry_rollups, farm_rollup_dirty, farm_rollup_state, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
+    t.app.get(FarmsCacheService).invalidate(); // written behind the API's back
   };
 
   beforeAll(async () => {
@@ -469,11 +471,19 @@ describe('Unallocated turbines API (e2e)', () => {
       const entry = await hold(
         reading({ turbineId: 'TURB001', farmId: 'FARM02' }),
       );
+      const farmOf = async () =>
+        (await (await api('GET', '/farms', { role: 'viewer' })).json())
+          .filter((f: { turbines: { id: string }[] }) =>
+            f.turbines.some((x) => x.id === 'TURB001'),
+          )
+          .map((f: { id: string }) => f.id);
+      expect(await farmOf()).toEqual(['FARM01']); // primes the farms cache
       const sse = await openSse(eventsUrl(t, 'viewer'));
       try {
         const res = await api('POST', `/unallocated-turbines/${entry.id}/move`);
 
         expect(res.status).toBe(200);
+        expect(await farmOf()).toEqual(['FARM02']); // visible at once, not after the TTL
         expect(await res.json()).toMatchObject({
           action: 'moved',
           turbine: { id: 'TURB001', farmId: 'FARM02' },

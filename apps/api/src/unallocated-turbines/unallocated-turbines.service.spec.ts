@@ -17,6 +17,7 @@ import {
   type Turbine,
   type UnallocatedTurbine,
 } from '@nextera/shared';
+import { FarmsCacheService } from '../farms-cache/farms-cache.service.js';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { UnallocatedTurbinesService } from './unallocated-turbines.service.js';
@@ -82,12 +83,14 @@ describe('UnallocatedTurbinesService', () => {
   let service: UnallocatedTurbinesService;
   let prisma: DeepMockProxy<PrismaService>;
   let events: DeepMockProxy<EventStore>;
+  let farmsCache: DeepMockProxy<FarmsCacheService>;
   /** events.publish calls made while a transaction was still open (must stay 0). */
   let publishedInsideTransaction: number;
 
   beforeEach(async () => {
     prisma = mockDeep<PrismaService>();
     events = mockDeep<EventStore>();
+    farmsCache = mockDeep<FarmsCacheService>();
     events.publish.mockResolvedValue({ id: '1-0', type: '', data: null });
     publishedInsideTransaction = 0;
     prisma.$transaction.mockImplementation(async (fn: unknown) => {
@@ -134,6 +137,7 @@ describe('UnallocatedTurbinesService', () => {
         UnallocatedTurbinesService,
         { provide: PrismaService, useValue: prisma },
         { provide: EventStore, useValue: events },
+        { provide: FarmsCacheService, useValue: farmsCache },
       ],
     }).compile();
     service = moduleRef.get(UnallocatedTurbinesService);
@@ -194,6 +198,7 @@ describe('UnallocatedTurbinesService', () => {
         FLEET_CHANGED,
         TELEMETRY_RECEIVED,
       ]);
+      expect(farmsCache.invalidate).toHaveBeenCalledOnce();
       expect(events.publish).toHaveBeenNthCalledWith(1, UNALLOCATED_CHANGED, {
         action: 'assigned',
         id: ID,

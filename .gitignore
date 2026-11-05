@@ -29,3 +29,5 @@ e2e/.auth/
 # Load test (load/): only the smoke run docs/load-test.md cites is kept
 load/results/*.json
 !load/results/smoke-*.json
+!load/results/baseline-*.json
+!load/results/after-*.json

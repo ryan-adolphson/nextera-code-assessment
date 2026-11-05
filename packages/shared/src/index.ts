@@ -27,6 +27,7 @@ export { createPrismaClient } from './prisma/create-prisma.js';
 export {
   EventStore,
   EventStoreModule,
+  PublishManyError,
   EVENT_CHANNEL,
   EVENT_HISTORY_LENGTH,
   EVENT_ID_PATTERN,

@@ -22,17 +22,27 @@ import { FarmDailyQueryDto } from './dto/farm-daily-query.dto.js';
 import { WeatherQueryDto } from './dto/weather-query.dto.js';
 import { TelemetryQueryDto } from './dto/telemetry-query.dto.js';
 import { UpdateTurbineDto } from './dto/update-turbine.dto.js';
-import { FarmOverview, FleetService } from './fleet.service.js';
+import { FleetService } from './fleet.service.js';
 
 @Roles('viewer')
 @Controller()
 export class FleetController {
   constructor(private readonly fleet: FleetService) {}
 
-  /** GET /api/farms: farms, their turbines and each turbine's latest reading. */
+  /**
+   * GET /api/farms: farms, their turbines and each turbine's latest reading. Served from the
+   * in-process cache as pre-serialized bytes (FarmsCacheService), so it writes the Buffer itself:
+   * returning one from a handler would be JSON-encoded as `{type:'Buffer'}`. `ETag` +
+   * `Cache-Control: private, no-cache` as on the daily route; a matching `If-None-Match` gets 304
+   * without a body (Express `res.send`). Readings may be up to FARMS_CACHE_TTL_MS old.
+   */
   @Get('farms')
-  farms(): Promise<FarmOverview[]> {
-    return this.fleet.overview();
+  async farms(@Res() res: Response): Promise<void> {
+    const { body, etag } = await this.fleet.cachedOverview();
+    res
+      .set({ ETag: etag, 'Cache-Control': 'private, no-cache' })
+      .type('application/json')
+      .send(body);
   }
 
   /**

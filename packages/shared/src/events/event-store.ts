@@ -23,6 +23,21 @@ export function compareEventIds(a: string, b: string): number {
   return 0;
 }
 
+/** Some events of `publishMany` were not stored or published; the others went out. */
+export class PublishManyError extends Error {
+  override readonly name = 'PublishManyError';
+
+  constructor(
+    readonly failed: number,
+    readonly total: number,
+    override readonly cause?: Error,
+  ) {
+    super(
+      `${failed} of ${total} events not published${cause ? `: ${cause.message}` : ''}`,
+    );
+  }
+}
+
 /**
  * Writes domain events for SSE. Used by every service that changes data (API and ingestion worker):
  * XADD to a capped Redis stream (history for Last-Event-ID replay), then PUBLISH so every API
@@ -56,6 +71,61 @@ export class EventStore implements OnModuleDestroy {
     const event: AppEvent = { id: id!, type, data };
     await this.redis.publish(EVENT_CHANNEL, JSON.stringify(event));
     return event;
+  }
+
+  /**
+   * Publishes several events with two round trips instead of 2n: all XADDs pipelined, then the
+   * PUBLISHes of the events that made it into the stream, in order. Event IDs behave as in
+   * `publish` (the stream ID of each). Call only after the database write has committed. A partial
+   * failure throws `PublishManyError` (the events that did go out are still delivered).
+   */
+  async publishMany(
+    items: readonly { type: string; data: unknown }[],
+  ): Promise<AppEvent[]> {
+    if (!items.length) return [];
+    const added = this.redis.pipeline();
+    for (const { type, data } of items) {
+      added.xadd(
+        EVENT_STREAM_KEY,
+        'MAXLEN',
+        '~',
+        EVENT_HISTORY_LENGTH,
+        '*',
+        'event',
+        JSON.stringify({ type, data }),
+      );
+    }
+    const addResults = (await added.exec()) ?? [];
+
+    const events: AppEvent[] = [];
+    let failed = 0;
+    let firstError: Error | undefined;
+    items.forEach(({ type, data }, i) => {
+      const [error, id] = addResults[i] ?? [new Error('no pipeline result')];
+      if (error || typeof id !== 'string') {
+        failed++;
+        firstError ??= error ?? new Error('XADD returned no id');
+      } else {
+        events.push({ id, type, data });
+      }
+    });
+
+    if (events.length) {
+      const published = this.redis.pipeline();
+      for (const event of events) {
+        published.publish(EVENT_CHANNEL, JSON.stringify(event));
+      }
+      const publishResults = (await published.exec()) ?? [];
+      const publishFailed =
+        events.length - publishResults.filter(([e]) => !e).length;
+      if (publishFailed) {
+        failed += publishFailed;
+        firstError ??= publishResults.find(([e]) => e)?.[0] ?? undefined;
+      }
+    }
+
+    if (failed) throw new PublishManyError(failed, items.length, firstError);
+    return events;
   }
 
   /** Events after `lastEventId` (exclusive), oldest first. */
