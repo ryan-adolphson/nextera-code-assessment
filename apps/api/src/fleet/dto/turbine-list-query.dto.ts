@@ -1,6 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
   DEFAULT_TURBINE_PAGE,
+  IsUtcTimestamp,
   MAX_TURBINE_PAGE,
   TURBINE_SORTS,
   TURBINE_STATUSES,
@@ -64,6 +65,15 @@ export class TurbineListQueryDto {
   @Min(1)
   @Max(MAX_TURBINE_PAGE)
   limit: number = DEFAULT_TURBINE_PAGE;
+
+  /**
+   * The instant `status` is judged at (reporting = newest reading at most 15 minutes before it; a
+   * later reading counts as reporting). Default: the server's clock. Any date: it only affects the
+   * caller's own read, and cursors do not depend on it.
+   */
+  @IsOptional()
+  @IsUtcTimestamp({ allowFuture: true })
+  asOf?: string;
 
   /** The `nextCursor` / `prevCursor` of a previous page. */
   @IsOptional()

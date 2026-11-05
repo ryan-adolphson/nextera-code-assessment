@@ -82,7 +82,13 @@ export class FleetService {
 
   /** One page of turbines with their latest readings; 400 for a bad cursor or an unsupported sort. */
   turbines(query: TurbineListQueryDto): Promise<TurbineListResponse> {
-    return httpQuery(listTurbines(this.prisma, query));
+    const { asOf, ...rest } = query;
+    return httpQuery(
+      listTurbines(this.prisma, {
+        ...rest,
+        now: asOf ? new Date(asOf) : undefined,
+      }),
+    );
   }
 
   /** One turbine in the list's shape; 404 if unknown. */

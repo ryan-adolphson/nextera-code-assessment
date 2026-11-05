@@ -24,6 +24,7 @@ export const FILTER_DEBOUNCE_MS = 300;
 export const LIVE_BATCH_MS = secondsToMilliseconds(1);
 /** The visible turbines are sent to the live connection this long after they last changed. */
 export const WATCH_DEBOUNCE_MS = 300;
+const MINUTE_MS = 60_000;
 export const TURBINE_PAGE_SIZE = 25;
 /** Filtered totals above this show as "10,000+" (the API counts up to 10,001). */
 export const TOTAL_DISPLAY_CAP = 10_000;
@@ -142,8 +143,10 @@ export class TurbinePageStore {
     (query: TurbineQuery) => this.api.turbines(query),
     (page) => this.applyPage(page),
   );
-  readonly loading = this.load.loading;
-  readonly failed = this.load.failed;
+  /** The request in flight is a quiet minute-tick refetch: no loading state, no error. */
+  private readonly quiet = signal(false);
+  readonly loading = computed(() => this.load.loading() && !this.quiet());
+  readonly failed = computed(() => this.load.failed() && !this.quiet());
 
   /** The commissioned value being saved, per turbine; shown over whatever the page says. */
   private readonly commissionedSaving = signal<ReadonlyMap<string, boolean>>(new Map());
@@ -200,6 +203,8 @@ export class TurbinePageStore {
    * Without it the batch just applies the change.
    */
   reorderWith: ((change: () => void) => void) | null = null;
+  /** The clock's minute: changes once a minute, not on every reading that sets `fleet.now()`. */
+  private readonly minute = computed(() => Math.floor(this.fleet.now() / MINUTE_MS));
   private readonly visibleIds = computed(() => this.items().map((t) => t.id), { equal: sameIds });
 
   constructor() {
@@ -223,6 +228,19 @@ export class TurbinePageStore {
       seen = now;
       // A first page still on its way will be newer than the open anyway.
       untracked(() => (this.loaded() || !this.loading() ? this.refetch() : undefined));
+    });
+    // With a status filter the server judges "reporting" at `asOf`: ask again each minute so a row
+    // whose pill aged past 15 minutes leaves the filter. `asOf` is not part of `query`, so it never
+    // resets the page or triggers the effect above; this is its only trigger.
+    let lastMinute = this.minute();
+    effect(() => {
+      const minute = this.minute();
+      if (minute === lastMinute) return;
+      lastMinute = minute;
+      untracked(() => {
+        if (this.status() === 'all' || !this.scoped()) return;
+        if (this.loaded() || !this.loading()) this.refetch(true);
+      });
     });
     this.fleet.readings$
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -313,15 +331,19 @@ export class TurbinePageStore {
     this.pageNumber.set(1);
   }
 
-  private send(query: TurbineQuery): void {
+  private send(query: TurbineQuery, quiet = false): void {
     this.requestsSent++;
-    this.load.run(query);
+    this.quiet.set(quiet);
+    // The server's clock must match the pill's: send ours, only with a status filter.
+    this.load.run(
+      query.status ? { ...query, asOf: new Date(this.fleet.now()).toISOString() } : query,
+    );
   }
 
-  /** Quietly loads the current query again; the rows stay until the answer. */
-  private refetch(): void {
+  /** Quietly loads the current query (same cursor) again; the rows stay until the answer. */
+  private refetch(quiet = false): void {
     const query = this.query();
-    if (query) this.send(query);
+    if (query) this.send(query, quiet);
   }
 
   private applyPage(page: TurbinePageResponse): void {

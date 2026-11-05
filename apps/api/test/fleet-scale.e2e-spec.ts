@@ -149,6 +149,125 @@ describe('Fleet scale API (e2e)', () => {
       );
     });
 
+    describe('asOf (the instant status is judged at)', () => {
+      // The seeded latest readings: 22 at T0, XT007 and XT017 at T0 - 39 minutes (whole seconds),
+      // TURB001/TURB002 in January 2026, 6 turbines without a reading.
+      const T0 = Math.floor(NOW / 1000) * 1000 - 60_000;
+      const at = (ms: number) => encodeURIComponent(new Date(ms).toISOString());
+      const MIN = 60_000;
+      const counts = async (asOf: string) => ({
+        reporting: (await page(`?status=reporting&limit=100&asOf=${asOf}`))
+          .total,
+        stale: (await page(`?status=stale&limit=100&asOf=${asOf}`)).total,
+      });
+
+      it('judges the same rows by the given instant, and by the server clock without it', async () => {
+        expect(await counts(at(T0 + MIN))).toEqual({
+          reporting: 22,
+          stale: 4,
+        });
+        // 20 minutes later the T0 readings are 21 minutes old
+        expect(await counts(at(T0 + 21 * MIN))).toEqual({
+          reporting: 0,
+          stale: 26,
+        });
+        // 38 minutes earlier XT007 / XT017 (T0 - 39 min) are 1 minute old
+        expect(await counts(at(T0 - 38 * MIN))).toEqual({
+          reporting: 24,
+          stale: 2,
+        });
+        const noParam = await page('?status=reporting&limit=100');
+        expect(noParam.total).toBe(22);
+        const stale = await page(
+          `?status=stale&limit=100&asOf=${at(T0 + 21 * MIN)}`,
+        );
+        expect(stale.items).toHaveLength(26);
+        expect(stale.items.every((i) => i.latest !== null)).toBe(true);
+      });
+
+      it('treats exactly 15:00 as reporting and 15:00.001 as stale', async () => {
+        const edge = await page(
+          `?status=reporting&limit=100&asOf=${at(T0 + 15 * MIN)}`,
+        );
+        expect(edge.items).toHaveLength(22);
+        expect(edge.total).toBe(22);
+        const over = await page(
+          `?status=reporting&limit=100&asOf=${at(T0 + 15 * MIN + 1)}`,
+        );
+        expect(over.items).toHaveLength(0);
+        expect(over.total).toBe(0);
+        const staleOver = await page(
+          `?status=stale&limit=100&asOf=${at(T0 + 15 * MIN + 1)}`,
+        );
+        expect(staleOver.total).toBe(26);
+      });
+
+      it('counts a reading dated after asOf as reporting, in the items and the total', async () => {
+        // asOf a year before: every reading (even January 2026's) is ahead of it
+        const asOf = at(NOW - 365 * 24 * 60 * MIN);
+        const reporting = await page(
+          `?status=reporting&limit=100&asOf=${asOf}`,
+        );
+        expect(reporting.total).toBe(26);
+        expect(reporting.items.map((i) => i.id)).toContain('TURB001');
+        expect((await page(`?status=stale&limit=100&asOf=${asOf}`)).total).toBe(
+          0,
+        );
+      });
+
+      it('keeps total consistent with the items under each asOf, and no_data unaffected', async () => {
+        for (const asOf of [T0 - 38 * MIN, T0 + MIN, T0 + 21 * MIN]) {
+          for (const status of ['reporting', 'stale']) {
+            const body = await page(
+              `?status=${status}&limit=100&asOf=${at(asOf)}`,
+            );
+            expect(body.total).toBe(body.items.length);
+          }
+          expect(
+            (await page(`?status=no_data&limit=100&asOf=${at(asOf)}`)).total,
+          ).toBe(6);
+        }
+      });
+
+      it('follows a cursor with a changed asOf', async () => {
+        for (const status of ['', '&status=stale']) {
+          const first = await page(
+            `?sort=time&limit=3${status}&asOf=${at(T0 + MIN)}`,
+          );
+          expect(first.nextCursor).not.toBeNull();
+          const next = await get(
+            `/turbines?sort=time&limit=3${status}&cursor=${first.nextCursor}&asOf=${at(T0 + 2 * MIN)}`,
+          );
+          expect(next.status).toBe(200);
+          const second = (await next.json()) as Page;
+          const ids = [...first.items, ...second.items].map((i) => i.id);
+          expect(new Set(ids).size).toBe(ids.length);
+        }
+        // unfiltered: walking the whole list with a different asOf per page covers every turbine once
+        const seen: string[] = [];
+        let body = await page(`?sort=time&limit=10&asOf=${at(T0)}`);
+        seen.push(...body.items.map((i) => i.id));
+        let n = 1;
+        while (body.nextCursor) {
+          body = await page(
+            `?sort=time&limit=10&cursor=${body.nextCursor}&asOf=${at(T0 + n++ * MIN)}`,
+          );
+          seen.push(...body.items.map((i) => i.id));
+        }
+        expect(seen).toHaveLength(32);
+        expect(new Set(seen).size).toBe(32);
+      });
+
+      it('sends 400 for an asOf that is not a UTC timestamp', async () => {
+        for (const asOf of ['2026-01-01', '2026-01-01T12:00:00', 'now', '']) {
+          expect(
+            (await get(`/turbines?asOf=${encodeURIComponent(asOf)}`)).status,
+            asOf,
+          ).toBe(400);
+        }
+      });
+    });
+
     it('sorts by a reading value within a farm', async () => {
       const body = await page('?farmId=FARM01&sort=power&dir=desc&limit=100');
       const power = body.items

@@ -80,7 +80,7 @@ export class FleetController {
   }
 
   /**
-   * GET /api/turbines?farmId=&q=&status=&commissioned=&hasData=&sort=&dir=&limit=&cursor=: a page
+   * GET /api/turbines?farmId=&q=&status=&commissioned=&hasData=&sort=&dir=&limit=&cursor=&asOf=: a page
    * of turbines with their latest reading, keyset-paged (see `listTurbines`).
    */
   @Get('turbines')

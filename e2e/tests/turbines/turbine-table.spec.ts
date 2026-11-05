@@ -26,8 +26,9 @@ import { SEED_NOW, logIn } from "../support/session.js";
 // Plan 4: /turbines — filters (text, status, commissioning), sorting and paging, served page by
 // page by GET /api/turbines. Filtering and sorting run on the real API: the expectation is the
 // API's own answer to the query the page should have sent (fetchTurbinePage), plus the fleet read
-// through the API for the sort orders. The server judges "reporting" on its clock, the pill on the
-// browser's fixed one, so the status filter is checked against the API, not the pills. Paging
+// through the API for the sort orders. With a status filter the page sends `asOf` (the browser's
+// fixed clock), so the server judges "reporting" like the pill: the status filter is checked
+// against both the API's answer and the pills of the rows shown. Paging
 // needs more than 25 turbines, which the fixture doesn't have, and the fixture has no never-reported
 // turbine, so those tests serve a generated fleet (mockTurbines, which answers like the API). The
 // paginator has next and previous only. Read-only; live stream aborted.
@@ -244,7 +245,7 @@ test.describe("Turbines table", () => {
     ).toHaveCount(0);
   });
 
-  test("the status filter asks the server, which judges reporting on its own clock", async ({
+  test("the rows under each status filter have matching pills, and the request carries asOf", async ({
     page,
     request,
   }) => {
@@ -257,17 +258,20 @@ test.describe("Turbines table", () => {
       "No recent data",
       "No readings yet",
     ]);
-    for (const [label, value] of [
-      ["Reporting", "reporting"],
-      ["No recent data", "stale"],
-      ["No readings yet", "no_data"],
+    for (const [label, value, pill] of [
+      ["Reporting", "reporting", /^Reporting$/],
+      ["No recent data", "stale", /^No data in (15|30|60) min$/],
+      ["No readings yet", "no_data", /^No readings yet$/],
     ] as const) {
       const sent = turbinesResponse(page, (p) => p.get("status") === value);
       await statusFilter.selectOption({ label });
-      await sent;
+      // The server judges at the browser's (fixed) clock, as the pill does.
+      const asOf = new URL((await sent).url()).searchParams.get("asOf");
+      expect(asOf).toBe(SEED_NOW.toISOString());
       // "No readings yet" lists the never-reported ones, so the switch must not hide them.
       const expected = await fetchTurbinePage(request, token, {
         status: value,
+        asOf: SEED_NOW.toISOString(),
         sort: "time",
         dir: "desc",
         limit: 25,
@@ -280,6 +284,11 @@ test.describe("Turbines table", () => {
         await expect
           .poll(() => shownIds(page))
           .toEqual(expected.items.map((t) => t.id));
+        for (const pillText of await rows(page)
+          .getByTestId("staleness")
+          .allTextContents()) {
+          expect(pillText.trim()).toMatch(pill);
+        }
       } else {
         await expect(page.getByTestId("no-matches")).toBeVisible();
       }

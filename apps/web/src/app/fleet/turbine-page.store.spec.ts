@@ -103,6 +103,137 @@ describe('TurbinePageStore', () => {
       expect(api.turbines).toHaveBeenCalledOnce();
     });
 
+    it('sends asOf (the client clock) only with a status filter, and asks again each minute', async () => {
+      const { store, api, fleet, lastQuery, flush, open } = setup(largeFleetFixture(60));
+      await open(null);
+      expect(lastQuery().asOf).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(MINUTE);
+      await flush();
+      expect(api.turbines).toHaveBeenCalledOnce();
+
+      store.setStatus('reporting');
+      await flush();
+      store.next();
+      await flush();
+      const sent = api.turbines.mock.calls.length;
+      expect(lastQuery().asOf).toBe(new Date(fleet.now()).toISOString());
+
+      await vi.advanceTimersByTimeAsync(MINUTE);
+      await flush();
+
+      expect(api.turbines.mock.calls.length).toBe(sent + 1);
+      expect(lastQuery()).toMatchObject({ status: 'reporting', cursor: '25' });
+      expect(lastQuery().asOf).toBe(new Date(fleet.now()).toISOString());
+      expect(store.paging.pageIndex()).toBe(1);
+    });
+
+    it('asks once per minute, not when a live reading moves the clock mid-minute', async () => {
+      const { store, api, sse, flush, open } = setup();
+      await open(null);
+      store.setStatus('reporting');
+      await flush();
+      const sent = api.turbines.mock.calls.length;
+
+      await vi.advanceTimersByTimeAsync(MINUTE / 2);
+      sse.push(reading({ turbineId: 'TURB001', farmId: 'FARM01', timestamp: AT_NOW }));
+      await flush();
+      expect(api.turbines.mock.calls.length).toBe(sent);
+
+      await vi.advanceTimersByTimeAsync(MINUTE / 2);
+      await flush();
+      expect(api.turbines.mock.calls.length).toBe(sent + 1);
+
+      await vi.advanceTimersByTimeAsync(MINUTE - 1);
+      await flush();
+      expect(api.turbines.mock.calls.length).toBe(sent + 1);
+    });
+
+    it('does not ask again each minute before the first page has loaded', async () => {
+      const { store, api, flush } = setup();
+      const first = new Subject<TurbinePageResponse>();
+      api.turbines.mockReturnValue(first);
+      store.setStatus('stale');
+      store.setScope(null);
+      await flush();
+      expect(api.turbines).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(MINUTE);
+      await flush();
+
+      expect(api.turbines).toHaveBeenCalledOnce();
+    });
+
+    it('does not ask again each minute before the table has said which scope it shows', async () => {
+      const { store, api, flush } = setup();
+      store.setStatus('stale');
+
+      await vi.advanceTimersByTimeAsync(2 * MINUTE);
+      await flush();
+
+      expect(api.turbines).not.toHaveBeenCalled();
+    });
+
+    it('lets a user action win over a minute refetch still in flight', async () => {
+      const { store, api, ids, lastQuery, flush, open } = setup();
+      await open(null);
+      store.setStatus('stale');
+      await flush();
+      const slow = new Subject<TurbinePageResponse>();
+      api.turbines.mockReturnValueOnce(slow);
+      await vi.advanceTimersByTimeAsync(MINUTE);
+      await flush();
+      expect(slow.observed).toBe(true);
+
+      store.setStatus('reporting');
+      await flush();
+
+      expect(slow.observed).toBe(false);
+      expect(lastQuery().status).toBe('reporting');
+      slow.next({ items: [], nextCursor: null, prevCursor: null, total: 0, totalCapped: false });
+      await flush();
+      expect(ids().length).toBeGreaterThan(0);
+      expect(store.loading()).toBe(false);
+    });
+
+    it('shows no loading state during a minute refetch, and an emptied page keeps Previous', async () => {
+      const { store, api, ids, flush, open } = setup(largeFleetFixture(60));
+      await open(null);
+      store.setStatus('reporting');
+      await flush();
+      store.next();
+      await flush();
+      expect(store.hasPrevious()).toBe(true);
+      const tick = new Subject<TurbinePageResponse>();
+      api.turbines.mockReturnValueOnce(tick);
+
+      await vi.advanceTimersByTimeAsync(MINUTE);
+      await flush();
+      expect(store.loading()).toBe(false);
+      expect(ids().length).toBeGreaterThan(0);
+
+      tick.next({ items: [], nextCursor: null, prevCursor: '0', total: 25, totalCapped: false });
+      await flush();
+
+      expect(ids()).toEqual([]);
+      expect(store.loading()).toBe(false);
+      expect(store.hasPrevious()).toBe(true);
+    });
+
+    it('keeps the rows and shows no error when a minute refetch fails', async () => {
+      const { store, api, ids, flush, open } = setup();
+      await open(null);
+      store.setStatus('stale');
+      await flush();
+      const rows = ids();
+      api.turbines.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 500 })));
+
+      await vi.advanceTimersByTimeAsync(MINUTE);
+      await flush();
+
+      expect(ids()).toEqual(rows);
+      expect(store.failed()).toBe(false);
+    });
+
     it('applies selects and switches at once, each from the first page', async () => {
       const { store, lastQuery, flush, open } = setup(largeFleetFixture(60));
       await open(null);

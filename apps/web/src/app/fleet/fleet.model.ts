@@ -78,6 +78,8 @@ export interface TurbineQuery {
   /** Matches turbine id, farm id or farm name. */
   q?: string;
   status?: TurbineStatus;
+  /** UTC ISO instant the status filter is judged at (the client clock); sent only with `status`. */
+  asOf?: string;
   commissioned?: boolean;
   /** true = only turbines that have reported. */
   hasData?: boolean;

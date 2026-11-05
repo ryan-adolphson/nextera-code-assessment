@@ -7,8 +7,8 @@ import type { TurbineItem, TurbinePage } from "./fleet.js";
  * than a page, a never-reported turbine, ties). It answers like the API: the filters (farmId, q,
  * status, commissioned, hasData), the sort (id, farm, commissioned, time, power, wind, gearbox;
  * turbines without a reading last, ties by id) and keyset paging (here: an offset as the cursor,
- * `limit` rows a page, the total counted in full). Its `status` is judged at SEED_NOW, the page's
- * fixed clock, since a mock has no clock of its own. Everything else (summaries, markers, the
+ * `limit` rows a page, the total counted in full). Its `status` is judged at the request's `asOf`
+ * (the page's clock), or at SEED_NOW, the page's fixed clock, when there is none. Everything else (summaries, markers, the
  * stream) stays real unless the test mocks it. Every request it served is in `requests`. The
  * array passed in is the "database": a test changes a turbine's `latest` to change what the next
  * request (the page is fetched again each time the stream opens) returns.
@@ -74,10 +74,10 @@ export const mockTurbine = (
     ageMinutes === null ? null : mockReading(id, farmId, ageMinutes, power),
 });
 
-const status = (t: MockTurbine) =>
+const status = (t: MockTurbine, asOf: number) =>
   !t.latest
     ? "no_data"
-    : SEED_NOW.getTime() - Date.parse(t.latest.timestamp) > 15 * 60_000
+    : asOf - Date.parse(t.latest.timestamp) > 15 * 60_000
       ? "stale"
       : "reporting";
 
@@ -97,6 +97,8 @@ export function pageOf(
   params: URLSearchParams,
 ): TurbinePage {
   const q = params.get("q")?.toLowerCase();
+  const asOfParam = Date.parse(params.get("asOf") ?? "");
+  const asOf = Number.isNaN(asOfParam) ? SEED_NOW.getTime() : asOfParam;
   const value = SORT[params.get("sort") ?? "id"] ?? SORT["id"];
   const dir = params.get("dir") === "desc" ? -1 : 1;
   const matching = turbines
@@ -107,7 +109,7 @@ export function pageOf(
           [t.id, t.farmId, t.farmName].some((s) =>
             s.toLowerCase().includes(q),
           )) &&
-        (!params.get("status") || status(t) === params.get("status")) &&
+        (!params.get("status") || status(t, asOf) === params.get("status")) &&
         (!params.has("commissioned") ||
           t.commissioned === (params.get("commissioned") === "true")) &&
         (params.get("hasData") !== "true" || t.latest !== null),

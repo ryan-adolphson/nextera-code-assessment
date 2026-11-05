@@ -50,7 +50,7 @@ turbines → Pub/Sub "telemetry" ─push→ Ingestion Worker ─→ Postgres + R
 
 ```
 apps/
-  api/                  # @nextera/api        NestJS 12: GET /api/farm-summaries, /api/fleet/summary (cached, ETag), GET /api/turbines (keyset paging), /api/turbines/:id, /api/farms/:farmId/turbine-markers, GET /api/farms (deprecated), GET /api/turbines/:id/telemetry,
+  api/                  # @nextera/api        NestJS 12: GET /api/farm-summaries, /api/fleet/summary (cached, ETag), GET /api/turbines (keyset paging; ?asOf= sets the clock status is judged at), /api/turbines/:id, /api/farms/:farmId/turbine-markers, GET /api/farms (deprecated), GET /api/turbines/:id/telemetry,
                         #                     GET /api/turbines/:id/telemetry/stats (median/high/low per metric over the same rows),
                         #                     PATCH /api/turbines/:id { commissioned: boolean } (owner; the updated turbine, fleet.changed if the value changed),
                         #                     GET /api/farms/:farmId/weather and GET /api/turbines/:id/weather (the turbine's farm)
