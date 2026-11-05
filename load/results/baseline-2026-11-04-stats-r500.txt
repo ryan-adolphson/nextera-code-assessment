@@ -1,0 +1,12 @@
+nextera-load-ingestion-1 0.01% 102.1MiB / 512MiB
+nextera-load-postgres-1 1.58% 81.93MiB / 7.748GiB
+nextera-load-ingestion-1 0.00% 102.1MiB / 512MiB
+nextera-load-postgres-1 0.06% 74.77MiB / 7.748GiB
+nextera-load-ingestion-1 0.00% 102.1MiB / 512MiB
+nextera-load-postgres-1 0.07% 74.19MiB / 7.748GiB
+nextera-load-ingestion-1 0.00% 102.1MiB / 512MiB
+nextera-load-postgres-1 0.08% 74.37MiB / 7.748GiB
+nextera-load-ingestion-1 74.52% 105.1MiB / 512MiB
+nextera-load-postgres-1 30.15% 86.41MiB / 7.748GiB
+nextera-load-ingestion-1 96.66% 133.9MiB / 512MiB
+nextera-load-postgres-1 22.69% 86.52MiB / 7.748GiB

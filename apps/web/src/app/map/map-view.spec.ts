@@ -1,6 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { LegendItem, MapMarker, MapView } from './map-view';
+import * as L from 'leaflet';
+import { CLUSTER_FROM, LegendItem, MapMarker, MapView } from './map-view';
 
 @Component({
   imports: [MapView],
@@ -133,5 +134,105 @@ describe('MapView (Leaflet)', () => {
     } finally {
       for (const name of Object.keys(tokens)) root.removeProperty(name);
     }
+  });
+
+  describe('clustering', () => {
+    const many = (count: number, status: MapMarker['status'] = 'ok') =>
+      Array.from({ length: count }, (_, i) =>
+        marker(`T${i}`, {
+          lat: 41 + (i % 10) * 0.0001,
+          lng: -96 + Math.floor(i / 10) * 0.0001,
+          status,
+        }),
+      );
+
+    it('groups nearby markers from CLUSTER_FROM on, with the legend entry and a named cluster', async () => {
+      await render([...many(CLUSTER_FROM - 1), marker('RED', { status: 'stale-60' })]);
+
+      // jsdom has no layout (a 0 x 0 map draws no cluster), so ask the group for its icon.
+      const view = fixture.debugElement.children[0].componentInstance as MapView;
+      const group = view['markerLayer'] as L.MarkerClusterGroup;
+      expect(group).toBeInstanceOf(L.MarkerClusterGroup);
+      expect(group.getLayers()).toHaveLength(CLUSTER_FROM);
+      const icon = (group.options as L.MarkerClusterGroupOptions).iconCreateFunction!({
+        getAllChildMarkers: () => group.getLayers(),
+      } as L.MarkerCluster) as L.DivIcon;
+      const html = icon.options.html as HTMLElement;
+      expect(icon.options.className).toBe('map-cluster map-cluster-stale-60'); // the most severe inside
+      expect(html.textContent).toContain(`${CLUSTER_FROM}`);
+      expect(html.querySelector('.sr-only')!.textContent).toContain('most severe status');
+      expect(el.querySelector('[data-testid=legend-cluster]')).not.toBeNull();
+      expect(el.querySelector('#map-help')!.textContent).toContain('grouped into clusters');
+    });
+
+    /** The icon the group would draw for a cluster holding `children` (jsdom draws none). */
+    const iconFor = (children: L.Layer[]) => {
+      const view = fixture.debugElement.children[0].componentInstance as MapView;
+      const group = view['markerLayer'] as L.MarkerClusterGroup;
+      const create = (group.options as L.MarkerClusterGroupOptions).iconCreateFunction!;
+      return create({ getAllChildMarkers: () => children } as L.MarkerCluster) as L.DivIcon;
+    };
+    const layers = () =>
+      (
+        (fixture.debugElement.children[0].componentInstance as MapView)[
+          'markerLayer'
+        ] as L.MarkerClusterGroup
+      ).getLayers();
+
+    it.each([
+      [9, 34],
+      [10, 40],
+      [99, 40],
+      [100, 46],
+    ])('sizes a cluster of %i markers at %i px', async (count, size) => {
+      await render(many(CLUSTER_FROM));
+      const [first] = layers();
+
+      const icon = iconFor(Array.from({ length: count }, () => first));
+
+      expect((icon.options.iconSize as L.Point).x).toBe(size);
+      expect((icon.options.html as HTMLElement).textContent).toContain(`Group of ${count} `);
+    });
+
+    it('takes the most severe status inside: 60 min over 30 over 15 over reporting', async () => {
+      await render([
+        ...many(CLUSTER_FROM - 3),
+        marker('S15', { status: 'stale-15' }),
+        marker('S30', { status: 'stale-30' }),
+        marker('S60', { status: 'stale-60' }),
+      ]);
+      /** The layers drawn with `status` (the circle's class carries it). */
+      const withStatus = (status: string) =>
+        layers().filter((l) =>
+          (l as L.Path).options.className?.split(' ').includes(`marker-${status}`),
+        );
+      const [ok, s15, s30, s60] = ['ok', 'stale-15', 'stale-30', 'stale-60'].map(withStatus);
+      const className = (children: L.Layer[]) => iconFor(children).options.className;
+
+      expect(className(ok.slice(0, 2))).toBe('map-cluster map-cluster-ok');
+      expect(className([...ok.slice(0, 2), ...s15])).toBe('map-cluster map-cluster-stale-15');
+      expect(className([...ok.slice(0, 2), ...s15, ...s30])).toBe(
+        'map-cluster map-cluster-stale-30',
+      );
+      expect(className([...s30, ...s60, ...ok.slice(0, 2)])).toBe(
+        'map-cluster map-cluster-stale-60',
+      );
+    });
+
+    it('counts a layer it never styled as reporting', async () => {
+      await render(many(CLUSTER_FROM));
+
+      const icon = iconFor([L.circleMarker([41, -96])]);
+
+      expect(icon.options.className).toBe('map-cluster map-cluster-ok');
+    });
+
+    it('keeps plain circles below CLUSTER_FROM', async () => {
+      await render(many(CLUSTER_FROM - 1));
+
+      expect(el.querySelectorAll('.map-marker')).toHaveLength(CLUSTER_FROM - 1);
+      expect(el.querySelector('.map-cluster')).toBeNull();
+      expect(el.querySelector('[data-testid=legend-cluster]')).toBeNull();
+    });
   });
 });

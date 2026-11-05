@@ -1,9 +1,17 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { QueryInputError, QueryNotFoundError } from '@nextera/shared';
+import {
+  BadRequestException,
+  NotFoundException,
+  PayloadTooLargeException,
+} from '@nestjs/common';
+import {
+  QueryInputError,
+  QueryNotFoundError,
+  QueryTooLargeError,
+} from '@nextera/shared';
 
 /**
  * The HTTP form of the shared read queries' errors: QueryNotFoundError → 404, QueryInputError →
- * 400, with the same message. Anything else (database failures) is returned as it is, for the
+ * 400, QueryTooLargeError → 413, with the same message. Anything else (database failures) is returned as it is, for the
  * global filters.
  */
 export function toHttpError(error: unknown): unknown {
@@ -12,6 +20,9 @@ export function toHttpError(error: unknown): unknown {
   }
   if (error instanceof QueryInputError) {
     return new BadRequestException(error.message);
+  }
+  if (error instanceof QueryTooLargeError) {
+    return new PayloadTooLargeException(error.message);
   }
   return error;
 }

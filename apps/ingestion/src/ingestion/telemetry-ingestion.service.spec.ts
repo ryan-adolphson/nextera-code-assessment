@@ -1,4 +1,5 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import {
   EventStore,
@@ -11,6 +12,8 @@ import {
 } from '@nextera/shared';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { IngestTelemetryDto } from './ingest-telemetry.dto.js';
+import { AlertRulesCache } from './alert-rules-cache.js';
+import { TelemetryBatcher } from './telemetry-batcher.js';
 import { TelemetryIngestionService } from './telemetry-ingestion.service.js';
 
 const dto: IngestTelemetryDto = {
@@ -51,7 +54,7 @@ const rule = (overrides: Partial<AlertConfig> = {}): AlertConfig => ({
 describe('TelemetryIngestionService', () => {
   let service: TelemetryIngestionService;
   let prisma: DeepMockProxy<PrismaService>;
-  const events = { publish: vi.fn() };
+  const events = { publish: vi.fn(), publishLive: vi.fn() };
 
   beforeEach(async () => {
     prisma = mockDeep<PrismaService>();
@@ -75,10 +78,17 @@ describe('TelemetryIngestionService', () => {
       (fn as (tx: PrismaService) => Promise<unknown>)(prisma),
     );
     events.publish.mockReset();
+    events.publishLive.mockReset();
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         TelemetryIngestionService,
+        TelemetryBatcher,
+        AlertRulesCache,
+        {
+          provide: ConfigService,
+          useValue: { get: (_key: string, fallback: unknown) => fallback },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: EventStore, useValue: events },
       ],
@@ -107,14 +117,18 @@ describe('TelemetryIngestionService', () => {
       ],
       skipDuplicates: true,
     });
-    expect(events.publish).toHaveBeenCalledWith(
-      TELEMETRY_RECEIVED,
-      expect.objectContaining({
-        id: 'r1',
-        turbineId: 'TURB001',
-        timestamp: '2026-01-01T00:00:00.000Z',
-      }),
-    );
+    // A live event on the turbine's own channel (never the stream).
+    expect(events.publishLive).toHaveBeenCalledWith([
+      {
+        channel: 'telemetry:TURB001',
+        type: TELEMETRY_RECEIVED,
+        data: expect.objectContaining({
+          id: 'r1',
+          turbineId: 'TURB001',
+          timestamp: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    ]);
   });
 
   it('stores the enabled rules the reading triggers in the same transaction, and publishes them', async () => {
@@ -140,11 +154,19 @@ describe('TelemetryIngestionService', () => {
     });
     expect(prisma.telemetryAlert.createMany).toHaveBeenCalledWith({
       data: [
-        { telemetryId: 'r1', alertId: 'rule-gearbox-error' },
-        { telemetryId: 'r1', alertId: 'rule-gearbox-info' },
+        {
+          telemetryId: 'r1',
+          readingTimestamp: stored.timestamp,
+          alertId: 'rule-gearbox-error',
+        },
+        {
+          telemetryId: 'r1',
+          readingTimestamp: stored.timestamp,
+          alertId: 'rule-gearbox-info',
+        },
       ],
     });
-    const [, payload] = events.publish.mock.calls[0];
+    const [[{ data: payload }]] = events.publishLive.mock.calls[0];
     expect(
       payload.alerts.map((a: AlertConfig) => [a.id, a.alertLevel]),
     ).toEqual([
@@ -159,7 +181,7 @@ describe('TelemetryIngestionService', () => {
     await service.ingest(dto);
 
     expect(prisma.telemetryAlert.createMany).not.toHaveBeenCalled();
-    expect(events.publish.mock.calls[0][1].alerts).toEqual([]);
+    expect(events.publishLive.mock.calls[0][0][0].data.alerts).toEqual([]);
   });
 
   it('looks turbines up by their business key (turbine_id), not the UUID id', async () => {
@@ -192,9 +214,10 @@ describe('TelemetryIngestionService', () => {
     prisma.telemetry.createManyAndReturn.mockResolvedValue([]);
 
     await expect(service.ingest(dto)).resolves.toBe('duplicate');
+    expect(events.publishLive).not.toHaveBeenCalled();
     expect(events.publish).not.toHaveBeenCalled();
     // Idempotent: a re-sent reading adds no alert rows either.
-    expect(prisma.alertConfig.findMany).not.toHaveBeenCalled();
+    // (A batch reads the rules once, before the insert; the duplicate adds no alert rows.)
     expect(prisma.telemetryAlert.createMany).not.toHaveBeenCalled();
   });
 
@@ -351,7 +374,8 @@ describe('TelemetryIngestionService', () => {
   );
 
   it('keeps the committed row and acks when publishing fails (the live event is best-effort)', async () => {
-    events.publish.mockRejectedValue(new Error('redis down'));
+    events.publishLive.mockRejectedValue(new Error('redis down'));
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
     await expect(service.ingest(dto)).resolves.toBe('stored');
     expect(prisma.telemetry.delete).not.toHaveBeenCalled();
@@ -531,7 +555,13 @@ describe('TelemetryIngestionService', () => {
 
       expect(prisma.alertConfig.findMany).toHaveBeenCalledOnce();
       expect(prisma.telemetryAlert.createMany).toHaveBeenCalledWith({
-        data: [{ telemetryId: 'hot', alertId: 'rule-gearbox-error' }],
+        data: [
+          {
+            telemetryId: 'hot',
+            readingTimestamp: expect.any(Date),
+            alertId: 'rule-gearbox-error',
+          },
+        ],
       });
     });
 
@@ -555,16 +585,23 @@ describe('TelemetryIngestionService', () => {
 
       await service.ingestBatch(parsed(row(2)));
 
-      expect(events.publish).toHaveBeenCalledTimes(2);
-      expect(events.publish.mock.calls.map(([, r]) => r.id).sort()).toEqual([
+      // One pipeline of live events, one per turbine, on the turbines' channels.
+      expect(events.publishLive).toHaveBeenCalledOnce();
+      const items = events.publishLive.mock.calls[0][0];
+      expect(items.map((i: { channel: string }) => i.channel)).toEqual([
+        'telemetry:TURB001',
+        'telemetry:TURB002',
+      ]);
+      expect(items.map((i: { data: { id: string } }) => i.data.id)).toEqual([
         'TURB001-2026-03-01T00:10:00Z',
         'TURB002-2026-03-01T00:00:00Z',
       ]);
+      expect(events.publish).not.toHaveBeenCalled();
     });
 
     it('does not fail the upload when the live update cannot be published (data is committed)', async () => {
       prisma.telemetry.createManyAndReturn.mockResolvedValue([stored]);
-      events.publish.mockRejectedValue(new Error('redis down'));
+      events.publishLive.mockRejectedValue(new Error('redis down'));
       vi.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
 
       await expect(service.ingestBatch(parsed(row(2)))).resolves.toMatchObject({

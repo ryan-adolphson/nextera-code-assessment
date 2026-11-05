@@ -48,7 +48,8 @@ describe('auth routes and role-based UI', () => {
       expect(q('login-form')).not.toBeNull();
       expect(q('sidebar')).toBeNull();
       expect(app.sse.connect).not.toHaveBeenCalled();
-      expect(app.api.farms).not.toHaveBeenCalled();
+      expect(app.api.fleetSummary).not.toHaveBeenCalled();
+      expect(app.api.farmSummaries).not.toHaveBeenCalled();
     });
 
     it('also from / and unknown URLs', async () => {

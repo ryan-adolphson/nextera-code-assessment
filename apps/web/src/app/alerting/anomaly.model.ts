@@ -23,8 +23,11 @@ export interface Anomaly {
 export interface AnomalyReport {
   from: string;
   to: string;
+  /** The lost-output sum of the episodes listed (all of them unless `truncated`). */
   estimatedLostKwh: number;
   anomalies: Anomaly[];
+  /** More than 5,000 episodes overlap the range: only the newest 5,000 are listed. */
+  truncated?: true;
 }
 
 /** The fixed window of the Anomalies tab and the fleet tile. */

@@ -18,6 +18,7 @@ import { FleetStore } from '../fleet/fleet.store';
 import { latestLoad } from '../ui/latest-load';
 import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
+import { Telemetry } from '../fleet/fleet.model';
 import { AlertHistoryApi } from './alert-history-api.service';
 import { TurbineAlerts, groupAlertsByTurbine } from './alert-history';
 import {
@@ -106,17 +107,31 @@ export class AlertHistoryPage {
     { equal: sameRange },
   );
 
-  /** The latest range's answer (an earlier range's late answer is dropped); keeps it on failure. */
+  /** The cursor the latest request used (null = first page of a range): decides replace or append. */
+  private requestedCursor: string | null = null;
+  /** The readings loaded so far, newest first: the pages of the range, appended as they arrive. */
+  private readonly collected = signal<Telemetry[]>([]);
+  private readonly nextCursor = signal<string | null>(null);
+  /** The latest request's answer (an earlier one's late answer is dropped); keeps it on failure. */
   private readonly alerts = latestLoad(
-    ({ from, to }: { from: string; to: string }) => this.api.list(from, to),
-    () => {
-      this.expanded.set(new Set());
-      this.paging.reset();
+    ({ from, to, cursor }: { from: string; to: string; cursor: string | null }) =>
+      this.api.list(from, to, cursor),
+    (page) => {
+      if (this.requestedCursor === null) {
+        this.collected.set(page.readings);
+        this.expanded.set(new Set());
+        this.paging.reset();
+      } else {
+        this.collected.update((current) => [...current, ...page.readings]);
+      }
+      this.nextCursor.set(page.nextCursor);
     },
   );
-  protected readonly readings = computed(() => this.alerts.value() ?? []);
+  protected readonly readings = this.collected.asReadonly();
   protected readonly loading = this.alerts.loading;
   protected readonly failed = this.alerts.failed;
+  /** The range has more flagged readings than loaded (UI seam: a "Load more" button, "N+" counts). */
+  protected readonly hasMore = computed(() => this.nextCursor() !== null);
   protected readonly turbineCount = computed(
     () => new Set(this.readings().map((r) => r.turbineId)).size,
   );
@@ -144,7 +159,7 @@ export class AlertHistoryPage {
       const range = this.range();
       if (!range || sameRange(range, loaded)) return;
       loaded = range;
-      untracked(() => this.alerts.run(range));
+      untracked(() => this.fetch(range, null));
     });
   }
 
@@ -173,6 +188,20 @@ export class AlertHistoryPage {
   /** The calendar opened or closed (`picking`). */
   protected onPicking(open: boolean): void {
     this.picking.set(open);
+  }
+
+  private currentRange: DayRange | null = null;
+
+  private fetch(range: DayRange, cursor: string | null): void {
+    this.currentRange = range;
+    this.requestedCursor = cursor;
+    this.alerts.run({ ...range, cursor });
+  }
+
+  /** Loads the next page of the range (when `hasMore`), appended to the table. */
+  protected loadMore(): void {
+    const cursor = this.nextCursor();
+    if (this.currentRange && cursor && !this.loading()) this.fetch(this.currentRange, cursor);
   }
 
   /** Loads the last range again (after a failure). */

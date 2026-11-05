@@ -17,6 +17,21 @@ describe('validateEnv', () => {
     expect(env.JWT_ISSUER).toBe('nextera-api');
     expect(env.JWT_AUDIENCE).toBe('nextera-web');
     expect(env.LOGIN_RATE_LIMIT_ENABLED).toBe('true');
+    expect(env.FARMS_CACHE_TTL_MS).toBe(5000);
+  });
+
+  it('reads FARMS_CACHE_TTL_MS as milliseconds, 0 disables, and refuses negatives or junk', () => {
+    expect(
+      validateEnv({ ...valid, FARMS_CACHE_TTL_MS: '0' }).FARMS_CACHE_TTL_MS,
+    ).toBe(0);
+    expect(
+      validateEnv({ ...valid, FARMS_CACHE_TTL_MS: '250' }).FARMS_CACHE_TTL_MS,
+    ).toBe(250);
+    for (const bad of ['-1', '1.5', 'soon', '3600001']) {
+      expect(() => validateEnv({ ...valid, FARMS_CACHE_TTL_MS: bad })).toThrow(
+        /FARMS_CACHE_TTL_MS/,
+      );
+    }
   });
 
   it('keeps LOGIN_RATE_LIMIT_ENABLED=false as false, and refuses anything else', () => {

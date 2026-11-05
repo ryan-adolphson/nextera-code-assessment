@@ -2,7 +2,15 @@ import {
   CommonEnvironmentVariables,
   validateEnvironment,
 } from '@nextera/shared';
-import { IsIn, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsString,
+  Max,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 /** NODE_ENV, DATABASE_URL, DB_POOL_MAX and REDIS_URL are the common ones (`@nextera/shared`). */
 export class EnvironmentVariables extends CommonEnvironmentVariables {
@@ -41,6 +49,16 @@ export class EnvironmentVariables extends CommonEnvironmentVariables {
    */
   @IsIn(['true', 'false'])
   LOGIN_RATE_LIMIT_ENABLED: 'true' | 'false' = 'true';
+
+  /**
+   * How long GET /api/farms is served from the in-process cache (FarmsCacheService), in ms. 0
+   * disables it. Readings may be this old on a fresh load; fleet.changed and alert-config writes
+   * invalidate sooner. Capped at an hour.
+   */
+  @IsInt()
+  @Min(0)
+  @Max(3_600_000)
+  FARMS_CACHE_TTL_MS: number = 5000;
 }
 
 /** Fails fast at startup with every invalid variable listed. */

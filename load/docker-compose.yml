@@ -87,5 +87,40 @@ services:
       redis:
         condition: service_healthy
 
+  # Realistic background work, as on Cloud Run: the every-minute live summary and the daily partition
+  # maintenance (loop mode, no retention: the test data stays). Same limits as the other services.
+  live-summary:
+    image: nextera-load/ingestion:smoke
+    command: ["node", "dist/live-summary/main.js", "--every", "60"]
+    init: true
+    mem_limit: 512m
+    cpus: 1
+    environment:
+      DATABASE_URL: *database-url
+      REDIS_URL: *redis-url
+    healthcheck:
+      disable: true # the image's HEALTHCHECK probes the worker port
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  partition-maintenance:
+    image: nextera-load/ingestion:smoke
+    command: ["node", "dist/partition-maintenance/main.js", "--every", "86400"]
+    init: true
+    mem_limit: 512m
+    cpus: 1
+    environment:
+      DATABASE_URL: *database-url
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
 volumes:
   load-postgres-data:

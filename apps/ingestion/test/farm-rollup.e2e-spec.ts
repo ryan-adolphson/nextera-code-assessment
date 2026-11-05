@@ -1,3 +1,10 @@
+import type { ConfigService } from '@nestjs/config';
+import {
+  EVENT_STREAM_KEY,
+  EventStore,
+  FARM_ROLLUP_COMPLETED,
+} from '@nextera/shared';
+import { Redis } from 'ioredis';
 import { createTestApp, type TestApp } from './helpers.js';
 import { runFarmRollupCli } from '../src/farm-rollup/farm-rollup.js';
 
@@ -23,7 +30,7 @@ describe('farm rollup runner after a CSV backfill (e2e)', () => {
 
   beforeEach(async () => {
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, held_telemetry, unallocated_turbines, farm_telemetry_rollups, farm_rollup_state, farm_rollup_dirty`;
+      .$executeRaw`TRUNCATE TABLE turbine_latest, telemetry_alerts, telemetry, held_telemetry, unallocated_turbines, farm_telemetry_rollups, farm_rollup_state, farm_rollup_dirty`;
   });
 
   const rollup = (argv: string[] = []) =>
@@ -72,5 +79,47 @@ describe('farm rollup runner after a CSV backfill (e2e)', () => {
       }),
     ]);
     expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('publishes farm-rollup.completed to the stream once the rows are visible', async () => {
+    const redis = new Redis(process.env.REDIS_URL!);
+    try {
+      const before = await redis.xlen(EVENT_STREAM_KEY);
+      let rowsAtPublish = -1;
+      const events = new EventStore({
+        getOrThrow: (k: string) => process.env[k],
+      } as unknown as ConfigService);
+      const publish = events.publish.bind(events);
+      events.publish = async (type, data) => {
+        rowsAtPublish = await t.prisma.farmTelemetryRollup.count();
+        return publish(type, data);
+      };
+      const day = new Date(Date.now() - 24 * 3_600_000)
+        .toISOString()
+        .slice(0, 10);
+      expect(
+        (await upload([`TURB001,FARM01,${day}T10:00:00Z,,1000,9,14,3,80`]))
+          .status,
+      ).toBe(201);
+      const code = await runFarmRollupCli({
+        argv: ['--full'],
+        env: {
+          DATABASE_URL: process.env.DATABASE_URL,
+          REDIS_URL: process.env.REDIS_URL,
+        },
+        createEvents: () => events,
+        log,
+      });
+      expect(code).toBe(0);
+      const entries = await redis.xrange(EVENT_STREAM_KEY, '-', '+');
+      expect(entries.length).toBe(before + 1);
+      const fields = entries[entries.length - 1][1];
+      const event = JSON.parse(fields[fields.indexOf('event') + 1]);
+      expect(event.type).toBe(FARM_ROLLUP_COMPLETED);
+      expect(event.data.asOf).toMatch(/^\d{4}-\d\d-\d\dT.*Z$/);
+      expect(rowsAtPublish).toBeGreaterThan(0);
+    } finally {
+      redis.disconnect();
+    }
   });
 });

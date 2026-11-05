@@ -25,6 +25,7 @@
     "db:status": "prisma migrate status",
     "db:seed": "prisma db seed",
     "db:seed:demo": "tsx prisma/seed-demo.ts",
+    "db:seed:scale": "tsx prisma/seed-scale.ts",
     "demo:reset": "tsx prisma/demo-reset.ts"
   },
   "dependencies": {

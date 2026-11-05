@@ -13,6 +13,8 @@ name: nextera
 #                        `docker compose up -d demo-feed`); run `npm run db:seed:demo` first.
 #   farm-rollup       -> Cloud Run Job nextera-farm-rollup + Cloud Scheduler (Terraform farm_rollup_enabled):
 #                        the farm History tab's 30-minute rollups, every 15 min (--every 900).
+#   partition-maintenance / live-summary / anomaly-rollup -> Cloud Run Jobs of the same names + Cloud Scheduler
+#                        (Terraform *_enabled): daily (--every 86400), every minute (--every 60), hourly (--every 3600).
 # api / ingestion / web images are tagged ${REGISTRY:-nextera}/<service>:${TAG:-latest}, so
 #   docker compose build api ingestion web && docker compose push api ingestion web
 # pushes them to any registry (set REGISTRY/TAG in .env). For Cloud Run they must be linux/amd64:
@@ -220,7 +222,7 @@ services:
   # 15-minute schedule of the Cloud Run Job nextera-farm-rollup). Each run recomputes the farm rollups
   # touched since its watermark (farm_telemetry_rollups, read by the farm History tab). Starts with
   # `docker compose up -d`; run one at once with `npm run rollup` on the host (db:seed and
-  # db:seed:demo run one too). Needs only Postgres, so it doesn't wait for Redis or Pub/Sub.
+  # db:seed:demo run one too). Needs Postgres and Redis (it publishes farm-rollup.completed), not Pub/Sub.
   farm-rollup:
     image: ${REGISTRY:-nextera}/ingestion:${TAG:-latest}
     build:
@@ -233,8 +235,87 @@ services:
     cpus: 1
     environment:
       DATABASE_URL: *database-url
+      REDIS_URL: *redis-url # publishes farm-rollup.completed (best effort)
     healthcheck:
       disable: true # the image's HEALTHCHECK probes the worker's HTTP port, which the rollup doesn't open
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # Partition maintenance: dist/partition-maintenance/main.js in loop mode (--every 86400, the daily Cloud Run
+  # Job nextera-partition-maintenance). Creates the daily telemetry partitions ahead; with no
+  # TELEMETRY_RETENTION_DAYS here it drops nothing, so seeded fixtures survive.
+  partition-maintenance:
+    image: ${REGISTRY:-nextera}/ingestion:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/ingestion/Dockerfile
+    command: ["node", "dist/partition-maintenance/main.js", "--every", "86400"]
+    init: true
+    restart: unless-stopped
+    mem_limit: 512m # the Cloud Run Job's limits (infra/terraform/partition-maintenance.tf)
+    cpus: 1
+    environment:
+      DATABASE_URL: *database-url
+    healthcheck:
+      disable: true # the image's HEALTHCHECK probes the worker's HTTP port, which the job doesn't open
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # Live summary: dist/live-summary/main.js in loop mode (--every 60, the every-minute Cloud Run Job
+  # nextera-live-summary). Rebuilds the live fleet summary and publishes it to Redis.
+  live-summary:
+    image: ${REGISTRY:-nextera}/ingestion:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/ingestion/Dockerfile
+    command: ["node", "dist/live-summary/main.js", "--every", "60"]
+    init: true
+    restart: unless-stopped
+    mem_limit: 512m # infra/terraform/live-summary.tf
+    cpus: 1
+    environment:
+      DATABASE_URL: *database-url
+      REDIS_URL: *redis-url
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # Anomaly rollup: dist/anomaly-rollup/main.js in loop mode (--every 3600, the hourly Cloud Run Job
+  # nextera-anomaly-rollup). Needs only Postgres.
+  anomaly-rollup:
+    image: ${REGISTRY:-nextera}/ingestion:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/ingestion/Dockerfile
+    command: ["node", "dist/anomaly-rollup/main.js", "--every", "3600"]
+    init: true
+    restart: unless-stopped
+    mem_limit: 512m # infra/terraform/anomaly-rollup.tf
+    cpus: 1
+    environment:
+      DATABASE_URL: *database-url
+    healthcheck:
+      disable: true
     depends_on:
       migrate:
         condition: service_completed_successfully

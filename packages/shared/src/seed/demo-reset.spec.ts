@@ -241,9 +241,24 @@ describe('demo reset', () => {
       prisma.farmRollupState.deleteMany.mockImplementation(
         count('farm_rollup_state', 1),
       );
+      prisma.turbineLatest.deleteMany.mockImplementation(
+        count('turbine_latest', 9),
+      );
+      prisma.farmLiveSummary.deleteMany.mockImplementation(
+        count('farm_live_summary', 10),
+      );
+      prisma.anomalyEpisode.deleteMany.mockImplementation(
+        count('anomaly_episodes', 3),
+      );
+      prisma.anomalyExpectedPower.deleteMany.mockImplementation(
+        count('anomaly_expected_power', 25),
+      );
+      prisma.anomalyRollupState.deleteMany.mockImplementation(
+        count('anomaly_rollup_state', 1),
+      );
     });
 
-    it('deletes the readings in one transaction and keeps the setup', async () => {
+    it('deletes the readings and what is derived from them in one transaction and keeps the setup', async () => {
       await expect(clearDemoReadings(prisma)).resolves.toEqual({
         telemetryAlerts: 7,
         telemetry: 100,
@@ -251,6 +266,9 @@ describe('demo reset', () => {
         unallocatedTurbines: 6,
         farmWeather: 50,
         farmRollups: 30,
+        turbineLatest: 9,
+        farmLiveSummary: 10,
+        anomalyEpisodes: 3,
       });
       expect(prisma.$transaction).toHaveBeenCalledOnce();
       expect(order).toEqual([
@@ -262,6 +280,11 @@ describe('demo reset', () => {
         'farm_telemetry_rollups',
         'farm_rollup_dirty',
         'farm_rollup_state',
+        'turbine_latest',
+        'farm_live_summary',
+        'anomaly_episodes',
+        'anomaly_expected_power',
+        'anomaly_rollup_state',
       ]);
       for (const kept of [
         prisma.farm.deleteMany,

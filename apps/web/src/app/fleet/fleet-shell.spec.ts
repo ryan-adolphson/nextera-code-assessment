@@ -88,7 +88,8 @@ describe('FleetShell navigation', () => {
     link('reporting').click();
     await app.stable();
     expect(current()).toEqual(['nav-reporting']);
-    expect(app.api.farms).toHaveBeenCalledTimes(1);
+    expect(app.api.fleetSummary).toHaveBeenCalledTimes(1);
+    expect(app.api.farmSummaries).toHaveBeenCalledTimes(1);
     expect(app.sse.connect).toHaveBeenCalledTimes(1);
   });
 
@@ -191,7 +192,7 @@ describe('FleetShell navigation', () => {
       await navigated;
       // The History page's resource is a pending task until its first request is answered.
       TestBed.tick();
-      app.http.expectOne((r) => r.url.endsWith('/alerts')).flush([]);
+      app.http.expectOne((r) => r.url.endsWith('/alerts')).flush({ items: [], nextCursor: null });
       await app.stable();
       expect(url()).toBe('/alerting/history'); // /alerting opens on the History tab
       expect(toggle().getAttribute('aria-expanded')).toBe('false');

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PrismaClient } from '../generated/prisma/client.js';
+import { refreshTurbineLatest } from '../wind/turbine-latest.js';
 
 /** Minimal CSV parser for the seed files (no quoted fields). Validates the header and column counts. */
 export function parseCsv(
@@ -136,6 +137,10 @@ export async function seedFromCsv(
     inserted += count;
   }
 
+  // The rows above bypass ingestion's upsert: bring turbine_latest in line with them (newer only).
+  await prisma.$transaction((tx) =>
+    refreshTurbineLatest(tx, [...new Set(telemetry.map((r) => r.turbineId))]),
+  );
   return {
     farms: farms.length,
     turbines: turbines.length,

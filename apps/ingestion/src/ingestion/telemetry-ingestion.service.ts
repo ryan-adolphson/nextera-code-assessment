@@ -3,29 +3,24 @@ import {
   EventStore,
   PrismaService,
   TELEMETRY_RECEIVED,
-  UNALLOCATED_CHANGED,
   UnallocatedCapError,
   classifyReadings,
   enabledAlertRules,
   holdReadings,
   insertTelemetryWithAlerts,
-  storeAlerts,
   toTelemetryResponse,
+  turbineChannel,
   type HeldEntry,
   type HoldableReading,
   type TelemetryRowInput,
   type TelemetryWithAlerts,
-  type UnallocatedChangedEvent,
 } from '@nextera/shared';
 import { IngestTelemetryDto } from './ingest-telemetry.dto.js';
+import { publishHeld } from './held-events.js';
+import { TelemetryBatcher, type IngestResult } from './telemetry-batcher.js';
 import { ParsedTelemetryCsv, TelemetryCsvError } from './telemetry-csv.js';
 
-/**
- * What happened to a Pub/Sub reading (all acked with 204): stored in telemetry, a duplicate of a
- * stored reading, held as an unallocated turbine (unknown turbine or farm mismatch), or dropped
- * because its (turbine, farm) pair is blocked.
- */
-export type IngestResult = 'stored' | 'duplicate' | 'held' | 'blocked';
+export type { IngestResult };
 
 /** CSV upload result. rows = inserted + duplicates + held + blocked. */
 export interface BatchResult {
@@ -50,73 +45,27 @@ export class TelemetryIngestionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventStore,
+    private readonly batcher: TelemetryBatcher,
   ) {}
 
   /**
    * Stores one reading (a Pub/Sub message) with the enabled alert rules it triggers
-   * (telemetry_alerts, same transaction) and publishes telemetry.received for SSE.
+   * (telemetry_alerts, same transaction) and publishes telemetry.received for SSE. Concurrent
+   * readings are grouped into one transaction by the TelemetryBatcher; each caller still gets its
+   * own result.
    * Idempotent: (turbine_id, timestamp) is unique, so Pub/Sub redeliveries and re-sent readings are
    * skipped without a write or an event. A reading of an unknown turbine or with the wrong farm is
    * held (held_telemetry) for an owner to resolve, and one of a blocked pair is dropped; both are
    * acked. Only invalid payloads and new pairs over MAX_PENDING_UNALLOCATED are rejected (400 →
-   * dead-letter topic).
+   * dead-letter topic); a full queue is 503 + Retry-After (nothing written).
    */
   async ingest(
     dto: IngestTelemetryDto,
     publishTime?: string,
   ): Promise<IngestResult> {
-    const row = toRow(
-      dto,
-      new Date(dto.received_at ?? publishTime ?? Date.now()),
+    return this.batcher.submit(
+      toRow(dto, new Date(dto.received_at ?? publishTime ?? Date.now())),
     );
-
-    const outcome = await this.prisma
-      .$transaction(async (tx) => {
-        const [kind] = await classifyReadings(tx, [row]);
-        if (kind === 'blocked') return { result: 'blocked' as const };
-        if (kind !== 'known') {
-          const entries = await holdReadings(tx, [{ ...row, kind }]);
-          return { result: 'held' as const, entries };
-        }
-
-        const [inserted] = await tx.telemetry.createManyAndReturn({
-          data: [row],
-          skipDuplicates: true,
-        });
-        // A duplicate: no rules to read, no alerts to write.
-        if (!inserted) return { result: 'duplicate' as const };
-        const [reading] = await storeAlerts(
-          tx,
-          [inserted],
-          await enabledAlertRules(tx),
-        );
-        return { result: 'stored' as const, reading };
-      })
-      .catch(rejectOverCap);
-
-    if (outcome.result === 'held') await this.publishHeld(outcome.entries);
-    if (outcome.result === 'blocked') {
-      this.logger.debug(
-        `Reading ${row.turbineId} on ${row.farmId} dropped: the pair is blocked`,
-      );
-    }
-    if (outcome.result !== 'stored') return outcome.result;
-
-    // Published only after the row is committed. The row is the source of truth and the live event
-    // is best-effort: a Redis failure is logged and the push still acked, so a Redis outage never
-    // sends committed readings to the dead-letter topic; dashboards catch up on their next load.
-    const { reading } = outcome;
-    try {
-      await this.events.publish(
-        TELEMETRY_RECEIVED,
-        toTelemetryResponse(reading),
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Reading ${reading.turbineId} at ${reading.timestamp.toISOString()} stored, but live update failed: ${(error as Error).message}`,
-      );
-    }
-    return 'stored';
   }
 
   /**
@@ -125,8 +74,8 @@ export class TelemetryIngestionService {
    * (existing readings skipped: idempotent re-uploads) with the enabled alert rules they trigger,
    * rows of unknown turbines or farm mismatches are held, and rows of blocked pairs are dropped.
    * New pairs over MAX_PENDING_UNALLOCATED reject the file too (their lines are reported).
-   * Publishes one telemetry.received per turbine (its newest new reading) rather than one per row,
-   * so a large backfill doesn't flood dashboards.
+   * Publishes one live telemetry.received per turbine (its newest new reading, on the turbine's
+   * channel) rather than one per row, so a large backfill doesn't flood dashboards.
    */
   async ingestBatch(
     { rows, rowErrors }: ParsedTelemetryCsv,
@@ -222,12 +171,13 @@ export class TelemetryIngestionService {
       }
     }
     try {
-      for (const reading of newest.values()) {
-        await this.events.publish(
-          TELEMETRY_RECEIVED,
-          toTelemetryResponse(reading),
-        );
-      }
+      await this.events.publishLive(
+        [...newest.values()].map((reading) => ({
+          channel: turbineChannel(reading.turbineId),
+          type: TELEMETRY_RECEIVED,
+          data: toTelemetryResponse(reading),
+        })),
+      );
     } catch (error) {
       this.logger.warn(
         `CSV upload stored, but live update failed: ${(error as Error).message}`,
@@ -235,39 +185,9 @@ export class TelemetryIngestionService {
     }
   }
 
-  /**
-   * unallocated-turbine.changed ('held') for the entries that were created or, at most once a
-   * minute, got new readings (HeldEntry.notify). After the commit, best-effort like the others.
-   */
-  private async publishHeld(entries: HeldEntry[]): Promise<void> {
-    for (const entry of entries) {
-      this.logger.log(
-        `Held ${entry.held} reading(s) of ${entry.turbineId} reporting ${entry.reportedFarmId} (${entry.kind}${entry.created ? ', new' : ''})`,
-      );
-    }
-    try {
-      for (const entry of entries.filter((e) => e.notify)) {
-        const event: UnallocatedChangedEvent = {
-          action: 'held',
-          id: entry.id,
-          turbineId: entry.turbineId,
-        };
-        await this.events.publish(UNALLOCATED_CHANGED, event);
-      }
-    } catch (error) {
-      this.logger.warn(
-        `Readings held, but live update failed: ${(error as Error).message}`,
-      );
-    }
+  private publishHeld(entries: HeldEntry[]): Promise<void> {
+    return publishHeld(this.events, this.logger, entries);
   }
-}
-
-/** A new unallocated pair over the cap: 400, so Pub/Sub retries and dead-letters the message. */
-function rejectOverCap(error: unknown): never {
-  if (error instanceof UnallocatedCapError) {
-    throw new BadRequestException(error.message);
-  }
-  throw error;
 }
 
 function toRow(dto: IngestTelemetryDto, receivedAt: Date): TelemetryRowInput {

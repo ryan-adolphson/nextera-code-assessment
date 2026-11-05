@@ -37,6 +37,7 @@ describe('ReportsService', () => {
       farm: { name: 'High Plains' },
     } as never);
     prisma.telemetry.findMany.mockResolvedValue([]);
+    prisma.$queryRaw.mockResolvedValue([{ n: 0 }]); // the row-cap count
     const moduleRef = await Test.createTestingModule({
       providers: [ReportsService, { provide: PrismaService, useValue: prisma }],
     }).compile();
@@ -142,5 +143,25 @@ describe('ReportsService', () => {
       new BadRequestException('The range may span at most 31 days'),
     );
     expect(prisma.telemetry.findMany).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 with a clear message above 100,000 readings, before loading any row', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ n: 100_001 }]);
+
+    await expect(
+      service.telemetry({ farmId: 'FARM02', ...RANGE }),
+    ).rejects.toThrow(
+      new BadRequestException(
+        'This report would have more than 100,000 readings: choose a shorter range or a single turbine',
+      ),
+    );
+    expect(prisma.telemetry.findMany).not.toHaveBeenCalled();
+  });
+
+  it('allows exactly 100,000 readings', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ n: 100_000 }]);
+    await expect(
+      service.telemetry({ farmId: 'FARM02', ...RANGE }),
+    ).resolves.toMatchObject({ readings: [] });
   });
 });

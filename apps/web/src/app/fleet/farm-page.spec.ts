@@ -1,6 +1,11 @@
+import { TestBed } from '@angular/core/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { MatPaginatorHarness } from '@angular/material/paginator/testing';
 import { MatSlideToggleHarness } from '@angular/material/slide-toggle/testing';
+import { Router } from '@angular/router';
+import { Subject } from 'rxjs';
+import { TurbineMarkerResponse } from './fleet.model';
+import { FILTER_DEBOUNCE_MS, LIVE_BATCH_MS } from './turbine-page.store';
 import { largeFleetFixture, mixedFleetFixture, openFleet, reading } from './testing';
 
 /**
@@ -16,8 +21,13 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
     // Viewers see the Commissioned check mark or X (owners get a switch: turbine-table-commissioned.spec).
     app = await openFleet('/farms/FARM02', () => CLOCK, mixedFleetFixture(), undefined, 'viewer');
     await app.stable(); // the deferred map renders
+    // The typed filter waits FILTER_DEBOUNCE_MS: faked, but following real time for the harnesses.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
   });
-  afterEach(() => app.http.verify()); // no other requests (e.g. no alert rules)
+  afterEach(() => {
+    vi.useRealTimers();
+    app.http.verify(); // no other requests (e.g. no alert rules)
+  });
 
   const q = <T extends Element = HTMLElement>(testId: string) =>
     app.root().querySelector<T>(`[data-testid=${testId}]`)!;
@@ -39,6 +49,7 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
     const input = q<HTMLInputElement>('turbine-filter');
     input.value = value;
     input.dispatchEvent(new Event('input'));
+    await vi.advanceTimersByTimeAsync(FILTER_DEBOUNCE_MS);
     await app.stable();
   }
   async function choose(testId: string, value: string) {
@@ -60,7 +71,7 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
   it("lists only this farm's turbines, newest first, with the /turbines columns except Farm", async () => {
     expect(app.text(app.root().querySelector('h1'))).toBe('High Plains FARM02');
     expect(ids()).toEqual(['TURB002', 'TURB006', 'TURB007']);
-    expect(count()).toBe('3 of 4 turbines · 1 with no data hidden');
+    expect(count()).toBe('3 of 3 turbines');
     expect([...table().querySelectorAll('thead th')].map((th) => app.text(th))).toEqual([
       'Turbine',
       'Status',
@@ -87,6 +98,9 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
     // Never reported: no values, and not commissioned (X); last.
     await showNoData();
     expect(count()).toBe('4 of 4 turbines');
+    expect(app.api.turbines).toHaveBeenLastCalledWith(
+      expect.objectContaining({ farmId: 'FARM02' }),
+    );
     expect(cells(rows()[3])).toEqual([
       'TURB004',
       'No readings yet',
@@ -113,48 +127,94 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
     ]);
   });
 
-  it('sorts by any column, reverses on a second click, and keeps turbines without readings last', async () => {
+  it('sorts by any column but status, reverses on a second click, and keeps turbines without readings last', async () => {
     await showNoData();
+    expect(q('metric-sort-hint')).toBeNull(); // a farm: the metrics can be sorted
     await sortBy('power');
     expect(ids()).toEqual(['TURB006', 'TURB007', 'TURB002', 'TURB004']); // 300, 1000, 2259, none
     expect(sortedColumns()).toEqual([['Power (kW)', 'ascending']]);
+    expect(app.api.turbines).toHaveBeenLastCalledWith(
+      expect.objectContaining({ farmId: 'FARM02', sort: 'power', dir: 'asc' }),
+    );
 
     await sortBy('power');
     expect(ids()).toEqual(['TURB002', 'TURB007', 'TURB006', 'TURB004']); // still last
     expect(sortedColumns()).toEqual([['Power (kW)', 'descending']]);
 
-    await sortBy('status'); // best first: reporting … no data in 60 min, then never reported
-    expect(ids()).toEqual(['TURB002', 'TURB006', 'TURB007', 'TURB004']);
+    await sortBy('wind');
+    expect(ids()).toEqual(['TURB006', 'TURB007', 'TURB002', 'TURB004']); // 4, 5, 8.5
+    await sortBy('gearbox');
+    expect(ids().at(-1)).toBe('TURB004');
 
     await sortBy('commissioned'); // commissioned first, ties by id
     expect(ids()).toEqual(['TURB002', 'TURB006', 'TURB004', 'TURB007']);
+
+    expect(q('sort-status').classList).not.toContain('mat-sort-header'); // the API has no status sort
   });
 
-  it('filters by turbine id (not by farm: every row is on it), status and commissioning', async () => {
+  it('filters by turbine id, status and commissioning, on the server', async () => {
     const input = q<HTMLInputElement>('turbine-filter');
     expect(app.text(app.root().querySelector(`label[for="${input.id}"]`))).toBe('Turbine');
     expect(input.placeholder).toBe('e.g. TURB001');
 
     await filter('turb006');
+    expect(app.api.turbines).toHaveBeenLastCalledWith(
+      expect.objectContaining({ farmId: 'FARM02', q: 'turb006' }),
+    );
     expect(ids()).toEqual(['TURB006']);
-    expect(count()).toBe('1 of 4 turbines');
+    expect(count()).toBe('1 of 1 turbines');
 
-    // The farm's name or id is not searched here (it would match every row).
-    await filter('High Plains');
+    await filter('nothing');
     expect(ids()).toEqual([]);
     const empty = q('no-matches');
-    expect(app.text(empty)).toBe('No turbines match the filters.');
+    expect(app.text(empty)).toContain('No turbines match the filters.');
     expect(empty.getAttribute('colspan')).toBe('7');
-    expect(count()).toBe('0 of 4 turbines');
+    expect(count()).toBe('0 of 0 turbines');
 
     await filter('');
-    await choose('status-filter', 'stale-60');
-    expect(ids()).toEqual(['TURB007']);
+    await choose('status-filter', 'stale');
+    expect(ids()).toEqual(['TURB006', 'TURB007']);
 
     await choose('status-filter', 'all');
     await choose('commissioned-filter', 'no');
     expect(ids()).toEqual(['TURB007']);
-    expect(count()).toBe('1 of 4 turbines · 1 with no data hidden');
+    expect(count()).toBe('1 of 1 turbines');
+  });
+
+  it("shows the farm's data time and says the figures refresh about once a minute", () => {
+    expect(app.text(q('farm-as-of'))).toBe('Jan 2, 23:55 UTC');
+    expect(app.text(q('farm-refresh-note'))).toBe(
+      'Farm figures refresh about once a minute. The turbines below update live.',
+    );
+  });
+
+  it("shows no markers of the previous farm while the next farm's markers load", async () => {
+    expect(app.root().querySelectorAll('.map-marker')).toHaveLength(4);
+    const next = new Subject<TurbineMarkerResponse[]>();
+    app.api.turbineMarkers.mockReturnValue(next);
+
+    await TestBed.inject(Router).navigateByUrl('/farms/FARM01');
+    TestBed.tick();
+    await vi.advanceTimersByTimeAsync(0);
+    TestBed.tick();
+
+    expect(app.api.turbineMarkers).toHaveBeenLastCalledWith('FARM01');
+    expect(app.root().querySelectorAll('.map-marker')).toHaveLength(0);
+
+    next.next([
+      {
+        id: 'TURB001',
+        latitude: 41.2,
+        longitude: -96.5,
+        status: 'reporting',
+        timestamp: '2026-01-02T23:55:00.000Z',
+      },
+    ]);
+    next.complete();
+    await vi.advanceTimersByTimeAsync(0);
+    TestBed.tick();
+    await app.stable();
+    expect(app.root().querySelectorAll('.map-marker')).toHaveLength(1);
   });
 
   it("updates a row live and ignores other farms' readings", async () => {
@@ -166,6 +226,7 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
         powerOutputKw: 1800,
       }),
     );
+    await vi.advanceTimersByTimeAsync(LIVE_BATCH_MS);
     await app.stable();
     const row = rows().find((r) => r.getAttribute('data-turbine-id') === 'TURB006')!;
     expect(cells(row)).toEqual([
@@ -182,8 +243,9 @@ describe('FarmPage turbines table (/farms/:farmId)', () => {
     app.sse.push(
       reading({ turbineId: 'TURB001', farmId: 'FARM01', timestamp: '2026-01-03T00:00:00.000Z' }),
     );
+    await vi.advanceTimersByTimeAsync(LIVE_BATCH_MS);
     await app.stable();
-    expect(ids()).toEqual(['TURB002', 'TURB006', 'TURB007']); // the order follows when it settles
+    expect(ids()).toEqual(['TURB006', 'TURB002', 'TURB007']); // TURB006 is now the newest, and TURB001 is not on this page
   });
 });
 
@@ -204,7 +266,7 @@ describe('FarmPage turbines table pagination', () => {
     expect(ids()).toHaveLength(25);
     expect(await pages.getRangeLabel()).toBe('1 – 25 of 30');
     expect(app.text(app.root().querySelector('[data-testid=turbine-count]'))).toBe(
-      '30 of 30 turbines',
+      '25 of 30 turbines',
     );
 
     await pages.goToNextPage();

@@ -6,8 +6,6 @@ import { MatAutocompleteHarness } from '@angular/material/autocomplete/testing';
 import { MatMenuHarness } from '@angular/material/menu/testing';
 import { Title } from '@angular/platform-browser';
 import { Router } from '@angular/router';
-import { Subject } from 'rxjs';
-import { FarmOverview } from '../fleet/fleet.model';
 import { TEST_API_BASE_URL, farmsFixture, openFleet, reading } from '../fleet/testing';
 import {
   HeldReading,
@@ -248,12 +246,8 @@ describe('Unallocated turbines (/unallocated)', () => {
       const actionsCell = q('more-actions', unknown)!.closest('td')!;
       expect(actionsCell.style.right).toBe('0px');
       // Screen readers hear which farm is which; sighted users read it from the header.
-      expect(app.text(q('reported-farm', mis)!.parentElement)).toBe(
-        'Reported: High Plains FARM02',
-      );
-      expect(app.text(q('current-farm', mis)!.parentElement)).toBe(
-        'Current: Prairie Ridge FARM01',
-      );
+      expect(app.text(q('reported-farm', mis)!.parentElement)).toBe('Reported: High Plains FARM02');
+      expect(app.text(q('current-farm', mis)!.parentElement)).toBe('Current: Prairie Ridge FARM01');
 
       // One primary action by kind, named with the turbine for screen readers; the rest are in
       // the row's "More actions" menu.
@@ -412,13 +406,13 @@ describe('Unallocated turbines (/unallocated)', () => {
 
         const post = expectPost('e-unknown', 'assign');
         expect(post.request.body).toEqual({ farmId: 'FARM01', latitude: 41.27, longitude: -96.5 });
-        const farmLoads = app.api.farms.mock.calls.length;
+        const farmLoads = app.api.farmSummaries.mock.calls.length;
         post.flush(resolution());
         await settle();
 
         expect(isOpen('assign-dialog')).toBe(false);
         expect(notice()).toBe('TURB990 assigned to Prairie Ridge (FARM01): 30 readings imported.');
-        expect(app.api.farms.mock.calls.length).toBe(farmLoads + 1); // the fleet reloads
+        expect(app.api.farmSummaries.mock.calls.length).toBe(farmLoads + 1); // the fleet reloads
         await flushList('pending', []);
         expect(q('no-unallocated')).not.toBeNull();
       });
@@ -555,7 +549,7 @@ describe('Unallocated turbines (/unallocated)', () => {
     describe('Keep', () => {
       it('imports under the current farm at once, announces and reloads the list and the fleet', async () => {
         await open('/unallocated/pending', [mismatch()]);
-        const farmLoads = app.api.farms.mock.calls.length;
+        const farmLoads = app.api.farmSummaries.mock.calls.length;
         await click('keep', row('TURB001'));
         expect(q<HTMLButtonElement>('keep', row('TURB001'))!.disabled).toBe(true);
         expect(app.text(q('keep', row('TURB001')))).toContain('Keeping…');
@@ -565,7 +559,7 @@ describe('Unallocated turbines (/unallocated)', () => {
         await settle();
 
         expect(notice()).toBe('TURB001 kept in Prairie Ridge (FARM01): 3 readings imported.');
-        expect(app.api.farms.mock.calls.length).toBe(farmLoads + 1);
+        expect(app.api.farmSummaries.mock.calls.length).toBe(farmLoads + 1);
         await flushList('pending', []);
       });
 
@@ -773,52 +767,6 @@ describe('Unallocated turbines (/unallocated)', () => {
         );
         await flushList('pending', []);
       });
-    });
-
-    it('applies the imported reading after fleet.changed, before the fleet reload answers', async () => {
-      await open('/unallocated/pending', []);
-      const farms = new Subject<FarmOverview[]>();
-      app.api.farms.mockReturnValue(farms);
-
-      // The API's order after a resolution: unallocated-turbine.changed, fleet.changed, then
-      // telemetry.received for the newest imported reading.
-      app.sse.pushEvent('unallocated-turbine.changed', {
-        action: 'assigned',
-        id: 'e-unknown',
-        turbineId: 'TURB990',
-      });
-      app.sse.pushEvent('fleet.changed', { turbineId: 'TURB990' });
-      app.sse.push(
-        reading({
-          id: 'imp-new',
-          turbineId: 'TURB990',
-          farmId: 'FARM03',
-          timestamp: '2026-01-03T00:00:00.000Z',
-          powerOutputKw: 777,
-        }),
-      );
-      await flushList('pending', []);
-      const fleet = farmsFixture();
-      fleet[2].turbines.push({
-        id: 'TURB990',
-        farmId: 'FARM03',
-        latitude: 35,
-        longitude: -106,
-        commissioned: false,
-        latest: reading({
-          id: 'imp-old',
-          turbineId: 'TURB990',
-          farmId: 'FARM03',
-          powerOutputKw: 640,
-        }),
-      });
-      farms.next(fleet);
-      farms.complete();
-
-      await app.harness.navigateByUrl('/turbines');
-      const turbine = app.root().querySelector('tr[data-turbine-id=TURB990]')!;
-      expect(app.text(turbine)).toContain('Red Canyon');
-      expect(app.text(turbine)).toContain('777'); // the live imported reading, not the older 640
     });
   });
 

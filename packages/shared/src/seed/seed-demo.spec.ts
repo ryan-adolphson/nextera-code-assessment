@@ -47,15 +47,31 @@ describe('seedDemo', () => {
       _sql: TemplateStringsArray,
       ...values: unknown[]
     ) => {
-      const rows = bulkRows(values);
-      const count = rows.filter((r) => {
-        const key = `${r.turbineId}@${r.timestamp}`;
-        if (stored.has(key)) return false;
-        stored.add(key);
-        return true;
-      }).length;
-      return Promise.resolve([{ count }]);
+      // RETURNING of the new rows only.
+      const arrays = values as unknown[][];
+      return Promise.resolve(
+        bulkRows(values).flatMap((r, i) => {
+          const key = `${r.turbineId}@${r.timestamp}`;
+          if (stored.has(key)) return [];
+          stored.add(key);
+          return [
+            {
+              id: key,
+              turbine_id: r.turbineId,
+              farm_id: r.farmId,
+              timestamp: new Date(r.timestamp),
+              received_at: new Date(arrays[3][i] as string),
+              power_output_kw: arrays[4][i],
+              wind_speed_ms: arrays[5][i],
+              rotor_rpm: arrays[6][i],
+              blade_pitch_deg: arrays[7][i],
+              gearbox_temp_c: arrays[8][i],
+            },
+          ];
+        }),
+      );
     }) as never);
+    prisma.$executeRaw.mockResolvedValue(1);
     prisma.telemetry.createManyAndReturn.mockImplementation(((args: {
       data: Prisma.TelemetryCreateManyInput[];
     }) =>
@@ -197,25 +213,25 @@ describe('seedDemo', () => {
       to: '2026-10-08T12:00:00.000Z',
     });
 
-    const at = (turbineId: string, minutesBeforeEnd: number) =>
-      `${turbineId}@${new Date(Date.parse('2026-10-08T12:00:00Z') - minutesBeforeEnd * 60_000).toISOString()}`;
+    const time = (minutesBeforeEnd: number) =>
+      new Date(Date.parse('2026-10-08T12:00:00Z') - minutesBeforeEnd * 60_000);
+    const link = (
+      turbineId: string,
+      minutesBeforeEnd: number,
+      alertId: string,
+    ) => ({
+      telemetryId: `${turbineId}@${time(minutesBeforeEnd).toISOString()}`,
+      readingTimestamp: time(minutesBeforeEnd),
+      alertId,
+    });
     const { frozenPower, pitchSpike, gearboxStuck } = DEMO_ANOMALIES;
     const expected = [
       ...Array.from({ length: frozenPower.readings }, (_, i) => i * 5).map(
-        (m) => ({
-          telemetryId: at('TURB001', frozenPower.offsetMinutes - m),
-          alertId: 'rule-1', // power below 100 → warn
-        }),
+        (m) => link('TURB001', frozenPower.offsetMinutes - m, 'rule-1'), // power below 100 → warn
       ),
-      {
-        telemetryId: at('TURB002', pitchSpike.offsetMinutes),
-        alertId: 'rule-2', // pitch above 30 → info
-      },
+      link('TURB002', pitchSpike.offsetMinutes, 'rule-2'), // pitch above 30 → info
       ...Array.from({ length: gearboxStuck.readings }, (_, i) => i * 5).map(
-        (m) => ({
-          telemetryId: at('TURB002', gearboxStuck.offsetMinutes - m),
-          alertId: 'rule-0', // gearbox above 100 → error
-        }),
+        (m) => link('TURB002', gearboxStuck.offsetMinutes - m, 'rule-0'), // gearbox above 100 → error
       ),
     ];
     expect(links()).toHaveLength(expected.length);

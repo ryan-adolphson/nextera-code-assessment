@@ -1,4 +1,4 @@
-import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { HttpErrorResponse, provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import {
   ComponentFixture,
@@ -11,7 +11,7 @@ import { Injectable } from '@angular/core';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
-import { Observable, Subject, of } from 'rxjs';
+import { Observable, Subject, of, throwError } from 'rxjs';
 import { AnomaliesApi } from '../alerting/anomalies-api.service';
 import { AnomalyReport } from '../alerting/anomaly.model';
 import { routes } from '../app.routes';
@@ -25,11 +25,16 @@ import { SseEvent, SseService } from '../core/sse.service';
 import { provideIcons } from '../ui/icons';
 import { FleetApi } from './fleet-api.service';
 import {
-  FarmOverview,
+  FarmSummaryResponse,
+  FleetSummaryResponse,
   MetricStats,
   Telemetry,
   TelemetryStats,
+  TurbineItem,
+  TurbinePageResponse,
+  TurbineQuery,
   TurbineResponse,
+  TurbineStatus,
 } from './fleet.model';
 import { WeatherApi } from '../weather/weather-api.service';
 import {
@@ -113,7 +118,16 @@ export const statsFixture = (
   ...overrides,
 });
 
-/** Shape of GET /api/farms for the seed dataset (trimmed to 3 farms). */
+/** A farm with its turbines and their latest readings: the fixtures the fake API derives its answers from. */
+export interface FarmOverview {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  turbines: (TurbineResponse & { latest: Telemetry | null })[];
+}
+
+/** The seed dataset's fleet (trimmed to 3 farms). */
 export const farmsFixture = (): FarmOverview[] => [
   {
     id: 'FARM01',
@@ -313,13 +327,132 @@ class LayoutlessInteractivityChecker extends InteractivityChecker {
   }
 }
 
-/** Test doubles for FleetApi and SseService: push SSE events with `sse.push(...)`. */
-export function fakes(farms: FarmOverview[] = farmsFixture()) {
+const STALE_AFTER_MS = 15 * 60_000;
+
+/** The server's status for a latest reading at `now` (stale after 15 minutes). */
+function serverStatus(latest: Telemetry | null, now: number): TurbineStatus {
+  if (!latest) return 'no_data';
+  return now - Date.parse(latest.timestamp) > STALE_AFTER_MS ? 'stale' : 'reporting';
+}
+
+/** The fake API's answers derived from `farms` at client time `now`: summaries, pages, markers. */
+function fleetAnswers(farms: FarmOverview[], now: () => number) {
+  const items = (): TurbineItem[] =>
+    farms.flatMap((f) => f.turbines.map((t) => ({ ...t, farmName: f.name })));
+  const farmSummaries = (): FarmSummaryResponse[] =>
+    farms.map((f) => {
+      const status = f.turbines.map((t) => serverStatus(t.latest, now()));
+      const reporting = f.turbines.filter((_, i) => status[i] === 'reporting');
+      const power = reporting.reduce((sum, t) => sum + t.latest!.powerOutputKw, 0);
+      return {
+        id: f.id,
+        name: f.name,
+        latitude: f.latitude,
+        longitude: f.longitude,
+        turbineCount: f.turbines.length,
+        commissioned: f.turbines.filter((t) => t.commissioned).length,
+        reporting: reporting.length,
+        stale: status.filter((s) => s === 'stale').length,
+        alerting: 0,
+        powerOutputKw: power,
+        windSpeedMs: reporting.length
+          ? reporting.reduce((sum, t) => sum + t.latest!.windSpeedMs, 0) / reporting.length
+          : null,
+        asOf: '2026-01-02T23:55:00.000Z',
+      };
+    });
+  const fleetSummary = (): FleetSummaryResponse => {
+    const summaries = farmSummaries();
+    const sum = (key: 'turbineCount' | 'commissioned' | 'reporting' | 'stale' | 'powerOutputKw') =>
+      summaries.reduce((n, f) => n + f[key], 0);
+    return {
+      farms: summaries.length,
+      turbines: sum('turbineCount'),
+      commissioned: sum('commissioned'),
+      reporting: sum('reporting'),
+      stale: sum('stale'),
+      alerting: 0,
+      powerOutputKw: sum('powerOutputKw'),
+      asOf: '2026-01-02T23:55:00.000Z',
+    };
+  };
+  const page = (query: TurbineQuery): TurbinePageResponse => {
+    const q = query.q?.toLowerCase();
+    const value = (t: TurbineItem): string | number | null =>
+      ({
+        id: t.id,
+        farm: t.farmName,
+        commissioned: t.commissioned ? 0 : 1,
+        time: t.latest?.timestamp ?? null,
+        power: t.latest?.powerOutputKw ?? null,
+        wind: t.latest?.windSpeedMs ?? null,
+        gearbox: t.latest?.gearboxTempC ?? null,
+      })[query.sort ?? 'id'];
+    const dir = query.dir === 'desc' ? -1 : 1;
+    const matching = items()
+      .filter(
+        (t) =>
+          (!query.farmId || t.farmId === query.farmId) &&
+          (!q || [t.id, t.farmId, t.farmName].some((s) => s.toLowerCase().includes(q))) &&
+          (!query.status || serverStatus(t.latest, now()) === query.status) &&
+          (query.commissioned === undefined || t.commissioned === query.commissioned) &&
+          (!query.hasData || t.latest !== null),
+      )
+      .sort((a, b) => {
+        const [x, y] = [value(a), value(b)];
+        if (x === y) return a.id.localeCompare(b.id);
+        if (x === null) return 1;
+        if (y === null) return -1;
+        return dir * (typeof x === 'number' ? x - (y as number) : x.localeCompare(y as string));
+      });
+    const start = query.cursor ? Number(query.cursor) : 0;
+    const limit = query.limit ?? 25;
+    return {
+      items: matching.slice(start, start + limit),
+      nextCursor: start + limit < matching.length ? String(start + limit) : null,
+      prevCursor: start > 0 ? String(Math.max(0, start - limit)) : null,
+      total: matching.length,
+      totalCapped: false,
+    };
+  };
+  const markers = (farmId: string) =>
+    (farms.find((f) => f.id === farmId)?.turbines ?? []).map((t) => ({
+      id: t.id,
+      latitude: t.latitude,
+      longitude: t.longitude,
+      status: serverStatus(t.latest, now()),
+      timestamp: t.latest?.timestamp ?? null,
+    }));
+  return { items, farmSummaries, fleetSummary, page, markers };
+}
+
+/**
+ * Test doubles for FleetApi and SseService: push SSE events with `sse.push(...)`. The API answers
+ * (summaries, turbine pages with sort/filter/cursor, markers) are derived from `farms` at `now`.
+ */
+export function fakes(
+  farms: FarmOverview[] = farmsFixture(),
+  now: () => number = () => Date.parse('2026-01-03T00:00:00.000Z'),
+) {
   // One stream per connect() (like a new EventSource): after `fail()`, a retry gets a fresh one.
   let events = new Subject<SseEvent<unknown>>();
+  const answers = fleetAnswers(farms, now);
   const api = {
-    eventsUrl: 'http://api/events',
-    farms: vi.fn((): Observable<FarmOverview[]> => of(farms)),
+    /** The URL each connection asked for; specs read the watched ids from `mock.calls`. */
+    eventsUrl: vi.fn(
+      (ids: readonly string[] = []) => `http://api/events?turbines=${ids.join(',')}`,
+    ),
+    fleetSummary: vi.fn(() => of(answers.fleetSummary())),
+    farmSummaries: vi.fn(() => of(answers.farmSummaries())),
+    turbines: vi.fn((query: TurbineQuery) => of(answers.page(query))),
+    searchTurbines: vi.fn((q: string, limit = 20) =>
+      of(answers.page({ q, limit, sort: 'id', dir: 'asc' }).items),
+    ),
+    turbine: vi.fn((id: string): Observable<TurbineItem> => {
+      const found = answers.items().find((t) => t.id === id);
+      return found ? of(found) : throwError(() => new HttpErrorResponse({ status: 404 }));
+    }),
+    turbineMarkers: vi.fn((farmId: string) => of(answers.markers(farmId))),
     telemetry: vi.fn((): Observable<Telemetry[]> => of([])),
     telemetryStats: vi.fn((): Observable<TelemetryStats> =>
       of(statsFixture({ from: null, to: null }, null)),
@@ -335,7 +468,13 @@ export function fakes(farms: FarmOverview[] = farmsFixture()) {
       return events.asObservable();
     }),
     push: (data: Telemetry) =>
-      events.next({ kind: 'message', id: '1-0', type: 'telemetry.received', data }),
+      events.next({ kind: 'message', id: '', type: 'telemetry.received', data }),
+    /** The fleet-wide `farm-rollup.completed` event. */
+    farmRollup: (asOf = '2026-01-02T23:45:00.000Z') =>
+      events.next({ kind: 'message', id: '4-0', type: 'farm-rollup.completed', data: { asOf } }),
+    /** The fleet-wide `fleet.tick` event. */
+    tick: (asOf = '2026-01-02T23:55:00.000Z') =>
+      events.next({ kind: 'message', id: '3-0', type: 'fleet.tick', data: { asOf } }),
     /** Any named event, e.g. `alert-config.changed`. */
     pushEvent: (type: string, data: unknown) =>
       events.next({ kind: 'message', id: '2-0', type, data }),
@@ -440,7 +579,7 @@ export async function openFleet(
   }: TimeZoneOptions = {},
 ) {
   await preloadDeferredViews();
-  const { api, sse, weather, anomalies } = fakes(farms);
+  const { api, sse, weather, anomalies } = fakes(farms, clock);
   clearTimeZoneSettings();
   if (role && timeZone === 'local') storeTimeZone(role, 'local');
   beforeOpen?.({ api, sse, weather, anomalies });

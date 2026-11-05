@@ -13,26 +13,85 @@ import type {
   FarmWeatherResponse,
   TelemetryResponse,
   TelemetryStatsResponse,
+  TurbineListItem,
+  TurbineListResponse,
+  TurbineMarker,
   TurbineResponse,
   TurbineWeatherResponse,
 } from '@nextera/shared';
 import { Roles } from '../auth/auth.decorators.js';
 import { jsonEtag } from '../common/etag.js';
+import type { CachedBody } from '../farms-cache/farms-cache.service.js';
 import { FarmDailyQueryDto } from './dto/farm-daily-query.dto.js';
 import { WeatherQueryDto } from './dto/weather-query.dto.js';
 import { TelemetryQueryDto } from './dto/telemetry-query.dto.js';
+import { TurbineListQueryDto } from './dto/turbine-list-query.dto.js';
 import { UpdateTurbineDto } from './dto/update-turbine.dto.js';
-import { FarmOverview, FleetService } from './fleet.service.js';
+import { FleetService } from './fleet.service.js';
+
+/** Sends a cached JSON body with its ETag; a matching If-None-Match gets 304 (Express res.send). */
+function sendCached(res: Response, { body, etag }: CachedBody): void {
+  res
+    .set({ ETag: etag, 'Cache-Control': 'private, no-cache' })
+    .type('application/json')
+    .send(body);
+}
 
 @Roles('viewer')
 @Controller()
 export class FleetController {
   constructor(private readonly fleet: FleetService) {}
 
-  /** GET /api/farms: farms, their turbines and each turbine's latest reading. */
+  /**
+   * GET /api/farms: farms, their turbines and each turbine's latest reading. Served from the
+   * in-process cache as pre-serialized bytes (FarmsCacheService), so it writes the Buffer itself:
+   * returning one from a handler would be JSON-encoded as `{type:'Buffer'}`. `ETag` +
+   * `Cache-Control: private, no-cache` as on the daily route; a matching `If-None-Match` gets 304
+   * without a body (Express `res.send`). Readings may be up to FARMS_CACHE_TTL_MS old.
+   */
   @Get('farms')
-  farms(): Promise<FarmOverview[]> {
-    return this.fleet.overview();
+  async farms(@Res() res: Response): Promise<void> {
+    sendCached(res, await this.fleet.cachedOverview());
+  }
+
+  /**
+   * GET /api/fleet/summary: the fleet's live totals (farms, turbines, commissioned, reporting,
+   * stale, alerting, power, `asOf`) from farm_live_summary, refreshed about once a minute. Cached
+   * bytes + ETag like /api/farms.
+   */
+  @Get('fleet/summary')
+  async fleetSummary(@Res() res: Response): Promise<void> {
+    sendCached(res, await this.fleet.cachedFleetSummary());
+  }
+
+  /**
+   * GET /api/farm-summaries: every farm (FarmResponse) with its live totals and no turbines.
+   * Cached bytes + ETag like /api/farms.
+   */
+  @Get('farm-summaries')
+  async farmSummaries(@Res() res: Response): Promise<void> {
+    sendCached(res, await this.fleet.cachedFarmSummaries());
+  }
+
+  /** GET /api/farms/:farmId/turbine-markers: id, position and status of a farm's turbines (≤ 2,000). */
+  @Get('farms/:farmId/turbine-markers')
+  turbineMarkers(@Param('farmId') farmId: string): Promise<TurbineMarker[]> {
+    return this.fleet.markers(farmId);
+  }
+
+  /**
+   * GET /api/turbines?farmId=&q=&status=&commissioned=&hasData=&sort=&dir=&limit=&cursor=&asOf=: a page
+   * of turbines with their latest reading, keyset-paged (see `listTurbines`).
+   */
+  @Get('turbines')
+  turbines(@Query() query: TurbineListQueryDto): Promise<TurbineListResponse> {
+    return this.fleet.turbines(query);
+  }
+
+  /** GET /api/turbines/:id: one turbine in the list's shape; 404 if unknown. */
+  @Get('turbines/:id')
+  turbine(@Param('id') id: string): Promise<TurbineListItem> {
+    return this.fleet.turbine(id);
   }
 
   /**

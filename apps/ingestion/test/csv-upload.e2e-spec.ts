@@ -23,8 +23,9 @@ describe('CSV upload: POST /ingest/telemetry (e2e, real Postgres + Redis)', () =
 
   beforeEach(async () => {
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, held_telemetry, unallocated_turbines`;
+      .$executeRaw`TRUNCATE TABLE turbine_latest, telemetry_alerts, telemetry, held_telemetry, unallocated_turbines`;
     lastEventId = (await t.events.publish('test.marker', null)).id;
+    t.live.clear();
   });
 
   /** multipart/form-data upload, like `curl -F file=@readings.csv`. */
@@ -69,11 +70,17 @@ describe('CSV upload: POST /ingest/telemetry (e2e, real Postgres + Redis)', () =
   it('publishes one live update per turbine (its newest reading), not one per row', async () => {
     await upload(providedCsv);
 
-    const events = await publishedEvents();
+    // Live events on the turbines' channels (never the stream).
+    const events = await t.live.events();
     expect(events.map((e) => e.type)).toEqual([
       'telemetry.received',
       'telemetry.received',
     ]);
+    expect(events.map((e) => e.channel).sort()).toEqual([
+      'telemetry:TURB001',
+      'telemetry:TURB002',
+    ]);
+    expect(await publishedEvents()).toEqual([]);
     expect(
       events.map((e) => e.data as { turbineId: string; timestamp: string }),
     ).toEqual(
@@ -238,9 +245,11 @@ describe('CSV upload: POST /ingest/telemetry (e2e, real Postgres + Redis)', () =
       ['TURB002', 'FARM01', 'farm_mismatch', 1],
       ['TURB999', 'FARM01', 'unknown_turbine', 2],
     ]);
-    const events = await publishedEvents();
-    expect(events.map((e) => e.type).sort()).toEqual([
-      'telemetry.received', // TURB001 only: held readings are never streamed as telemetry
+    // TURB001 only: held readings are never published as telemetry.
+    expect((await t.live.events()).map((e) => e.channel)).toEqual([
+      'telemetry:TURB001',
+    ]);
+    expect((await publishedEvents()).map((e) => e.type).sort()).toEqual([
       'unallocated-turbine.changed',
       'unallocated-turbine.changed',
     ]);

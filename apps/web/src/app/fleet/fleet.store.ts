@@ -2,10 +2,14 @@ import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core'
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { secondsToMilliseconds } from 'date-fns';
 import {
+  BehaviorSubject,
   Subject,
   Subscription,
   catchError,
   defer,
+  distinctUntilChanged,
+  filter,
+  forkJoin,
   map,
   of,
   retry,
@@ -16,33 +20,37 @@ import {
 } from 'rxjs';
 import { AuthStore } from '../core/auth/auth.store';
 import { NOW } from '../core/clock';
-import { errorMessage, statusOf } from '../core/http-errors';
 import { SseEvent, SseService, SseStatus } from '../core/sse.service';
-import { FleetApi, TelemetryWindow } from './fleet-api.service';
+import { FleetApi, MAX_WATCHED_TURBINES, TelemetryWindow } from './fleet-api.service';
 import {
   CLOCK_TICK_MS,
   DEFAULT_HISTORY_RANGE_MS,
-  FarmOverview,
+  FARM_ROLLUP_COMPLETED,
+  FLEET_TICK,
+  FarmSummaryResponse,
+  FleetSummaryResponse,
   LIVE_FUTURE_TOLERANCE_MS,
   MAX_HISTORY_READINGS,
-  TurbineOverview,
   READING_INTERVAL_MS,
   TELEMETRY_EVENTS,
   Telemetry,
   TelemetryStats,
 } from './fleet.model';
 import { ALERT_CONFIG_CHANGED } from '../alerting/alert-config.model';
-import {
-  FLEET_CHANGED,
-  FleetChangedEvent,
-  UNALLOCATED_CHANGED,
-} from '../unallocated/unallocated.model';
-import { Staleness, freshestStaleness, stalenessOf } from './staleness';
+import { FLEET_CHANGED, UNALLOCATED_CHANGED } from '../unallocated/unallocated.model';
+import { Staleness } from './staleness';
 
 const FLEET_LOAD_ERROR = 'Could not load the fleet.';
 
 /** Every SSE event type the shell's one connection listens for. */
-const LIVE_EVENTS = [...TELEMETRY_EVENTS, ALERT_CONFIG_CHANGED, UNALLOCATED_CHANGED, FLEET_CHANGED];
+const LIVE_EVENTS = [
+  ...TELEMETRY_EVENTS,
+  ALERT_CONFIG_CHANGED,
+  UNALLOCATED_CHANGED,
+  FLEET_CHANGED,
+  FLEET_TICK,
+  FARM_ROLLUP_COMPLETED,
+];
 
 /**
  * The live connection: `connecting` (first attempt), `open`, `reconnecting` (the browser's own
@@ -69,43 +77,69 @@ export function reconnectDelayMs(failures: number, random = Math.random()): numb
 /** How long a turbine counts as just updated: the row's flash (`--animate-flash` in styles.css). */
 export const FLASH_MS = secondsToMilliseconds(2);
 
-/** Why a commissioned change failed, in words (the API's 404 text names no reason). */
-function commissionedErrorMessage(
-  error: unknown,
-  turbineId: string,
-  commissioned: boolean,
-): string {
-  const reason =
-    statusOf(error) === 404
-      ? 'The turbine no longer exists, or your account can no longer change it.'
-      : errorMessage(error);
-  return `Could not mark ${turbineId} as ${commissioned ? 'commissioned' : 'not commissioned'}. ${reason}`;
+/** Fleet totals as the overview shows them (zeros until the first summary arrives). */
+export interface FleetTotals {
+  farms: number;
+  turbines: number;
+  commissioned: number;
+  reporting: number;
+  stale: number;
+  alerting: number;
+  powerKw: number;
+  /** The summary's own time (ISO, UTC); null before the first reading or summary. */
+  asOf: string | null;
 }
 
-/** A turbine with its farm's name, its latest reading (by measurement time) and staleness. */
-export interface FleetTurbine extends TurbineOverview {
-  farmName: string;
-  staleness: Staleness;
-}
-
+/** A farm's server-side totals; `staleness` is derived (see `FleetStore.farms`). */
 export interface FarmSummary {
   id: string;
   name: string;
   latitude: number;
   longitude: number;
   turbineCount: number;
-  /** Turbines whose staleness is 'ok'; output and wind only count these. */
+  commissioned: number;
+  /** Turbines reporting; output and wind only count these. */
   reporting: number;
-  /** The freshest turbine's level ('empty' without turbines or readings); see `farms`. */
+  stale: number;
+  alerting: number;
+  /**
+   * 'ok' if any turbine reports, 'stale-15' if none does but some are stale (the summary doesn't
+   * say for how long), 'empty' if none ever reported or the farm has no turbines.
+   */
   staleness: Staleness;
   powerKw: number;
   avgWindMs: number | null;
+  asOf: string | null;
+}
+
+const sameIds = (a: readonly string[], b: readonly string[]) => key(a) === key(b);
+const key = (ids: readonly string[]) => [...ids].sort().join(',');
+
+function toFarmSummary(farm: FarmSummaryResponse): FarmSummary {
+  return {
+    id: farm.id,
+    name: farm.name,
+    latitude: farm.latitude,
+    longitude: farm.longitude,
+    turbineCount: farm.turbineCount,
+    commissioned: farm.commissioned,
+    reporting: farm.reporting,
+    stale: farm.stale,
+    alerting: farm.alerting,
+    staleness: farm.reporting > 0 ? 'ok' : farm.stale > 0 ? 'stale-15' : 'empty',
+    powerKw: farm.powerOutputKw,
+    avgWindMs: farm.windSpeedMs,
+    asOf: farm.asOf,
+  };
 }
 
 /**
- * Fleet state for the dashboard. Readings arrive late and out of order, so everything is keyed by
- * measurement time: the "latest" reading per turbine is the one with the newest `timestamp`, and a
- * late reading for an older instant never replaces it.
+ * Fleet state for the shell: the fleet and farm summaries (rebuilt by the server about once a
+ * minute, refreshed on `fleet.tick` and `fleet.changed`), the one live connection, the clock, and
+ * the selected turbine's history. It holds no per-turbine lists: tables page through the API
+ * (`TurbinePageStore`) and tell this store which turbines are on screen (`watchTurbines`), so the
+ * connection carries only their readings (`readings$`). Readings arrive late and out of order, so
+ * everything is keyed by measurement time.
  */
 @Injectable()
 export class FleetStore {
@@ -115,37 +149,25 @@ export class FleetStore {
   private readonly clock = inject(NOW);
   private readonly auth = inject(AuthStore);
 
-  private readonly farmList = signal<FarmOverview[]>([]);
-  private readonly latestByTurbine = signal(new Map<string, Telemetry>());
-  /** The turbine ids the loaded fleet lists: live readings for any other id are ignored. */
-  private readonly listedTurbineIds = computed(
-    () => new Set(this.farmList().flatMap((f) => f.turbines.map((t) => t.id))),
-  );
-  /** Whether a fleet load has succeeded yet (until then, the listed ids are not known). */
-  private fleetLoaded = false;
-  /** Unlisted turbine ids already warned about (one warning per id). */
-  private readonly warnedUnlisted = new Set<string>();
-  /**
-   * Turbines announced by `fleet.changed` (assigned or moved) that the loaded fleet may not list
-   * yet: their live readings are accepted until a fleet load started after the announcement
-   * succeeds. The API sends `fleet.changed` before the imported reading's `telemetry.received`,
-   * while the reload it triggers is still in flight, so without this that reading would be dropped.
-   */
-  private readonly announcedTurbineIds = new Set<string>();
+  private readonly fleetSummary = signal<FleetSummaryResponse | null>(null);
+  private readonly farmSummaries = signal<FarmSummaryResponse[]>([]);
   private historySub?: Subscription;
-  private farmsSub?: Subscription;
-  /** Fleet loads sent so far: tells `setCommissioned` whether one overlapped its request. */
-  private loadsSent = 0;
-  /**
-   * The commissioned value being saved, per turbine. `turbines` shows it over whatever the loaded
-   * fleet says, so a reload answered meanwhile can't flip the value back.
-   */
-  private readonly commissionedSaving = signal<ReadonlyMap<string, boolean>>(new Map());
+  private summariesSub?: Subscription;
   /** The selected turbine's loaded and live readings, newest first (may extend past the window). */
   private readonly loadedHistory = signal<Telemetry[]>([]);
   /** Live readings received while the history request is pending (merged into its response). */
   private liveWhileLoading: Telemetry[] = [];
   private tickTimer?: ReturnType<typeof setTimeout>;
+
+  /** Who watches which turbines (a table's page, the selected turbine): the union is on the wire. */
+  private readonly watchers = new Map<object, readonly string[]>();
+  private readonly watched$ = new BehaviorSubject<readonly string[]>([]);
+  private readonly historyWatcher = {};
+  private readonly readingsSubject = new Subject<Telemetry>();
+  /**
+   * Live readings for the watched turbines (none from the future): consumers apply what they show.
+   */
+  readonly readings$ = this.readingsSubject.asObservable();
 
   /**
    * The client time (epoch ms): the reference for staleness and the end of the selected turbine's
@@ -161,29 +183,36 @@ export class FleetStore {
    */
   readonly alertConfigVersion = signal(0);
   /**
+   * Bumped on every `farm-rollup.completed` event (the farm rollup committed, every 15 min) and
+   * after a resync (a missed event): the farm History tab reloads and its cache entries from an
+   * earlier version count as misses.
+   */
+  readonly farmRollupVersion = signal(0);
+  /**
    * Bumped on every `unallocated-turbine.changed` event (an entry was held, resolved, blocked or
    * unblocked) and after a resync: the Unallocated pages reload when it changes.
    */
   readonly unallocatedVersion = signal(0);
+  /**
+   * Bumped on every `fleet.changed` event (a turbine was assigned, moved or commissioned, here or
+   * elsewhere) and `reloadFleet()`: tables reload their page when it changes.
+   */
+  readonly fleetVersion = signal(0);
+  /** Bumped each time the summaries were loaded (first load, tick, change, resync): maps refresh. */
+  readonly summaryVersion = signal(0);
+  /**
+   * Bumped each time a live connection opens (the first, a new one for other watched turbines, an
+   * outage reconnect, the browser's own): readings published before the subscription are not
+   * replayed, so tables refetch their page when it changes.
+   */
+  readonly streamOpens = signal(0);
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
   /**
-   * The fleet finished loading and no error is showing, so `farms` can be trusted: a farm missing
-   * from it really doesn't exist. After a failed load the list is just empty.
+   * The summaries finished loading and no error is showing, so `farms` can be trusted: a farm
+   * missing from it really doesn't exist. After a failed load the list is just empty.
    */
   readonly fleetLoadedOk = computed(() => !this.loading() && !this.error());
-  /**
-   * The turbines a live reading updated in the last `FLASH_MS`, so every row of a burst flashes for
-   * its full length. Another reading for a turbine in the set restarts its time.
-   */
-  readonly recentlyUpdated = signal<ReadonlySet<string>>(new Set());
-  private readonly flashTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  /** The turbines whose commissioned change is being saved (their control waits). */
-  readonly commissionedPending = computed<ReadonlySet<string>>(
-    () => new Set(this.commissionedSaving().keys()),
-  );
-  /** Why the last commissioned change failed; cleared by the next change. */
-  readonly commissionedError = signal<string | null>(null);
   readonly selectedTurbineId = signal<string | null>(null);
   readonly historyLoading = signal(false);
   readonly historyRangeMs = signal(DEFAULT_HISTORY_RANGE_MS);
@@ -212,135 +241,76 @@ export class FleetStore {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((stats) => this.stats.set(stats));
-    this.destroyRef.onDestroy(() => {
-      this.stopTicking();
-      this.flashTimers.forEach((timer) => clearTimeout(timer));
-    });
+    this.destroyRef.onDestroy(() => this.stopTicking());
   }
 
-  /** Newest measurement time across the fleet ("data as of"; staleness uses the client clock). */
+  /** "Data as of" (epoch ms): the fleet summary's time, or null before there is one. */
   readonly fleetTime = computed(() => {
-    let newest = 0;
-    for (const r of this.latestByTurbine().values()) {
-      newest = Math.max(newest, Date.parse(r.timestamp));
-    }
-    return newest || null;
+    const asOf = this.fleetSummary()?.asOf;
+    return asOf ? Date.parse(asOf) : null;
   });
 
-  /** Each turbine with its latest reading (by measurement time) and staleness at `now`. */
-  readonly turbines = computed<FleetTurbine[]>(() =>
-    this.farmList().flatMap((farm) =>
-      farm.turbines.map((t) => {
-        const latest = this.latestByTurbine().get(t.id) ?? null;
-        return {
-          ...t,
-          commissioned: this.commissionedSaving().get(t.id) ?? t.commissioned,
-          farmName: farm.name,
-          latest,
-          staleness: stalenessOf(latest, this.now()),
-        };
-      }),
-    ),
-  );
-
-  /**
-   * Per-farm totals over the reporting ('ok') turbines. A farm's `staleness` is its freshest
-   * turbine's level: 'ok' if any turbine reports, else the least stale level among them (the
-   * farm went quiet that long ago), and 'empty' if no turbine ever reported (or it has none).
-   */
-  readonly farms = computed<FarmSummary[]>(() =>
-    this.farmList().map((farm) => {
-      const levels = farm.turbines.map((t) =>
-        stalenessOf(this.latestByTurbine().get(t.id), this.now()),
-      );
-      const readings = farm.turbines
-        .filter((_, i) => levels[i] === 'ok')
-        .map((t) => this.latestByTurbine().get(t.id)!);
-      return {
-        id: farm.id,
-        name: farm.name,
-        latitude: farm.latitude,
-        longitude: farm.longitude,
-        turbineCount: farm.turbines.length,
-        reporting: readings.length,
-        staleness: freshestStaleness(levels),
-        powerKw: readings.reduce((sum, r) => sum + r.powerOutputKw, 0),
-        avgWindMs: readings.length
-          ? readings.reduce((sum, r) => sum + r.windSpeedMs, 0) / readings.length
-          : null,
-      };
-    }),
-  );
-
-  readonly fleet = computed(() => {
-    const farms = this.farms();
+  /** The fleet totals from the last summary. */
+  readonly fleet = computed<FleetTotals>(() => {
+    const f = this.fleetSummary();
     return {
-      farms: farms.length,
-      turbines: farms.reduce((n, f) => n + f.turbineCount, 0),
-      reporting: farms.reduce((n, f) => n + f.reporting, 0),
-      powerKw: farms.reduce((n, f) => n + f.powerKw, 0),
+      farms: f?.farms ?? 0,
+      turbines: f?.turbines ?? 0,
+      commissioned: f?.commissioned ?? 0,
+      reporting: f?.reporting ?? 0,
+      stale: f?.stale ?? 0,
+      alerting: f?.alerting ?? 0,
+      powerKw: f?.powerOutputKw ?? 0,
+      asOf: f?.asOf ?? null,
     };
   });
 
-  readonly selectedTurbine = computed(
-    () => this.turbines().find((t) => t.id === this.selectedTurbineId()) ?? null,
-  );
+  /** Every farm with its totals, as of the last summary (no turbines). */
+  readonly farms = computed<FarmSummary[]>(() => this.farmSummaries().map(toFarmSummary));
 
   /**
-   * Subscribe to live readings first, then load: nothing that happens in between is missed.
-   * Starts the minute clock, so staleness advances on every page without user interaction.
+   * Starts the minute clock (staleness advances on every page without user interaction), opens the
+   * live connection first, then loads the summaries: nothing that happens in between is missed.
    */
   init(): void {
     this.now.set(this.clock());
     this.startTicking();
     this.connectLive();
-    this.loadFarms({ resync: false });
+    this.loadSummaries({ quiet: false });
   }
 
   /**
-   * The live connection, kept up while the store lives. The browser reconnects an EventSource by
-   * itself after a network drop or the end of a stream (sending Last-Event-ID, so the API replays
-   * what was missed), but gives up for good when a reconnect gets an HTTP error (a 503 during a
-   * deploy, a 502 from a proxy, a 401): SseService then errors. Here that means: `reconnecting`,
-   * wait `reconnectDelayMs` (1 s, 2 s, 4 s … 30 s, jittered; back to 1 s after an open), then a new
+   * Says which turbines `owner` shows (replacing its earlier list; none = stops watching). The
+   * connection carries the readings of all watchers' turbines (at most 100): when the set changes
+   * it reconnects, without a visible status change.
+   */
+  watchTurbines(owner: object, ids: readonly string[]): void {
+    if (ids.length) this.watchers.set(owner, ids.slice(0, MAX_WATCHED_TURBINES));
+    else this.watchers.delete(owner);
+    const union = [...new Set([...this.watchers.values()].flat())].slice(0, MAX_WATCHED_TURBINES);
+    this.watched$.next(union);
+  }
+
+  /**
+   * The live connection, kept up while the store lives; a new one for each change of the watched
+   * turbines (`watchTurbines`). The browser reconnects an EventSource by itself after a network
+   * drop or the end of a stream (sending Last-Event-ID, so the API replays the fleet-wide events
+   * missed), but gives up for good when a reconnect gets an HTTP error (a 503 during a deploy, a
+   * 502 from a proxy, a 401): SseService then errors. Here that means: `reconnecting`, wait
+   * `reconnectDelayMs` (1 s, 2 s, 4 s … 30 s, jittered; back to 1 s after an open), then a new
    * EventSource with a freshly read URL (the token may have changed). A new EventSource can't send
-   * Last-Event-ID, so when one of ours opens, `resync()` reloads what the outage may have missed.
-   * Signed out (e.g. the session expired): no more attempts, `offline`.
-   *
-   * (`retry`'s `resetOnSuccess` doesn't fit: every attempt emits `connecting` at once, which would
-   * reset the count before the connection ever opened; `failures` is reset on `open` instead.)
+   * Last-Event-ID, so when one of ours opens after an outage, `resync()` reloads what it may have
+   * missed. Signed out (e.g. the session expired): no more attempts, `offline`.
    */
   private connectLive(): void {
-    let failures = 0;
-    let attempts = 0;
-    defer(() => {
-      if (!this.auth.isAuthenticated()) return throwError(() => new Error('Signed out'));
-      const reconnect = attempts++ > 0;
-      let opened = false;
-      return this.sse.connect<unknown>(this.api.eventsUrl, LIVE_EVENTS).pipe(
-        // A retry's new connection is still "Reconnecting…" until it opens, not "Connecting…".
-        map((event): SseEvent<unknown> =>
-          reconnect && event.kind === 'status' && event.status === 'connecting'
-            ? { kind: 'status', status: 'reconnecting' }
-            : event,
-        ),
-        tap((event) => {
-          if (event.kind !== 'status' || event.status !== 'open') return;
-          failures = 0;
-          // Only the first open of our new EventSource: later opens are the browser's own
-          // reconnects, which resume with Last-Event-ID.
-          if (reconnect && !opened) this.resync();
-          opened = true;
-        }),
-      );
-    })
+    let first = true;
+    this.watched$
       .pipe(
-        retry({
-          delay: (error: unknown) => {
-            if (!this.auth.isAuthenticated()) return throwError(() => error);
-            this.liveStatus.set('reconnecting');
-            return timer(reconnectDelayMs(failures++));
-          },
+        distinctUntilChanged(sameIds),
+        switchMap((ids) => {
+          const switched = !first;
+          first = false;
+          return this.liveConnection(ids, switched);
         }),
         takeUntilDestroyed(this.destroyRef),
       )
@@ -350,8 +320,10 @@ export class FleetStore {
           else if (event.type === ALERT_CONFIG_CHANGED)
             this.alertConfigVersion.update((v) => v + 1);
           else if (event.type === UNALLOCATED_CHANGED) this.unallocatedVersion.update((v) => v + 1);
-          else if (event.type === FLEET_CHANGED)
-            this.reloadFleet((event.data as FleetChangedEvent).turbineId);
+          else if (event.type === FLEET_CHANGED) this.reloadFleet();
+          else if (event.type === FLEET_TICK) this.loadSummaries({ quiet: true });
+          else if (event.type === FARM_ROLLUP_COMPLETED)
+            this.farmRollupVersion.update((v) => v + 1);
           else this.receive(event.data as Telemetry);
         },
         error: () => this.liveStatus.set('offline'),
@@ -359,122 +331,107 @@ export class FleetStore {
   }
 
   /**
-   * After our own reconnect: the API replays nothing to a new EventSource, so reload what the
-   * outage may have missed. The live stream is already open, so nothing arriving from now on is
-   * lost (as in `init`): latest readings (`applyLatest` keeps whichever is newer), the selected
-   * turbine's history and stats (same range, kept on screen while they reload), the rule pages
-   * (missed `alert-config.changed`) and the Unallocated pages (missed
-   * `unallocated-turbine.changed`).
+   * One EventSource for `ids`, retried with backoff. `switched`: it replaces an open connection
+   * because the watched turbines changed, so its `connecting` status is not shown and its open
+   * only refreshes the summaries (the fleet-wide events in the gap are not replayed). A retry after
+   * a failure is an outage reconnect either way.
+   *
+   * (`retry`'s `resetOnSuccess` doesn't fit: every attempt emits `connecting` at once, which would
+   * reset the count before the connection ever opened; `failures` is reset on `open` instead.)
+   */
+  private liveConnection(ids: readonly string[], switched: boolean) {
+    let failures = 0;
+    let attempts = 0;
+    return defer(() => {
+      if (!this.auth.isAuthenticated()) return throwError(() => new Error('Signed out'));
+      const outage = attempts++ > 0;
+      const quietSwitch = switched && !outage;
+      let opened = false;
+      return this.sse.connect<unknown>(this.api.eventsUrl(ids), LIVE_EVENTS).pipe(
+        // A retry's new connection is still "Reconnecting…" until it opens, not "Connecting…".
+        map((event): SseEvent<unknown> | null => {
+          if (event.kind !== 'status' || event.status !== 'connecting') return event;
+          if (outage) return { kind: 'status', status: 'reconnecting' };
+          return quietSwitch ? null : event;
+        }),
+        filter((event): event is SseEvent<unknown> => event !== null),
+        tap((event) => {
+          if (event.kind !== 'status' || event.status !== 'open') return;
+          failures = 0;
+          this.streamOpens.update((v) => v + 1);
+          // Only the first open of our new EventSource: later opens are the browser's own
+          // reconnects, which resume with Last-Event-ID.
+          if (!opened) {
+            if (outage) this.resync();
+            else if (quietSwitch) this.loadSummaries({ quiet: true });
+          }
+          opened = true;
+        }),
+      );
+    }).pipe(
+      retry({
+        delay: (error: unknown) => {
+          if (!this.auth.isAuthenticated()) return throwError(() => error);
+          this.liveStatus.set('reconnecting');
+          return timer(reconnectDelayMs(failures++));
+        },
+      }),
+    );
+  }
+
+  /**
+   * After our own reconnect following an outage: the API replays nothing to a new EventSource, so
+   * reload what the outage may have missed. The live stream is already open, so nothing arriving
+   * from now on is lost: the summaries, the selected turbine's history and stats (same range,
+   * kept on screen while they reload), the rule pages (missed `alert-config.changed`), the
+   * Unallocated pages (missed `unallocated-turbine.changed`). The tables refetch on `streamOpens`.
    */
   private resync(): void {
-    this.loadFarms({ resync: true });
+    this.loadSummaries({ quiet: true });
     const selected = this.selectedTurbineId();
     if (selected) this.select(selected);
     this.alertConfigVersion.update((v) => v + 1);
+    this.farmRollupVersion.update((v) => v + 1);
     this.unallocatedVersion.update((v) => v + 1);
   }
 
   /**
-   * The fleet changed on the server (`fleet.changed`: a turbine was assigned to a farm or moved, or
-   * this browser just did that): reloads the farms quietly, like a resync. `turbineId`'s live
-   * readings are accepted from now on, also before that reload lists it, so the imported reading
-   * the API announces right after `fleet.changed` is not dropped as unlisted.
+   * The fleet changed on the server (`fleet.changed`: a turbine was assigned, moved or
+   * commissioned, or this browser just did that): reloads the summaries quietly and tells the
+   * tables to reload their page (`fleetVersion`).
    */
-  reloadFleet(turbineId?: string): void {
-    if (turbineId) {
-      this.announcedTurbineIds.add(turbineId);
-      this.warnedUnlisted.delete(turbineId);
-    }
-    this.loadFarms({ resync: true });
+  reloadFleet(): void {
+    this.fleetVersion.update((v) => v + 1);
+    this.loadSummaries({ quiet: true });
   }
 
   /**
-   * Loads the farms and each turbine's latest reading (replacing a pending load). The first load
-   * drives `loading`/`error`; a resync once that finished updates the fleet quietly: a failure keeps
-   * what is shown, a success clears a failed first load's error.
+   * Loads the fleet and farm summaries (replacing a pending load). The first load drives
+   * `loading`/`error`; a quiet one (tick, change, resync) once that finished updates them without
+   * a trace: a failure keeps what is shown, a success clears a failed first load's error.
    */
-  private loadFarms({ resync }: { resync: boolean }): void {
-    const quiet = resync && !this.loading();
-    // A load sent now lists every turbine announced so far (they were committed before the event).
-    const announced = [...this.announcedTurbineIds];
-    this.farmsSub?.unsubscribe();
-    this.loadsSent++;
-    this.farmsSub = this.api
-      .farms()
+  private loadSummaries({ quiet }: { quiet: boolean }): void {
+    const silent = quiet && !this.loading();
+    this.summariesSub?.unsubscribe();
+    this.summariesSub = forkJoin({
+      fleet: this.api.fleetSummary(),
+      farms: this.api.farmSummaries(),
+    })
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: (farms) => {
-          this.farmList.set(farms);
-          this.fleetLoaded = true;
-          for (const id of announced) this.announcedTurbineIds.delete(id);
-          // Live readings that arrived before this load may be for turbines it doesn't list:
-          // keep only the listed turbines (also drops turbines removed since the last load).
-          const listed = this.listedTurbineIds();
-          this.latestByTurbine.update(
-            (current) => new Map([...current].filter(([id]) => listed.has(id))),
-          );
-          for (const turbine of farms.flatMap((f) => f.turbines)) {
-            if (turbine.latest) this.applyLatest(turbine.latest);
-          }
+        next: ({ fleet, farms }) => {
+          this.fleetSummary.set(fleet);
+          this.farmSummaries.set(farms);
           this.loading.set(false);
           if (this.error() === FLEET_LOAD_ERROR) this.error.set(null);
+          this.summaryVersion.update((v) => v + 1);
         },
         error: () => {
-          if (quiet) return;
+          if (silent) return;
           this.error.set(FLEET_LOAD_ERROR);
           this.loading.set(false);
         },
       });
-  }
-
-  /**
-   * Marks a turbine commissioned or not: shown at once, then PATCHed (one request per turbine at a
-   * time; a call while one is pending is ignored). A failure goes back to what the server last said
-   * (not to the value before the click: a reload meanwhile may know better), sets
-   * `commissionedError` and reloads. This is not a reading: no flash, and no change to the latest.
-   *
-   * On success, a fleet load that overlapped the request can't be trusted for this turbine: one
-   * still in flight may have read the row before the commit, and one sent since may hold someone
-   * else's newer change that this answer just overwrote. So such a load is replaced by a new one,
-   * sent after the commit. `fleet.changed` usually reloads anyway, but arrives in its own time, and
-   * not at all for a value that was already set.
-   */
-  setCommissioned(turbineId: string, commissioned: boolean): void {
-    if (this.commissionedSaving().has(turbineId)) return;
-    this.commissionedError.set(null);
-    this.commissionedSaving.update((saving) => new Map(saving).set(turbineId, commissioned));
-    const loadsBefore = this.loadsSent;
-    this.api
-      .setCommissioned(turbineId, commissioned)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: (updated) => {
-          this.farmList.update((farms) =>
-            farms.map((farm) => ({
-              ...farm,
-              turbines: farm.turbines.map((t) =>
-                t.id === turbineId ? { ...t, commissioned: updated.commissioned } : t,
-              ),
-            })),
-          );
-          this.endCommissionedSave(turbineId);
-          if (this.loadsSent !== loadsBefore || this.farmsSub?.closed === false) this.reloadFleet();
-        },
-        error: (error: unknown) => {
-          this.endCommissionedSave(turbineId);
-          this.commissionedError.set(commissionedErrorMessage(error, turbineId, commissioned));
-          // The change may have committed (a lost answer). A 401 just signed out: nothing to load.
-          if (this.auth.isAuthenticated()) this.reloadFleet();
-        },
-      });
-  }
-
-  private endCommissionedSave(turbineId: string): void {
-    this.commissionedSaving.update((saving) => {
-      const rest = new Map(saving);
-      rest.delete(turbineId);
-      return rest;
-    });
   }
 
   /**
@@ -514,12 +471,14 @@ export class FleetStore {
       this.loadedHistory.set([]);
       this.historyLoading.set(false);
       this.statsRequests.next(null);
+      this.watchTurbines(this.historyWatcher, []);
       return;
     }
     if (!sameTurbine) {
       this.loadedHistory.set([]);
       this.stats.set(null); // another turbine's stats must never show; same turbine: keep until new
     }
+    this.watchTurbines(this.historyWatcher, [turbineId]);
 
     this.now.set(this.clock());
     this.historyLimit = Math.min(
@@ -548,13 +507,11 @@ export class FleetStore {
   }
 
   /**
-   * A live reading: becomes its turbine's latest if newer, and joins the selected turbine's history.
-   * Ignored (with a console warning) when dated more than `LIVE_FUTURE_TOLERANCE_MS` ahead of the
-   * client clock, or once the fleet has loaded, for a turbine it doesn't list (warned once per id)
-   * and that `fleet.changed` did not announce (see `reloadFleet`).
-   * Ingestion rejects both already; this keeps a bad event from moving "data as of", the highlight,
-   * staleness or the charts. Before the first successful load the listed turbines aren't known, so
-   * such readings are kept, and `loadFarms` then drops any for turbines it doesn't list.
+   * A live reading: passed on to `readings$` and, for the selected turbine, merged into its
+   * history. Ignored (with a console warning) when dated more than `LIVE_FUTURE_TOLERANCE_MS`
+   * ahead of the client clock. Ingestion rejects that already; this keeps a bad event from moving
+   * the highlight, staleness or the charts. The API sends only watched turbines' readings; each
+   * consumer drops what it doesn't show.
    */
   private receive(reading: Telemetry): void {
     if (Date.parse(reading.timestamp) > this.clock() + LIVE_FUTURE_TOLERANCE_MS) {
@@ -563,18 +520,7 @@ export class FleetStore {
       );
       return;
     }
-    if (
-      this.fleetLoaded &&
-      !this.listedTurbineIds().has(reading.turbineId) &&
-      !this.announcedTurbineIds.has(reading.turbineId)
-    ) {
-      if (!this.warnedUnlisted.has(reading.turbineId)) {
-        this.warnedUnlisted.add(reading.turbineId);
-        console.warn(`Ignoring live readings for ${reading.turbineId}: not in the loaded fleet`);
-      }
-      return;
-    }
-    if (this.applyLatest(reading)) this.markUpdated(reading.turbineId);
+    this.readingsSubject.next(reading);
     if (reading.turbineId !== this.selectedTurbineId()) return;
     this.now.set(this.clock());
     // A late reading older than the window is not charted and cannot change the range's stats.
@@ -599,7 +545,7 @@ export class FleetStore {
   }
 
   /**
-   * Re-reads the clock: updates every turbine's staleness and slides the selected turbine's
+   * Re-reads the clock: updates staleness everywhere and slides the selected turbine's
    * window. Reloads the stats only when that changed which readings are in the window (one
    * left, or one dated slightly ahead of this clock entered).
    */
@@ -634,32 +580,6 @@ export class FleetStore {
   private stopTicking(): void {
     clearTimeout(this.tickTimer);
     this.tickTimer = undefined;
-  }
-
-  private markUpdated(turbineId: string): void {
-    clearTimeout(this.flashTimers.get(turbineId));
-    this.flashTimers.set(
-      turbineId,
-      setTimeout(() => {
-        this.flashTimers.delete(turbineId);
-        this.recentlyUpdated.update((ids) => {
-          const rest = new Set(ids);
-          rest.delete(turbineId);
-          return rest;
-        });
-      }, FLASH_MS),
-    );
-    if (!this.recentlyUpdated().has(turbineId)) {
-      this.recentlyUpdated.update((ids) => new Set(ids).add(turbineId));
-    }
-  }
-
-  /** Returns true if the reading became the turbine's latest. */
-  private applyLatest(reading: Telemetry): boolean {
-    const current = this.latestByTurbine().get(reading.turbineId);
-    if (current && current.timestamp >= reading.timestamp) return false; // older or same instant
-    this.latestByTurbine.update((map) => new Map(map).set(reading.turbineId, reading));
-    return true;
   }
 }
 

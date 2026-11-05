@@ -21,8 +21,7 @@ export interface TurbineAlerts {
 }
 
 /**
- * Groups the API's readings (already by turbine, newest first) into one summary per turbine, in
- * the API's order (turbine id ascending).
+ * Groups the API's readings (newest first) into one summary per turbine, ordered by turbine id.
  */
 export function groupAlertsByTurbine(
   readings: readonly Telemetry[],
@@ -30,13 +29,15 @@ export function groupAlertsByTurbine(
 ): TurbineAlerts[] {
   const groups = new Map<string, Telemetry[]>();
   for (const r of readings) groups.set(r.turbineId, [...(groups.get(r.turbineId) ?? []), r]);
-  return [...groups.values()].map((group) => ({
-    turbineId: group[0].turbineId,
-    farmId: group[0].farmId,
-    farmName: farmNameOf(group[0].farmId),
-    readings: group,
-    latest: group[0].timestamp,
-    worst: worstLevel(group.flatMap((r) => r.alerts)),
-    levelCounts: countByLevel(group.flatMap((r) => r.alerts)),
-  }));
+  return [...groups.values()]
+    .sort((a, b) => a[0].turbineId.localeCompare(b[0].turbineId))
+    .map((group) => ({
+      turbineId: group[0].turbineId,
+      farmId: group[0].farmId,
+      farmName: farmNameOf(group[0].farmId),
+      readings: group,
+      latest: group[0].timestamp,
+      worst: worstLevel(group.flatMap((r) => r.alerts)),
+      levelCounts: countByLevel(group.flatMap((r) => r.alerts)),
+    }));
 }

@@ -1,3 +1,5 @@
+import { Redis } from 'ioredis';
+import { FarmsCacheService } from '../src/farms-cache/farms-cache.service.js';
 import {
   classifyReadings,
   enabledAlertRules,
@@ -41,13 +43,29 @@ const at = (minute: number) =>
  * with the shared code the ingestion worker runs (classifyReadings → insert known / hold the rest,
  * in one transaction), so these tests cover hold → decide → telemetry end to end.
  */
+async function waitForChannelSubscriber(channel: string): Promise<void> {
+  const probe = new Redis(process.env.REDIS_URL!);
+  try {
+    await vi.waitFor(async () => {
+      const [, count] = (await probe.pubsub('NUMSUB', channel)) as [
+        string,
+        number,
+      ];
+      expect(count).toBeGreaterThan(0);
+    });
+  } finally {
+    await probe.quit();
+  }
+}
+
 describe('Unallocated turbines API (e2e)', () => {
   let t: TestApp;
 
   const reseed = async () => {
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, held_telemetry, unallocated_turbines, turbines, farm_weather, farm_telemetry_rollups, farm_rollup_dirty, farm_rollup_state, farms`;
+      .$executeRaw`TRUNCATE TABLE turbine_latest, farm_live_summary, anomaly_episodes, telemetry_alerts, alerts_config, telemetry, held_telemetry, unallocated_turbines, turbines, farm_weather, farm_telemetry_rollups, farm_rollup_dirty, farm_rollup_state, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
+    t.app.get(FarmsCacheService).invalidate(); // written behind the API's back
   };
 
   beforeAll(async () => {
@@ -228,7 +246,9 @@ describe('Unallocated turbines API (e2e)', () => {
         reading({ timestamp: at(0) }),
         reading({ timestamp: at(5), gearboxTempC: 126.5 }),
       );
-      const sse = await openSse(eventsUrl(t, 'viewer'));
+      // The imported reading goes to the turbine's live channel: scope the stream to it.
+      const sse = await openSse(`${eventsUrl(t, 'viewer')}&turbines=TURB990`);
+      await waitForChannelSubscriber('telemetry:TURB990');
       try {
         const res = await api(
           'POST',
@@ -469,11 +489,19 @@ describe('Unallocated turbines API (e2e)', () => {
       const entry = await hold(
         reading({ turbineId: 'TURB001', farmId: 'FARM02' }),
       );
+      const farmOf = async () =>
+        (await (await api('GET', '/farms', { role: 'viewer' })).json())
+          .filter((f: { turbines: { id: string }[] }) =>
+            f.turbines.some((x) => x.id === 'TURB001'),
+          )
+          .map((f: { id: string }) => f.id);
+      expect(await farmOf()).toEqual(['FARM01']); // primes the farms cache
       const sse = await openSse(eventsUrl(t, 'viewer'));
       try {
         const res = await api('POST', `/unallocated-turbines/${entry.id}/move`);
 
         expect(res.status).toBe(200);
+        expect(await farmOf()).toEqual(['FARM02']); // visible at once, not after the TTL
         expect(await res.json()).toMatchObject({
           action: 'moved',
           turbine: { id: 'TURB001', farmId: 'FARM02' },

@@ -38,7 +38,7 @@ variable "db_version" {
 }
 
 variable "db_tier" {
-  description = "Cloud SQL machine tier. db-g1-small allows ~50 connections; size with (api + ingestion max instances) x db_pool_max."
+  description = "Cloud SQL machine tier. db-g1-small allows ~50 connections; size with (api + ingestion max instances) x db_pool_max plus 2 per enabled scheduled job (each job opens a pool of 2 and runs one execution at a time). Demo-sized default; the million-turbine sizing is in docs/scaling-gcp.md (estimates, unproven)."
   type        = string
   default     = "db-g1-small"
 }
@@ -50,7 +50,7 @@ variable "db_high_availability" {
 }
 
 variable "db_pool_max" {
-  description = "Prisma pg pool size per instance (DB_POOL_MAX). (api_max_instances + ingestion_max_instances) x db_pool_max must stay below max_connections."
+  description = "Prisma pg pool size per instance (DB_POOL_MAX). (api_max_instances + ingestion_max_instances) x db_pool_max + 2 per enabled scheduled job (their pool is fixed at 2) must stay below max_connections."
   type        = number
   default     = 4
 }
@@ -104,17 +104,17 @@ variable "ingestion_max_instances" {
 }
 
 variable "ingestion_concurrency" {
-  description = "Concurrent Pub/Sub pushes per worker instance."
+  description = "Concurrent Pub/Sub pushes per worker instance. High on purpose: the worker batches pushes into one DB flush at a time, so DB connections do not grow with concurrency, and the batch (INGEST_BATCH_MAX) and queue limit (INGEST_MAX_QUEUED, 500) can only fill if more requests than that can be in flight."
   type        = number
-  default     = 20
+  default     = 100
 }
 
 # --- Pub/Sub ----------------------------------------------------------------
 
 variable "pubsub_max_delivery_attempts" {
-  description = "Deliveries before a message moves to the dead-letter topic (5-100)."
+  description = "Deliveries before a message moves to the dead-letter topic (5-100). 10 attempts with the 10-600 s backoff in pubsub.tf is about 40 minutes of retries: the worker answers 503 when its queue is full (counted as a failed delivery), so valid readings survive an overload, while an invalid payload takes that long to reach the dead-letter topic."
   type        = number
-  default     = 5
+  default     = 10
 }
 
 variable "ingestion_invokers" {
@@ -190,6 +190,92 @@ variable "farm_rollup_schedule" {
   validation {
     condition     = length(split(" ", trimspace(var.farm_rollup_schedule))) == 5
     error_message = "farm_rollup_schedule must be a five-field cron expression such as \"*/15 * * * *\"."
+  }
+}
+
+# --- Partition maintenance (partition-maintenance.tf) -------------------------------
+
+variable "partition_maintenance_enabled" {
+  description = "Create the telemetry partition maintenance: Cloud Run Job nextera-partition-maintenance (creates the upcoming daily partitions, drops those past telemetry_retention_days) + a Cloud Scheduler trigger. On by default: the migration only created today through +3 days, so without it readings end up in the DEFAULT partition after 3 days."
+  type        = bool
+  default     = true
+}
+
+variable "partition_maintenance_paused" {
+  description = "Pause the partition maintenance's Cloud Scheduler trigger (keeps the job). Do not leave it paused for more than 3 days: readings then fall into the DEFAULT partition. Only used when partition_maintenance_enabled."
+  type        = bool
+  default     = false
+}
+
+variable "partition_maintenance_schedule" {
+  description = "Cron schedule (UTC) of the partition maintenance. Default 03:17 daily: off-peak, and off the 5-minute boundaries where readings arrive (the drop takes a brief lock with a 10 s lock_timeout)."
+  type        = string
+  default     = "17 3 * * *"
+
+  validation {
+    condition     = length(split(" ", trimspace(var.partition_maintenance_schedule))) == 5
+    error_message = "partition_maintenance_schedule must be a five-field cron expression such as \"17 3 * * *\"."
+  }
+}
+
+variable "telemetry_retention_days" {
+  description = "Days of raw telemetry readings (and their alerts) kept: the partition maintenance drops whole daily partitions older than this (TELEMETRY_RETENTION_DAYS on the job). Farm rollups keep their own 190 days. Only used when partition_maintenance_enabled."
+  type        = number
+  default     = 31
+
+  validation {
+    condition     = var.telemetry_retention_days >= 1 && floor(var.telemetry_retention_days) == var.telemetry_retention_days
+    error_message = "telemetry_retention_days must be a whole number of days from 1."
+  }
+}
+
+# --- Live summary (live-summary.tf) ---------------------------------------------------
+
+variable "live_summary_enabled" {
+  description = "Create the live summary: Cloud Run Job nextera-live-summary (rebuilds the live fleet summary and publishes it over Redis) + a Cloud Scheduler trigger. On by default. COST: one execution per minute (about 43,200 a month, roughly 5-25 USD in Cloud Run Job time; see live-summary.tf); raise live_summary_schedule to cut it."
+  type        = bool
+  default     = true
+}
+
+variable "live_summary_paused" {
+  description = "Pause the live summary's Cloud Scheduler trigger (keeps the job; the live summary goes stale). Only used when live_summary_enabled."
+  type        = bool
+  default     = false
+}
+
+variable "live_summary_schedule" {
+  description = "Cron schedule (UTC) of the live summary. Default every minute. Each execution is billed, so a five-minute schedule costs a fifth. Keep the period above the job's 50 s timeout."
+  type        = string
+  default     = "* * * * *"
+
+  validation {
+    condition     = length(split(" ", trimspace(var.live_summary_schedule))) == 5
+    error_message = "live_summary_schedule must be a five-field cron expression such as \"*/5 * * * *\"."
+  }
+}
+
+# --- Anomaly rollup (anomaly-rollup.tf) -----------------------------------------------
+
+variable "anomaly_rollup_enabled" {
+  description = "Create the anomaly rollup: Cloud Run Job nextera-anomaly-rollup (rolls up anomaly episodes) + a Cloud Scheduler trigger. On by default."
+  type        = bool
+  default     = true
+}
+
+variable "anomaly_rollup_paused" {
+  description = "Pause the anomaly rollup's Cloud Scheduler trigger (keeps the job). Only used when anomaly_rollup_enabled."
+  type        = bool
+  default     = false
+}
+
+variable "anomaly_rollup_schedule" {
+  description = "Cron schedule (UTC) of the anomaly rollup. Default hourly at minute 7."
+  type        = string
+  default     = "7 * * * *"
+
+  validation {
+    condition     = length(split(" ", trimspace(var.anomaly_rollup_schedule))) == 5
+    error_message = "anomaly_rollup_schedule must be a five-field cron expression such as \"7 * * * *\"."
   }
 }
 

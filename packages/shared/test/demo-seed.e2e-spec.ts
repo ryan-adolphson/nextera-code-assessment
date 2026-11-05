@@ -211,6 +211,43 @@ describe('demo seed (e2e)', () => {
     }
   });
 
+  it('fills what is derived: turbine_latest for every turbine, the summaries and the two faults as stored episodes', async () => {
+    const { rows: latest } = await m.db.query(`
+      SELECT count(*)::int AS n, max(timestamp) AS newest,
+             bool_and(l.timestamp = t.newest) AS current
+      FROM turbine_latest l
+      JOIN (SELECT turbine_id, max(timestamp) AS newest FROM telemetry GROUP BY turbine_id) t
+        ON t.turbine_id = l.turbine_id`);
+    expect(latest[0].n).toBe(DEMO_TURBINES.length);
+    expect(latest[0].current).toBe(true); // each row is its turbine's newest reading
+
+    const { rows: farms } = await m.db.query(
+      'SELECT count(*)::int AS farms, sum(turbines)::int AS turbines FROM farm_live_summary',
+    );
+    expect(farms[0]).toEqual({ farms: 10, turbines: DEMO_TURBINES.length });
+
+    const { rows: episodes } = await m.db.query(
+      `SELECT turbine_id, kind, metric, readings, lost_kwh FROM anomaly_episodes ORDER BY episode_end DESC`,
+    );
+    const { frozenPower, gearboxStuck } = DEMO_ANOMALIES;
+    expect(episodes).toEqual([
+      {
+        turbine_id: gearboxStuck.turbineId,
+        kind: 'stuck_sensor',
+        metric: 'gearboxTempC',
+        readings: gearboxStuck.readings,
+        lost_kwh: null,
+      },
+      {
+        turbine_id: frozenPower.turbineId,
+        kind: 'low_power_in_wind',
+        metric: null,
+        readings: frozenPower.readings,
+        lost_kwh: expect.any(Number),
+      },
+    ]);
+  });
+
   it('inserts nothing on a second run with the same SEED_NOW', async () => {
     const before = await counts();
     const out = await seed();

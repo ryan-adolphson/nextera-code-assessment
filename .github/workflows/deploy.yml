@@ -10,6 +10,11 @@
 #      WEATHER_SYNC_JOB is set (Terraform weather_sync_enabled).
 #   7. `gcloud run jobs update` the farm rollup job (ingestion image), only if the repository variable
 #      FARM_ROLLUP_JOB is set (Terraform farm_rollup_enabled).
+#   Scale jobs (ingestion image; each only if its repository variable is set, Terraform defaults: on):
+#      PARTITION_MAINTENANCE_JOB: updated AND executed (--wait) right after the migration, before the
+#      services roll out, so the new days' partitions exist first. LIVE_SUMMARY_JOB and
+#      ANOMALY_ROLLUP_JOB: updated and executed (--wait) after the services, so the first run is
+#      done before the deploy ends (the first anomaly rollup takes about 70 s at 1M turbines).
 # Without any of the six required repository variables (an unconfigured repo) the deploy is skipped
 # with a notice instead of failing; with only some of them it fails at the variables check.
 # Authenticates with Workload Identity Federation (no keys). One-time setup: CLAUDE.md, "Deploying".
@@ -89,6 +94,9 @@ jobs:
       DEMO_FEED_JOB: ${{ vars.DEMO_FEED_JOB }} # optional: set only while Terraform's demo_feed_enabled is on
       WEATHER_SYNC_JOB: ${{ vars.WEATHER_SYNC_JOB }} # optional: set only while Terraform's weather_sync_enabled is on
       FARM_ROLLUP_JOB: ${{ vars.FARM_ROLLUP_JOB }} # optional: set only while Terraform's farm_rollup_enabled is on
+      PARTITION_MAINTENANCE_JOB: ${{ vars.PARTITION_MAINTENANCE_JOB }} # optional: set only while Terraform's partition_maintenance_enabled is on
+      LIVE_SUMMARY_JOB: ${{ vars.LIVE_SUMMARY_JOB }} # optional: set only while Terraform's live_summary_enabled is on
+      ANOMALY_ROLLUP_JOB: ${{ vars.ANOMALY_ROLLUP_JOB }} # optional: set only while Terraform's anomaly_rollup_enabled is on
       CLOUD_SQL_PROXY_VERSION: v2.26.0
     steps:
       - name: Check repository variables
@@ -200,6 +208,20 @@ jobs:
         if: always()
         run: cat "$RUNNER_TEMP/cloud-sql-proxy.log" 2>/dev/null || true
 
+      # --- 2b. Partition maintenance (optional; before the services roll out) ----------------------
+      # Creates the next days' telemetry partitions (and drops expired ones) with the NEW image, so
+      # ingestion never writes into a missing day. --wait blocks until the execution finishes and
+      # fails the step if it fails (the services are then untouched; re-run the deploy).
+      # Skipped without PARTITION_MAINTENANCE_JOB.
+      - name: Update and run partition maintenance job
+        if: env.PARTITION_MAINTENANCE_JOB != ''
+        timeout-minutes: 10
+        run: |
+          gcloud run jobs update "$PARTITION_MAINTENANCE_JOB" --image "${REGISTRY}/ingestion:${SHA}" \
+            --project "$PROJECT_ID" --region "$REGION" --quiet
+          gcloud run jobs execute "$PARTITION_MAINTENANCE_JOB" --wait \
+            --project "$PROJECT_ID" --region "$REGION" --quiet
+
       # --- 3. Services (only reached if the migration succeeded) --------------------------------
       - name: Deploy nextera-api
         run: |
@@ -242,4 +264,29 @@ jobs:
         if: env.FARM_ROLLUP_JOB != ''
         run: |
           gcloud run jobs update "$FARM_ROLLUP_JOB" --image "${REGISTRY}/ingestion:${SHA}" \
+            --project "$PROJECT_ID" --region "$REGION" --quiet
+
+      # --- 8. Live summary job (optional; before/after the services it reads their tables) --------
+      # Same ingestion image. Executed once now so farm_live_summary is filled right after the
+      # rollout instead of at the next schedule tick. Skipped without LIVE_SUMMARY_JOB.
+      - name: Update and run live summary job
+        if: env.LIVE_SUMMARY_JOB != ''
+        timeout-minutes: 10
+        run: |
+          gcloud run jobs update "$LIVE_SUMMARY_JOB" --image "${REGISTRY}/ingestion:${SHA}" \
+            --project "$PROJECT_ID" --region "$REGION" --quiet
+          gcloud run jobs execute "$LIVE_SUMMARY_JOB" --wait \
+            --project "$PROJECT_ID" --region "$REGION" --quiet
+
+      # --- 9. Anomaly rollup job (optional) --------------------------------------------------------
+      # Same ingestion image. The first run backfills (about 70 s at 1M turbines), later ones are
+      # incremental. The services are already live here: a failure marks the deploy red but rolls
+      # nothing back. Skipped without ANOMALY_ROLLUP_JOB.
+      - name: Update and run anomaly rollup job
+        if: env.ANOMALY_ROLLUP_JOB != ''
+        timeout-minutes: 15
+        run: |
+          gcloud run jobs update "$ANOMALY_ROLLUP_JOB" --image "${REGISTRY}/ingestion:${SHA}" \
+            --project "$PROJECT_ID" --region "$REGION" --quiet
+          gcloud run jobs execute "$ANOMALY_ROLLUP_JOB" --wait \
             --project "$PROJECT_ID" --region "$REGION" --quiet

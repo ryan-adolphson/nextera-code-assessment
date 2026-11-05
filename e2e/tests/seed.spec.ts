@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test';
-import { SEED_NOW } from './support/session.js';
+import { expect, test } from "@playwright/test";
+import { SEED_NOW } from "./support/session.js";
 
 // Seed for the Playwright test agents (planner/generator/healer) and a smoke test of sign-in.
 // The seed data covers 2026-01-01T00:00Z..2026-01-02T23:55Z and every window in the app ends at
@@ -8,16 +8,19 @@ import { SEED_NOW } from './support/session.js';
 // SEED_NOW lives in support/session.ts (with signIn for other roles), re-exported here.
 export { SEED_NOW };
 
-test('seed', async ({ page }) => {
-  const email = process.env.E2E_USER ?? 'admin@nextera.local';
+test("seed", async ({ page }) => {
+  const email = process.env.E2E_USER ?? "admin@nextera.local";
   const password = process.env.SEED_USER_PASSWORD;
-  if (!password) throw new Error('Set SEED_USER_PASSWORD (repo .env) and run npm run db:seed');
+  if (!password)
+    throw new Error(
+      "Set SEED_USER_PASSWORD (repo .env) and run npm run db:seed",
+    );
 
   await page.clock.setFixedTime(SEED_NOW);
-  await page.goto('/login');
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Sign in" }).click();
 
   await expect(page).toHaveURL(/\/farms$/);
 });

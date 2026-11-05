@@ -58,7 +58,7 @@ describe('unallocated turbines: hold vs. actions (e2e)', () => {
   });
 
   beforeEach(async () => {
-    await prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, held_telemetry, unallocated_turbines`;
+    await prisma.$executeRaw`TRUNCATE TABLE turbine_latest, telemetry_alerts, telemetry, held_telemetry, unallocated_turbines`;
     await prisma.turbine.deleteMany({ where: { turbineId: 'TURB990' } });
   });
 

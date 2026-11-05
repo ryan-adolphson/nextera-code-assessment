@@ -23,7 +23,11 @@
     "demo:feed": "tsx scripts/demo-feed.ts",
     "weather:sync": "tsx scripts/weather-sync.ts",
     "rollup": "tsx scripts/farm-rollup.ts",
-    "rollup:watch": "tsx scripts/farm-rollup.ts --every 60"
+    "rollup:watch": "tsx scripts/farm-rollup.ts --every 60",
+    "partitions:maintain": "tsx scripts/partition-maintenance.ts",
+    "live:summary": "tsx scripts/live-summary.ts",
+    "live:summary:watch": "tsx scripts/live-summary.ts --every 60",
+    "anomalies:rollup": "tsx scripts/anomaly-rollup.ts"
   },
   "dependencies": {
     "@google-cloud/pubsub": "^6.1.0",

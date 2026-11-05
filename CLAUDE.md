@@ -50,7 +50,7 @@ turbines → Pub/Sub "telemetry" ─push→ Ingestion Worker ─→ Postgres + R
 
 ```
 apps/
-  api/                  # @nextera/api        NestJS 12: GET /api/farms, GET /api/turbines/:id/telemetry,
+  api/                  # @nextera/api        NestJS 12: GET /api/farm-summaries, /api/fleet/summary (cached, ETag), GET /api/turbines (keyset paging; ?asOf= sets the clock status is judged at), /api/turbines/:id, /api/farms/:farmId/turbine-markers, GET /api/farms (deprecated), GET /api/turbines/:id/telemetry,
                         #                     GET /api/turbines/:id/telemetry/stats (median/high/low per metric over the same rows),
                         #                     PATCH /api/turbines/:id { commissioned: boolean } (owner; the updated turbine, fleet.changed if the value changed),
                         #                     GET /api/farms/:farmId/weather and GET /api/turbines/:id/weather (the turbine's farm)
@@ -59,13 +59,13 @@ apps/
                         #                     from the 30-minute farm rollups, ≤ 183 days; ETag/304, Cache-Control: private, no-cache),
                         #                     CRUD /api/alert-configs (alert thresholds; writes need owner),
                         #                     GET /api/alerts?from=&to= (flagged readings + their rules, by turbine; ≤ 31 days),
-                        #                     GET /api/anomalies?from=&to= (anomaly episodes computed on read: low_power_in_wind and stuck_sensor, with estimated lost kWh; ≤ 31 days),
+                        #                     GET /api/anomalies?from=&to= (anomaly episodes stored hourly by the anomaly rollup: low_power_in_wind and stuck_sensor, with estimated lost kWh; ≤ 31 days),
                         #                     GET /api/reports/telemetry?farmId=|turbineId=&from=&to= (all readings + alerts; ≤ 31 days),
                         #                     /api/unallocated-turbines (owner: list ?status=pending|blocked, :id/readings,
                         #                     POST :id/assign|keep|move|block|unblock),
                         #                     SSE GET /api/events; POST /api/auth/login, GET /api/auth/me (sign-in, roles);
                         #                     CORS for the web app. Dockerfile -> image "api"
-  ingestion/            # @nextera/ingestion  NestJS 12: Pub/Sub push POST /pubsub/telemetry,
+  ingestion/            # @nextera/ingestion  NestJS 12: Pub/Sub push POST /pubsub/telemetry (group commit, 503 when its queue is full),
                         #                     CSV upload POST /ingest/telemetry (multipart field "file"). Dockerfile -> image "ingestion"
     src/demo-feed/      #   live demo feed, not part of the worker: `node dist/demo-feed/main.js [--once]` in the same image
     src/farm-rollup/    #   farm rollup job, not part of the worker: `node dist/farm-rollup/main.js [--full | --from YYYY-MM-DD] [--every <s>]`
@@ -90,6 +90,7 @@ e2e/                    # Playwright browser E2E (separate npm project, NOT a wo
 infra/terraform/        # Cloud Run (api, ingestion, web), Pub/Sub + DLQ, Cloud SQL, Memorystore, Secret Manager,
                         # Artifact Registry, domain mappings, GitHub Actions WIF + deployer SA,
                         # farm rollup (farm-rollup.tf: Cloud Run Job + Cloud Scheduler every 15 min, farm_rollup_enabled, on by default),
+                        # partition maintenance (partition-maintenance.tf, daily), live summary (live-summary.tf, every minute), anomaly rollup (anomaly-rollup.tf, hourly): on by default; telemetry_retention_days (31),
                         # optional demo feed (demo-feed.tf: Cloud Run Job + Cloud Scheduler, demo_feed_enabled),
                         # optional weather sync (weather-sync.tf: Cloud Run Job + daily Cloud Scheduler, weather_sync_enabled),
                         # Cloud Monitoring (monitoring.tf: uptime checks, alert policies incl. failed job executions, optional budget),
@@ -117,6 +118,7 @@ The repo root is an **npm workspace** (`packages/*`, `apps/api`, `apps/ingestion
 | Migrations | `npm run db:migrate` / compose `migrate` | GitHub Actions `deploy.yml`: `prisma migrate deploy` via Cloud SQL Auth Proxy, before each deploy |
 | CI/CD | `npm run lint && …` (see below) | GitHub Actions (`ci.yml`, `deploy.yml`), Workload Identity Federation, `production` environment |
 | Farm rollup (History tab) | compose `farm-rollup` (`--every 900`), or `npm run rollup` / `npm run rollup:watch`; `db:seed`, `db:seed:demo` and `demo:reset` run one | Cloud Run Job `nextera-farm-rollup` + Cloud Scheduler every 15 min (`farm_rollup_enabled`, default true; `farm_rollup_paused`, `farm_rollup_schedule`) |
+| Scale jobs | compose `partition-maintenance` (`--every 86400`), `live-summary` (`--every 60`), `anomaly-rollup` (`--every 3600`) | Cloud Run Jobs + Scheduler: `nextera-partition-maintenance`, `nextera-live-summary`, `nextera-anomaly-rollup` |
 | Weather sync (Open-Meteo) | `npm run weather:sync` (default: last 7 UTC days, all farms; `-- --from YYYY-MM-DD --to YYYY-MM-DD --farm FARM01`) | Cloud Run Job `nextera-weather-sync` + Cloud Scheduler daily 01:30 UTC (`weather_sync_enabled`, `weather_sync_paused`, `weather_sync_schedule`) |
 | Secrets | `.env` (gitignored) | Secret Manager (`database-url`, `redis-url`, `jwt-secret`; optional `open-meteo-api-key`) |
 
@@ -125,7 +127,7 @@ There is exactly one local database (the compose Postgres) and one Prisma schema
 ## Conventions
 
 - **TypeScript:** `strict` everywhere. NestJS 12 services are ESM, so relative imports end in `.js`.
-- **Shared code:** both services import Prisma, `EventStore`, the `to*Response` mappers and the event names from `@nextera/shared`; the API and the MCP server read through the shared queries (`src/wind/queries.ts`: `listFarms`, `turbineTelemetry`, `telemetryStats`, `alertsInRange`, `reportTelemetry`, …), which throw `QueryNotFoundError`/`QueryInputError` that the API maps to 404/400; ingestion and the demo seed store readings with `insertTelemetryWithAlerts` / `storeAlerts` / `enabledAlertRules`; the demo seed and feed share `DEMO_TURBINES`, `DEMO_SEED`, `DEMO_ANOMALIES` and `generateTelemetry` (deterministic, so the feed continues the seeded curve). Never duplicate them.
+- **Shared code:** both services import Prisma, `EventStore`, the `to*Response` mappers and the event names from `@nextera/shared`; the API and the MCP server read through the shared queries (`src/wind/queries.ts`, `src/wind/fleet-queries.ts`: `listTurbines`, `listFarmSummaries`, `turbineTelemetry`, `telemetryStats`, `alertsInRange`, `reportTelemetry`, …), which throw `QueryNotFoundError`/`QueryInputError` that the API maps to 404/400; ingestion and the demo seed store readings with `insertTelemetryWithAlerts` / `storeAlerts` / `enabledAlertRules`; the demo seed and feed share `DEMO_TURBINES`, `DEMO_SEED`, `DEMO_ANOMALIES` and `generateTelemetry` (deterministic, so the feed continues the seeded curve). Never duplicate them.
 - **Data:** Prisma only. Migrations must be backward-compatible with the running revision (one accepted exception: `20261006233000_turbines_uuid_id_commissioned`), are committed, and are applied only by `migrate deploy`. Write column renames by hand (`RENAME COLUMN`): `migrate dev`/`migrate diff` would drop and re-add the column.
 - **Events:** publish to Redis via `EventStore` only **after** the database transaction commits.
 - **Area rules live in `.claude/rules/`** and load when you read matching files. If you work in an area and its rules are not in your context, read the file:
@@ -170,6 +172,10 @@ curl -F file=@readings.csv localhost:3001/ingest/telemetry   # bulk upload (tele
 npm run db:migrate -- --name <change>         # create + apply a migration
 npm run db:seed                               # load prisma/data/*.csv + the viewer@/owner@/admin@nextera.local users (idempotent; needs SEED_USER_PASSWORD)
 npm run rollup                                # one farm rollup run (incremental; -- --full = last 190 days, -- --from YYYY-MM-DD); rollup:watch loops
+npm run partitions:maintain                    # create telemetry partitions, apply TELEMETRY_RETENTION_DAYS if set
+npm run live:summary                          # rebuild farm_live_summary + fleet.tick (live:summary:watch loops)
+npm run anomalies:rollup                      # store anomaly episodes (-- --from YYYY-MM-DD)
+npm run db:seed:scale                         # local only: 1M turbines on 10,000 farms (SCALE_* env)
 npm run db:seed:demo                          # demo data instead: 200 turbines, default rules, 72 h up to now + anomalies (re-run tops up; SEED_HOURS/SEED_NOW)
 npm run demo:reset -- --yes                   # local demo from scratch: clear readings, 7 days of demo data up to now, weather, live feed (local DB only unless --allow-remote)
 npm run load:setup && npm run load:ingest && npm run load:reads && npm run load:check   # Artillery smoke run against the throwaway load/docker-compose.yml stack; install, env and teardown in docs/load-test.md (not in CI)

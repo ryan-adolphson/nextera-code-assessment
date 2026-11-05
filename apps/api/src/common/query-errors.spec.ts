@@ -1,5 +1,13 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { QueryInputError, QueryNotFoundError } from '@nextera/shared';
+import {
+  BadRequestException,
+  NotFoundException,
+  PayloadTooLargeException,
+} from '@nestjs/common';
+import {
+  QueryInputError,
+  QueryNotFoundError,
+  QueryTooLargeError,
+} from '@nextera/shared';
 import { httpQuery, toHttpError } from './query-errors.js';
 
 describe('toHttpError', () => {
@@ -12,6 +20,12 @@ describe('toHttpError', () => {
   it('maps a broken data rule to 400 with the same message', () => {
     expect(toHttpError(new QueryInputError('to must be after from'))).toEqual(
       new BadRequestException('to must be after from'),
+    );
+  });
+
+  it('maps a result that is too large to 413 with the same message', () => {
+    expect(toHttpError(new QueryTooLargeError('too many turbines'))).toEqual(
+      new PayloadTooLargeException('too many turbines'),
     );
   });
 

@@ -14,12 +14,12 @@
       class="[&::-webkit-search-cancel-button]:appearance-none"
       [placeholder]="searchesFarms() ? 'e.g. TURB001 or FARM01' : 'e.g. TURB001'"
       data-testid="turbine-filter"
-      [value]="query()"
+      [value]="store.queryText()"
       (input)="onQuery($event)"
     />
     <!-- Our clear button replaces the browser's own (hidden above), only while there is text.
          It returns focus to the field. -->
-    @if (query()) {
+    @if (store.queryText()) {
       <button
         matIconButton
         matSuffix
@@ -36,9 +36,9 @@
   <mat-form-field appearance="outline" subscriptSizing="dynamic">
     <mat-label>Status</mat-label>
     <select matNativeControl data-testid="status-filter" (change)="onStatus($event)">
-      <option value="all" [selected]="status() === 'all'">All statuses</option>
+      <option value="all" [selected]="store.status() === 'all'">All statuses</option>
       @for (s of statuses; track s.value) {
-        <option [value]="s.value" [selected]="status() === s.value">{{ s.label }}</option>
+        <option [value]="s.value" [selected]="store.status() === s.value">{{ s.label }}</option>
       }
     </select>
   </mat-form-field>
@@ -50,7 +50,7 @@
       (change)="onCommissionedFilter($event)"
     >
       @for (f of commissionedFilters; track f.value) {
-        <option [value]="f.value" [selected]="commissionedFilter() === f.value">
+        <option [value]="f.value" [selected]="store.commissionedFilter() === f.value">
           {{ f.label }}
         </option>
       }
@@ -62,8 +62,8 @@
   <mat-slide-toggle
     class="pb-1"
     data-testid="hide-no-data"
-    [checked]="hidesNoData()"
-    [disabled]="status() === 'empty'"
+    [checked]="store.hidesNoData()"
+    [disabled]="store.status() === 'no_data'"
     (change)="onHideNoData($event)"
   >
     Hide turbines with no data
@@ -76,12 +76,35 @@
     tabindex="-1"
     data-testid="turbine-count"
   >
-    {{ rows().length }} of {{ turbines().length }} turbines
-    @if (hiddenNoData(); as hidden) {
-      · {{ hidden }} with no data hidden
+    <!-- The total is exact for a plain or farm-only list and capped ("10,000+") when a filter is on. -->
+    @if (store.totalLabel(); as total) {
+      {{ store.rows().length }} of {{ total }} turbines
+    } @else {
+      {{ store.failed() ? 'Turbines unavailable' : 'Loading turbines…' }}
     }
   </p>
 </div>
+
+@if (store.failed()) {
+  <p
+    class="mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-danger-bg px-4 py-3 text-danger"
+    role="alert"
+    data-testid="turbines-error"
+  >
+    The turbines could not be loaded.
+    <button matButton="outlined" type="button" data-testid="turbines-retry" (click)="store.retry()">
+      Retry
+    </button>
+  </p>
+}
+
+@if (!store.canSortByMetric()) {
+  <!-- Why the power, wind and gearbox headers are disabled (also read inside each header). -->
+  <p class="mt-2 text-xs text-muted" data-testid="metric-sort-hint">
+    Power, wind and gearbox can be sorted on a farm's page. Here the list sorts by turbine, farm,
+    commissioning or last reading.
+  </p>
+}
 
 @if (store.commissionedError(); as message) {
   <p
@@ -110,10 +133,11 @@
     appRowGlide
     matSortDisableClear
     data-testid="turbines"
-    [dataSource]="paging.page()"
+    [dataSource]="store.rows()"
     [trackBy]="trackById"
-    [matSortActive]="sort().key"
-    [matSortDirection]="sort().dir"
+    [attr.aria-busy]="store.loading()"
+    [matSortActive]="store.sort().key"
+    [matSortDirection]="store.sort().dir"
     (matSortChange)="onSort($event)"
   >
     <ng-container matColumnDef="id">
@@ -132,7 +156,7 @@
     </ng-container>
 
     <ng-container matColumnDef="status">
-      <th mat-header-cell *matHeaderCellDef mat-sort-header data-testid="sort-status">Status</th>
+      <th mat-header-cell *matHeaderCellDef data-testid="sort-status">Status</th>
       <td mat-cell *matCellDef="let t"><app-staleness-badge [staleness]="t.staleness" /></td>
     </ng-container>
 
@@ -186,10 +210,17 @@
           *matHeaderCellDef
           mat-sort-header
           arrowPosition="before"
+          [disabled]="!store.canSortByMetric()"
+          [attr.title]="store.canSortByMetric() ? null : 'Open a farm to sort by this value'"
           class="[&_.mat-sort-header-container]:justify-end"
           [attr.data-testid]="'sort-' + col.key"
         >
           {{ col.label }}
+          @if (!store.canSortByMetric()) {
+            <span class="sr-only"
+              >, sorting is not available across the whole fleet; open a farm</span
+            >
+          }
         </th>
         <td mat-cell *matCellDef="let t" class="text-right! tabular-nums">
           @if (t.latest; as r) {
@@ -229,13 +260,24 @@
         [attr.colspan]="columnKeys().length"
       >
         <!-- Cells don't wrap and the table is wider than a phone: keep the message on screen. -->
-        <div class="max-w-[calc(100vw-4rem)] whitespace-normal">{{ noRowsMessage() }}</div>
+        <div class="flex min-h-6 max-w-[calc(100vw-4rem)] items-center gap-3 whitespace-normal">
+          @if (!store.loaded()) {
+            <!-- First page: not "no matches" yet. A failure shows the error above instead. -->
+            @if (!store.failed()) {
+              <mat-spinner mode="indeterminate" [diameter]="20" aria-hidden="true" />
+              <span role="status" data-testid="turbines-loading">Loading turbines…</span>
+            }
+          } @else {
+            {{ noRowsMessage() }}
+          }
+        </div>
       </td>
     </tr>
   </table>
+  <!-- Next/previous only (cursor paging); UI seam: range label and page-size are set by the directive. -->
   <mat-paginator
     aria-label="Turbine table pages"
     data-testid="turbines-paginator"
-    [appPaging]="paging"
+    [appCursorPaging]="store.paging"
   />
 </app-table-frame>

@@ -18,7 +18,14 @@
       <app-stat-tile label="Avg wind">{{
         farm.avgWindMs === null ? '–' : (farm.avgWindMs | number: '1.1-1') + ' m/s'
       }}</app-stat-tile>
+      <app-stat-tile label="Farm data as of" testId="farm-as-of" [small]="true">{{
+        farm.asOf | appTime: 'MMM d, HH:mm' : true
+      }}</app-stat-tile>
     </section>
+    <!-- The totals come from the server's summaries, rebuilt about once a minute; the turbine table below is live. -->
+    <p class="mt-2 text-xs text-muted" data-testid="farm-refresh-note">
+      Farm figures refresh about once a minute. The turbines below update live.
+    </p>
 
     <app-farm-weather [farmId]="farm.id" />
 
@@ -29,27 +36,28 @@
       <app-map-view
         class="mb-4 block [--map-height:20rem]"
         [label]="'Map of turbines at ' + farm.name"
+        noun="turbines"
         [markers]="markers()"
-        [legend]="turbines().length ? legend : []"
+        [legend]="hasTurbines() ? legend : []"
         [maxZoom]="13"
         (markerClick)="onMarkerClick($event)"
       />
     } @placeholder {
-      <app-map-placeholder class="mb-4 [--map-height:20rem]" [legend]="turbines().length > 0" />
+      <app-map-placeholder class="mb-4 [--map-height:20rem]" [legend]="hasTurbines()" />
     } @loading (after 100ms; minimum 300ms) {
       <app-map-placeholder
         class="mb-4 [--map-height:20rem]"
         state="loading"
-        [legend]="turbines().length > 0"
+        [legend]="hasTurbines()"
       />
     } @error {
       <app-map-placeholder
         class="mb-4 [--map-height:20rem]"
         state="error"
-        [legend]="turbines().length > 0"
+        [legend]="hasTurbines()"
       />
     }
-    @if (turbines().length === 0) {
+    @if (!hasTurbines()) {
       <p class="text-muted" data-testid="no-turbines">
         No turbines are registered for this farm yet.
       </p>
@@ -58,7 +66,7 @@
         Select a turbine on the map or in the table to see its charts.
       </p>
       <!-- The /turbines table, scoped to this farm (no Farm column; the text filter is by turbine id). -->
-      <app-turbine-table [turbines]="turbines()" [hiddenColumns]="hiddenColumns" />
+      <app-turbine-table [farmId]="farm.id" [hiddenColumns]="hiddenColumns" />
     }
   </app-farm-header>
 } @else if (store.fleetLoadedOk()) {

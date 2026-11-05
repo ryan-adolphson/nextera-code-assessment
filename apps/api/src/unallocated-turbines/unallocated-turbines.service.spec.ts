@@ -17,6 +17,7 @@ import {
   type Turbine,
   type UnallocatedTurbine,
 } from '@nextera/shared';
+import { FarmsCacheService } from '../farms-cache/farms-cache.service.js';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { UnallocatedTurbinesService } from './unallocated-turbines.service.js';
@@ -82,12 +83,14 @@ describe('UnallocatedTurbinesService', () => {
   let service: UnallocatedTurbinesService;
   let prisma: DeepMockProxy<PrismaService>;
   let events: DeepMockProxy<EventStore>;
+  let farmsCache: DeepMockProxy<FarmsCacheService>;
   /** events.publish calls made while a transaction was still open (must stay 0). */
   let publishedInsideTransaction: number;
 
   beforeEach(async () => {
     prisma = mockDeep<PrismaService>();
     events = mockDeep<EventStore>();
+    farmsCache = mockDeep<FarmsCacheService>();
     events.publish.mockResolvedValue({ id: '1-0', type: '', data: null });
     publishedInsideTransaction = 0;
     prisma.$transaction.mockImplementation(async (fn: unknown) => {
@@ -134,6 +137,7 @@ describe('UnallocatedTurbinesService', () => {
         UnallocatedTurbinesService,
         { provide: PrismaService, useValue: prisma },
         { provide: EventStore, useValue: events },
+        { provide: FarmsCacheService, useValue: farmsCache },
       ],
     }).compile();
     service = moduleRef.get(UnallocatedTurbinesService);
@@ -189,11 +193,15 @@ describe('UnallocatedTurbinesService', () => {
         where: { turbineId: 'TURB999', id: { not: ID } },
         data: { kind: 'farm_mismatch' },
       });
-      expect(publishedTypes()).toEqual([
-        UNALLOCATED_CHANGED,
-        FLEET_CHANGED,
-        TELEMETRY_RECEIVED,
+      expect(publishedTypes()).toEqual([UNALLOCATED_CHANGED, FLEET_CHANGED]);
+      // The reading goes to the turbine's live channel, not the stream.
+      expect(events.publishLive).toHaveBeenCalledWith([
+        expect.objectContaining({
+          channel: 'telemetry:TURB999',
+          type: TELEMETRY_RECEIVED,
+        }),
       ]);
+      expect(farmsCache.invalidate).toHaveBeenCalledOnce();
       expect(events.publish).toHaveBeenNthCalledWith(1, UNALLOCATED_CHANGED, {
         action: 'assigned',
         id: ID,
@@ -202,7 +210,7 @@ describe('UnallocatedTurbinesService', () => {
       expect(events.publish).toHaveBeenNthCalledWith(2, FLEET_CHANGED, {
         turbineId: 'TURB999',
       });
-      expect(events.publish.mock.calls[2][1]).toMatchObject({
+      expect(events.publishLive.mock.calls[0][0][0].data).toMatchObject({
         turbineId: 'TURB999',
         timestamp: '2026-03-01T00:05:00.000Z', // the newest imported reading
       });
@@ -327,10 +335,13 @@ describe('UnallocatedTurbinesService', () => {
         expect.objectContaining({ farmId: 'FARM01' }),
       ]);
       expect(prisma.turbine.update).not.toHaveBeenCalled();
-      expect(publishedTypes()).toEqual([
-        UNALLOCATED_CHANGED,
-        FLEET_CHANGED,
-        TELEMETRY_RECEIVED,
+      expect(publishedTypes()).toEqual([UNALLOCATED_CHANGED, FLEET_CHANGED]);
+      // The reading goes to the turbine's live channel, not the stream.
+      expect(events.publishLive).toHaveBeenCalledWith([
+        expect.objectContaining({
+          channel: 'telemetry:TURB999',
+          type: TELEMETRY_RECEIVED,
+        }),
       ]);
     });
 

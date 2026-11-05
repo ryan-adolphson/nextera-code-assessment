@@ -18,7 +18,7 @@ import { AlertLevel, levelLabel } from './alert-config.model';
     @if (level() === 'info') {
       <span class="size-2 rounded-full bg-accent" aria-hidden="true"></span>
     }
-    {{ label() }}{{ count() === null ? '' : ': ' + count() }}
+    {{ label() }}{{ count() === null ? '' : ': ' + count() + (partial() ? '+' : '') }}
   `,
 })
 export class AlertLevelBadge {
@@ -26,5 +26,7 @@ export class AlertLevelBadge {
   readonly testId = input('alert-level');
   /** Shown after the level ("Error: 3"); none by default. */
   readonly count = input<number | null>(null);
+  /** The count is only what has loaded so far ("Error: 3+"): more may follow. */
+  readonly partial = input(false);
   protected readonly label = computed(() => levelLabel(this.level()));
 }

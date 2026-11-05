@@ -70,6 +70,21 @@ output "farm_rollup_job" {
   value       = var.farm_rollup_enabled ? google_cloud_run_v2_job.farm_rollup[0].name : null
 }
 
+output "partition_maintenance_job" {
+  description = "Cloud Run Job of the telemetry partition maintenance (null unless partition_maintenance_enabled). Run it now: gcloud run jobs execute <this> --region <region>."
+  value       = var.partition_maintenance_enabled ? google_cloud_run_v2_job.partition_maintenance[0].name : null
+}
+
+output "live_summary_job" {
+  description = "Cloud Run Job of the live summary (null unless live_summary_enabled). Run it now: gcloud run jobs execute <this> --region <region>."
+  value       = var.live_summary_enabled ? google_cloud_run_v2_job.live_summary[0].name : null
+}
+
+output "anomaly_rollup_job" {
+  description = "Cloud Run Job of the anomaly rollup (null unless anomaly_rollup_enabled). Run it now: gcloud run jobs execute <this> --region <region>."
+  value       = var.anomaly_rollup_enabled ? google_cloud_run_v2_job.anomaly_rollup[0].name : null
+}
+
 output "github_workload_identity_provider" {
   description = "Workload Identity Federation provider for google-github-actions/auth (GitHub variable GCP_WIF_PROVIDER)."
   value       = google_iam_workload_identity_pool_provider.github.name
@@ -81,7 +96,7 @@ output "github_deployer_service_account" {
 }
 
 output "github_actions_variables" {
-  description = "Repository variables for .github/workflows/deploy.yml (not secrets). See CLAUDE.md, Deploying. DEMO_FEED_JOB only when demo_feed_enabled, WEATHER_SYNC_JOB only when weather_sync_enabled, FARM_ROLLUP_JOB only when farm_rollup_enabled (delete each with `gh variable delete <name>` before turning its job off)."
+  description = "Repository variables for .github/workflows/deploy.yml (not secrets). See CLAUDE.md, Deploying. DEMO_FEED_JOB only when demo_feed_enabled, WEATHER_SYNC_JOB only when weather_sync_enabled, FARM_ROLLUP_JOB only when farm_rollup_enabled, PARTITION_MAINTENANCE_JOB / LIVE_SUMMARY_JOB / ANOMALY_ROLLUP_JOB only when partition_maintenance_enabled / live_summary_enabled / anomaly_rollup_enabled (delete each with `gh variable delete <name>` before turning its job off)."
   value = merge(
     {
       GCP_PROJECT_ID    = var.project_id
@@ -94,5 +109,8 @@ output "github_actions_variables" {
     var.demo_feed_enabled ? { DEMO_FEED_JOB = google_cloud_run_v2_job.demo_feed[0].name } : {},
     var.weather_sync_enabled ? { WEATHER_SYNC_JOB = google_cloud_run_v2_job.weather_sync[0].name } : {},
     var.farm_rollup_enabled ? { FARM_ROLLUP_JOB = google_cloud_run_v2_job.farm_rollup[0].name } : {},
+    var.partition_maintenance_enabled ? { PARTITION_MAINTENANCE_JOB = google_cloud_run_v2_job.partition_maintenance[0].name } : {},
+    var.live_summary_enabled ? { LIVE_SUMMARY_JOB = google_cloud_run_v2_job.live_summary[0].name } : {},
+    var.anomaly_rollup_enabled ? { ANOMALY_ROLLUP_JOB = google_cloud_run_v2_job.anomaly_rollup[0].name } : {},
   )
 }

@@ -1,13 +1,33 @@
 import {
   MAX_QUERY_RANGE_DAYS,
-  alertsInRange,
+  alertsPage,
   type AlertLevel,
   type TelemetryResponse,
+  type ReadClient,
 } from '@nextera/shared';
 import { defineTool, describeAlerts, timestamp } from './tool.js';
 
 /** Readings listed per turbine (newest first); the counts always cover every flagged reading. */
 export const MAX_READINGS_PER_TURBINE = 50;
+
+/** Pages of 1,000 flagged readings one call reads; beyond that it says so (`complete: false`). */
+export const MAX_ALERT_PAGES = 5;
+
+/** Reads up to MAX_ALERT_PAGES pages of the range's flagged readings, newest first. */
+async function flaggedReadings(
+  db: ReadClient,
+  range: { from: string; to: string },
+): Promise<{ readings: TelemetryResponse[]; complete: boolean }> {
+  const readings: TelemetryResponse[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_ALERT_PAGES; page++) {
+    const result = await alertsPage(db, { ...range, limit: 1000, cursor });
+    readings.push(...result.items);
+    if (!result.nextCursor) return { readings, complete: true };
+    cursor = result.nextCursor;
+  }
+  return { readings, complete: false };
+}
 
 const LEVELS_WORST_FIRST: readonly AlertLevel[] = ['error', 'warn', 'info'];
 
@@ -24,7 +44,7 @@ interface TurbineAlerts {
   omittedReadings: number;
 }
 
-/** Groups flagged readings (by turbine, newest first, as `alertsInRange` returns them). */
+/** Groups flagged readings (newest first, as `alertsPage` returns them) by turbine. */
 export function groupByTurbine(readings: TelemetryResponse[]): TurbineAlerts[] {
   const groups = new Map<string, TurbineAlerts>();
   for (const reading of readings) {
@@ -70,7 +90,9 @@ export const listAlertsTool = defineTool({
     'the worst level (error > warn > info), rule triggers per level, the number of flagged ' +
     `readings, and the newest ${MAX_READINGS_PER_TURBINE} flagged readings with each rule as ` +
     '"level: metric value comparison threshold". Rules show as they are now; a rule disabled ' +
-    'since is still listed on the readings it flagged.',
+    'since is still listed on the readings it flagged. Reads the newest ' +
+    `${MAX_ALERT_PAGES * 1000} flagged readings at most; complete is false when there are more ` +
+    '(narrow the range).',
   inputSchema: {
     from: timestamp('from', 'Inclusive lower bound on measurement time.'),
     to: timestamp(
@@ -79,11 +101,12 @@ export const listAlertsTool = defineTool({
     ),
   },
   async run({ db }, { from, to }) {
-    const readings = await alertsInRange(db, { from, to });
+    const { readings, complete } = await flaggedReadings(db, { from, to });
     const turbines = groupByTurbine(readings);
     return {
       from,
       to,
+      complete,
       flaggedReadings: readings.length,
       turbineCount: turbines.length,
       turbines,

@@ -15,6 +15,7 @@ import {
   type AlertConfigChangedEvent,
   type AlertConfigResponse,
 } from '@nextera/shared';
+import { FarmsCacheService } from '../farms-cache/farms-cache.service.js';
 import {
   CreateAlertConfigDto,
   UpdateAlertConfigDto,
@@ -31,6 +32,7 @@ export class AlertConfigsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventStore,
+    private readonly farmsCache: FarmsCacheService,
   ) {}
 
   /** Every rule (disabled ones too), in the shared ALERT_RULE_ORDER (metric, level, value). */
@@ -109,6 +111,8 @@ export class AlertConfigsService {
    * and the caller refreshes anyway, so failing the request would only invite a duplicate retry.
    */
   private async publish(event: AlertConfigChangedEvent): Promise<void> {
+    // GET /api/farms joins the current rules into each latest reading's alerts.
+    this.farmsCache.invalidate();
     try {
       await this.events.publish(ALERT_CONFIG_CHANGED, event);
     } catch (error) {

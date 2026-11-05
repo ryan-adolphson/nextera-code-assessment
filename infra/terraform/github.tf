@@ -76,12 +76,15 @@ resource "google_cloud_run_v2_service_iam_member" "deployer_developer" {
 }
 
 # `gcloud run jobs update --image` on the optional jobs that exist (demo-feed.tf, weather-sync.tf,
-# farm-rollup.tf).
+# farm-rollup.tf, partition-maintenance.tf, live-summary.tf, anomaly-rollup.tf).
 resource "google_cloud_run_v2_job_iam_member" "deployer_developer" {
   for_each = merge(
     var.demo_feed_enabled ? { demo_feed = google_cloud_run_v2_job.demo_feed[0].name } : {},
     var.weather_sync_enabled ? { weather_sync = google_cloud_run_v2_job.weather_sync[0].name } : {},
     var.farm_rollup_enabled ? { farm_rollup = google_cloud_run_v2_job.farm_rollup[0].name } : {},
+    var.partition_maintenance_enabled ? { partition_maintenance = google_cloud_run_v2_job.partition_maintenance[0].name } : {},
+    var.live_summary_enabled ? { live_summary = google_cloud_run_v2_job.live_summary[0].name } : {},
+    var.anomaly_rollup_enabled ? { anomaly_rollup = google_cloud_run_v2_job.anomaly_rollup[0].name } : {},
   )
 
   name     = each.value
@@ -107,6 +110,9 @@ resource "google_service_account_iam_member" "deployer_act_as" {
     var.demo_feed_enabled ? { demo_feed = google_service_account.demo_feed[0].name } : {},
     var.weather_sync_enabled ? { weather_sync = google_service_account.weather_sync[0].name } : {},
     var.farm_rollup_enabled ? { farm_rollup = google_service_account.farm_rollup[0].name } : {},
+    var.partition_maintenance_enabled ? { partition_maintenance = google_service_account.partition_maintenance[0].name } : {},
+    var.live_summary_enabled ? { live_summary = google_service_account.live_summary[0].name } : {},
+    var.anomaly_rollup_enabled ? { anomaly_rollup = google_service_account.anomaly_rollup[0].name } : {},
   )
 
   service_account_id = each.value

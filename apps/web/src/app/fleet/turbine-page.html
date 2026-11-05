@@ -189,6 +189,8 @@
       [appPaging]="historyPaging"
     />
   }
+} @else if (turbinePending()) {
+  <p class="text-muted" data-testid="turbine-loading">Loading turbine…</p>
 } @else {
   <nav class="text-sm"><a [routerLink]="['/farms', farmId()]">← Back to the farm</a></nav>
   <p class="mt-3" data-testid="turbine-not-found">

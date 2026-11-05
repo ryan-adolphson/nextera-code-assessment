@@ -32,7 +32,7 @@ describe('Alerts API (e2e, CSV seed data)', () => {
   beforeAll(async () => {
     t = await createTestApp();
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
+      .$executeRaw`TRUNCATE TABLE turbine_latest, farm_live_summary, anomaly_episodes, telemetry_alerts, alerts_config, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
     const rule = (data: object) =>
       t.prisma.alertConfig.create({ data: data as never }).then((r) => r.id);
@@ -71,35 +71,63 @@ describe('Alerts API (e2e, CSV seed data)', () => {
     await t.app.close();
   });
 
-  it('returns the flagged readings in [from, to), grouped by turbine, newest first, with their rules', async () => {
+  it('returns a page of the flagged readings in [from, to), newest first, with their rules', async () => {
     const res = await get('?from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z');
     expect(res.status).toBe(200);
-    const readings = (await res.json()) as {
-      turbineId: string;
-      timestamp: string;
-      gearboxTempC: number;
-      alerts: { id: string; alertLevel: string; enabled: boolean }[];
-    }[];
+    const { items: readings, nextCursor } = (await res.json()) as {
+      nextCursor: string | null;
+      items: {
+        turbineId: string;
+        timestamp: string;
+        gearboxTempC: number;
+        alerts: { id: string; alertLevel: string; enabled: boolean }[];
+      }[];
+    };
 
+    expect(nextCursor).toBeNull();
     expect(readings.map((r) => [r.turbineId, r.timestamp])).toEqual([
-      ['TURB001', '2026-01-01T13:40:00.000Z'],
       ['TURB002', '2026-01-02T03:30:00.000Z'],
       ['TURB002', '2026-01-02T03:25:00.000Z'],
       ['TURB002', '2026-01-02T03:20:00.000Z'],
+      ['TURB001', '2026-01-01T13:40:00.000Z'],
     ]);
-    expect(readings[1].gearboxTempC).toBe(126.5);
+    expect(readings[0].gearboxTempC).toBe(126.5);
     // Joined from alerts_config, worst level first; the disabled rule is still listed.
     expect(
-      readings[1].alerts.map((a) => [a.id, a.alertLevel, a.enabled]),
+      readings[0].alerts.map((a) => [a.id, a.alertLevel, a.enabled]),
     ).toEqual([
       [gearboxError, 'error', true],
       [gearboxWarn, 'warn', false],
     ]);
-    expect(readings[0].alerts.map((a) => a.id)).toEqual([lowPower]);
+    expect(readings[3].alerts.map((a) => a.id)).toEqual([lowPower]);
+  });
+
+  it('pages with limit and cursor: every flagged reading once, nextCursor null on the last page', async () => {
+    const range = 'from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z';
+    const first = await (await get(`?${range}&limit=3`)).json();
+    expect(first.items).toHaveLength(3);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    const second = await (
+      await get(`?${range}&limit=3&cursor=${first.nextCursor}`)
+    ).json();
+    expect(second.items.map((r: { turbineId: string }) => r.turbineId)).toEqual(
+      ['TURB001'],
+    );
+    expect(second.nextCursor).toBeNull();
+  });
+
+  it('rejects a malformed cursor and an out-of-range limit with 400', async () => {
+    const range = 'from=2026-01-01T00:00:00Z&to=2026-01-03T00:00:00Z';
+    const bad = await get(`?${range}&cursor=nonsense`);
+    expect(bad.status).toBe(400);
+    expect(JSON.stringify(await bad.json())).toContain('Invalid cursor');
+    for (const limit of ['0', '1001', 'x']) {
+      expect((await get(`?${range}&limit=${limit}`)).status).toBe(400);
+    }
   });
 
   it('uses the measurement time, with to exclusive', async () => {
-    const readings = await (
+    const { items: readings } = await (
       await get('?from=2026-01-02T03:25:00Z&to=2026-01-02T03:30:00Z')
     ).json();
     expect(readings.map((r: { timestamp: string }) => r.timestamp)).toEqual([
@@ -110,7 +138,7 @@ describe('Alerts API (e2e, CSV seed data)', () => {
   it('returns an empty list when nothing was flagged in the range', async () => {
     const res = await get('?from=2026-01-05T00:00:00Z&to=2026-01-06T00:00:00Z');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
+    expect(await res.json()).toEqual({ items: [], nextCursor: null });
   });
 
   it.each([
@@ -144,8 +172,8 @@ describe('Alerts API (e2e, CSV seed data)', () => {
       'The range may span at most 31 days',
     ],
     [
-      '?from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z&limit=5',
-      'property limit should not exist',
+      '?from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z&bogus=5',
+      'property bogus should not exist',
     ],
   ])('rejects %s with 400', async (query, message) => {
     const res = await get(query);

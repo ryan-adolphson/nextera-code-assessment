@@ -20,8 +20,12 @@ override_data {
 }
 
 variables {
-  project_id        = "nextera-test"
-  github_repository = "example-org/nextera"
+  # The scale jobs are on by default; their own test file covers them.
+  partition_maintenance_enabled = false
+  live_summary_enabled          = false
+  anomaly_rollup_enabled        = false
+  project_id                    = "nextera-test"
+  github_repository             = "example-org/nextera"
 }
 
 run "defaults_create_policies_without_channels_or_budget" {
@@ -98,10 +102,10 @@ run "defaults_create_policies_without_channels_or_budget" {
     error_message = "The 5xx ratio should be grouped by service_name."
   }
 
-  # (api_max_instances 5 + ingestion_max_instances 5) x db_pool_max 4 = 40 connections; 80% = 32.
+  # (api_max_instances 5 + ingestion_max_instances 5) x db_pool_max 4 + 1 job (the farm rollup) x 2 = 42 connections; 80% = 33.
   assert {
-    condition     = google_monitoring_alert_policy.cloud_sql.conditions[1].condition_threshold[0].threshold_value == 32
-    error_message = "The Cloud SQL connection threshold should be 80% of the default 40-connection budget."
+    condition     = google_monitoring_alert_policy.cloud_sql.conditions[1].condition_threshold[0].threshold_value == 33
+    error_message = "The Cloud SQL connection threshold should be 80% of the 42-connection budget (apps + 1 job pool)."
   }
 }
 
@@ -114,10 +118,28 @@ run "connection_threshold_follows_sizing_variables" {
     db_pool_max             = 5
   }
 
-  # (10 + 10) x 5 = 100 connections; 80% = 80.
+  # (10 + 10) x 5 + 1 job x 2 = 102 connections; floor(80%) = 81.
   assert {
-    condition     = google_monitoring_alert_policy.cloud_sql.conditions[1].condition_threshold[0].threshold_value == 80
+    condition     = google_monitoring_alert_policy.cloud_sql.conditions[1].condition_threshold[0].threshold_value == 81
     error_message = "The Cloud SQL connection threshold should follow the instance caps and db_pool_max."
+  }
+}
+
+run "connection_budget_counts_every_enabled_job_pool" {
+  command = plan
+
+  variables {
+    partition_maintenance_enabled = true
+    live_summary_enabled          = true
+    anomaly_rollup_enabled        = true
+    weather_sync_enabled          = true
+  }
+
+  # 5 + 5 x 4 = 40, plus 5 jobs (farm rollup, weather sync, partition maintenance, live summary,
+  # anomaly rollup) x 2 = 50; floor(80%) = 40.
+  assert {
+    condition     = google_monitoring_alert_policy.cloud_sql.conditions[1].condition_threshold[0].threshold_value == 40
+    error_message = "Each enabled job's pool of 2 should be part of the connection budget."
   }
 }
 

@@ -12,6 +12,14 @@ export interface AppEvent {
 export const EVENT_STREAM_KEY = 'events:stream'; // durable history for replay
 export const EVENT_CHANNEL = 'events:live'; // pub/sub fan-out to every API instance
 export const EVENT_HISTORY_LENGTH = 1000;
+
+/**
+ * The pub/sub channel of one turbine's live readings (`telemetry.received`, published by ingestion
+ * with `publishLive`, not stored in the stream). The scoped SSE endpoint subscribes to the
+ * channels of the turbines a client is looking at.
+ */
+export const turbineChannel = (turbineId: string): string =>
+  `telemetry:${turbineId}`;
 export const EVENT_ID_PATTERN = /^\d+-\d+$/;
 
 /** Orders Redis stream IDs ("<ms>-<seq>") numerically. */
@@ -21,6 +29,21 @@ export function compareEventIds(a: string, b: string): number {
   if (aMs !== bMs) return aMs < bMs ? -1 : 1;
   if (aSeq !== bSeq) return aSeq < bSeq ? -1 : 1;
   return 0;
+}
+
+/** Some events of `publishLive` were not published; the others went out. */
+export class PublishManyError extends Error {
+  override readonly name = 'PublishManyError';
+
+  constructor(
+    readonly failed: number,
+    readonly total: number,
+    override readonly cause?: Error,
+  ) {
+    super(
+      `${failed} of ${total} events not published${cause ? `: ${cause.message}` : ''}`,
+    );
+  }
 }
 
 /**
@@ -56,6 +79,33 @@ export class EventStore implements OnModuleDestroy {
     const event: AppEvent = { id: id!, type, data };
     await this.redis.publish(EVENT_CHANNEL, JSON.stringify(event));
     return event;
+  }
+
+  /**
+   * Publishes live events to their own channels in ONE pipelined round trip: a plain PUBLISH of
+   * `{ type, data }` to `channel`, with no stream entry and no stream id. For high-volume events
+   * (readings, `turbineChannel`) that would flood the capped stream and its replay history; a
+   * subscriber that isn't listening just misses them. Call only after the database write has
+   * committed. A partial failure throws `PublishManyError` (the others still went out).
+   */
+  async publishLive(
+    items: readonly { channel: string; type: string; data: unknown }[],
+  ): Promise<void> {
+    if (!items.length) return;
+    const pipeline = this.redis.pipeline();
+    for (const { channel, type, data } of items) {
+      pipeline.publish(channel, JSON.stringify({ type, data }));
+    }
+    const results = (await pipeline.exec()) ?? [];
+    const errors: Error[] = [];
+    items.forEach((_, i) => {
+      const result = results[i];
+      if (!result) errors.push(new Error('no pipeline result'));
+      else if (result[0]) errors.push(result[0]);
+    });
+    if (errors.length) {
+      throw new PublishManyError(errors.length, items.length, errors[0]);
+    }
   }
 
   /** Events after `lastEventId` (exclusive), oldest first. */

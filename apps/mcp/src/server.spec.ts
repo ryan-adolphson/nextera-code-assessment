@@ -375,57 +375,170 @@ describe('MCP server (mocked Prisma)', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('ECONNREFUSED'));
   });
 
-  it('list_farms adds each turbine’s status from the clock', async () => {
+  it('list_farms returns the fleet totals and each farm’s live summary, never turbines', async () => {
+    const farm = (id: string, liveSummary: object | null) => ({
+      id,
+      name: `Farm ${id}`,
+      latitude: new Prisma.Decimal('41.25'),
+      longitude: new Prisma.Decimal('-96.53'),
+      liveSummary,
+    });
     prisma.farm.findMany.mockResolvedValue([
-      {
-        id: 'FARM01',
-        name: 'Prairie Ridge',
-        latitude: new Prisma.Decimal('41.25'),
-        longitude: new Prisma.Decimal('-96.53'),
-        turbines: [turbineRow('TURB001'), turbineRow('TURB003')],
-      },
+      farm('FARM01', {
+        turbines: 10,
+        commissioned: 8,
+        reporting: 6,
+        stale: 3,
+        alerting: 1,
+        powerOutputKw: 9000,
+        windSpeedMs: 7.25,
+        asOf: new Date('2026-01-02T00:19:00Z'),
+      }),
+      farm('FARM02', {
+        turbines: 2,
+        commissioned: 2,
+        reporting: 2,
+        stale: 0,
+        alerting: 0,
+        powerOutputKw: 500,
+        windSpeedMs: null,
+        asOf: new Date('2026-01-02T00:19:30Z'),
+      }),
     ] as never);
-    // 25 minutes before NOW: stale-15.
-    prisma.$queryRaw.mockResolvedValue([
-      telemetryRow('TURB001', '2026-01-01T23:55:00Z'),
-    ]);
-    prisma.telemetryAlert.findMany.mockResolvedValue([]);
 
     const result = (await mcp.call('list_farms')).json();
 
     expect(result).toMatchObject({
-      asOf: '2026-01-02T00:20:00.000Z',
-      farmCount: 1,
-      turbineCount: 2,
-      statusCounts: { 'stale-15': 1, 'no-data': 1 },
+      asOf: '2026-01-02T00:19:00.000Z',
+      farmCount: 2,
+      turbines: 12,
+      commissioned: 10,
+      reporting: 8,
+      stale: 3,
+      noData: 1,
+      alerting: 1,
+      powerOutputKw: 9500,
+      omittedFarms: 0,
     });
-    expect(result.farms[0].turbines).toEqual([
-      {
-        id: 'TURB001',
-        commissioned: true,
-        status: 'stale-15',
-        statusLabel: 'No data in 15 min',
-        minutesSinceLatest: 25,
-        latest: {
-          timestamp: '2026-01-01T23:55:00.000Z',
-          receivedAt: '2026-01-01T23:55:00.000Z',
-          powerOutputKw: 0,
-          windSpeedMs: 15.8,
-          rotorRpm: 0,
-          bladePitchDeg: 90,
-          gearboxTempC: 40,
-          alerts: [],
+    expect(result.farms[0]).toEqual({
+      id: 'FARM01',
+      name: 'Farm FARM01',
+      latitude: 41.25,
+      longitude: -96.53,
+      turbineCount: 10,
+      commissioned: 8,
+      reporting: 6,
+      stale: 3,
+      noData: 1,
+      alerting: 1,
+      powerOutputKw: 9000,
+      windSpeedMs: 7.25,
+    });
+    expect(JSON.stringify(result)).not.toContain('"turbines":[');
+    expect(prisma.turbine.findMany).not.toHaveBeenCalled();
+  });
+
+  it('list_farms lists the first 200 farms and counts the rest', async () => {
+    const summary = {
+      turbines: 1,
+      commissioned: 1,
+      reporting: 1,
+      stale: 0,
+      alerting: 0,
+      powerOutputKw: 1,
+      windSpeedMs: 1,
+      asOf: new Date('2026-01-02T00:19:00Z'),
+    };
+    prisma.farm.findMany.mockResolvedValue(
+      Array.from({ length: 203 }, (_, i) => ({
+        id: `F${String(i).padStart(3, '0')}`,
+        name: 'x',
+        latitude: new Prisma.Decimal(1),
+        longitude: new Prisma.Decimal(2),
+        liveSummary: summary,
+      })) as never,
+    );
+
+    const result = (await mcp.call('list_farms')).json();
+
+    expect(result.farmCount).toBe(203);
+    expect(result.turbines).toBe(203);
+    expect(result.omittedFarms).toBe(3);
+    expect(result.farms).toHaveLength(200);
+  });
+
+  describe('list_alerts', () => {
+    const key = (id: string, min: number) => ({
+      telemetry_id: id,
+      reading_timestamp: new Date(
+        Date.parse('2026-01-02T03:20:00Z') + min * 60_000,
+      ),
+    });
+
+    it('reads the flagged readings page by page and groups them by turbine', async () => {
+      prisma.$queryRaw
+        .mockResolvedValueOnce([key('r1', 0)]) // telemetry_alerts keys
+        .mockResolvedValueOnce([
+          {
+            ...telemetryRow('TURB002', '2026-01-02T03:20:00Z'),
+            id: 'r1',
+            gearbox_temp_c: 126.5,
+          },
+        ])
+        .mockResolvedValueOnce([{ telemetry_id: 'r1', alert_id: 'rule' }]);
+      prisma.alertConfig.findMany.mockResolvedValue([
+        {
+          id: 'rule',
+          measurementMetric: 'gearboxTempC',
+          comparison: 'above',
+          valueMetric: 120,
+          alertLevel: 'error',
+          enabled: true,
         },
-      },
-      {
-        id: 'TURB003',
-        commissioned: true,
-        status: 'no-data',
-        statusLabel: 'No readings yet',
-        minutesSinceLatest: null,
-        latest: null,
-      },
-    ]);
+      ] as never);
+
+      const result = (await mcp.call('list_alerts', RANGE)).json();
+
+      expect(result).toMatchObject({
+        complete: true,
+        flaggedReadings: 1,
+        turbineCount: 1,
+        turbines: [
+          {
+            turbineId: 'TURB002',
+            worstLevel: 'error',
+            flaggedReadings: 1,
+            readings: [
+              {
+                timestamp: '2026-01-02T03:20:00.000Z',
+                alerts: ['error: gearboxTempC 126.5 above 120'],
+              },
+            ],
+          },
+        ],
+      });
+    });
+
+    it('stops after 5 pages and says the answer is not complete', async () => {
+      // every page says there is another one
+      prisma.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
+        const text = strings.join('?');
+        if (
+          text.includes('FROM telemetry_alerts\n    WHERE reading_timestamp')
+        ) {
+          return Promise.resolve(
+            Array.from({ length: 1001 }, (_, i) =>
+              key(`00000000-0000-4000-8000-${String(i).padStart(12, '0')}`, i),
+            ),
+          );
+        }
+        return Promise.resolve([]);
+      }) as never);
+
+      const result = (await mcp.call('list_alerts', RANGE)).json();
+
+      expect(result.complete).toBe(false);
+    });
   });
 
   it('get_telemetry passes the window to the shared query and returns rows by column', async () => {
@@ -518,23 +631,34 @@ describe('MCP server (mocked Prisma)', () => {
 
   describe('list_anomalies', () => {
     const episode = (i: number) => ({
+      id: `e${i}`,
       kind: 'stuck_sensor',
       metric: 'gearboxTempC',
-      turbine_id: `TURB${String(i).padStart(3, '0')}`,
-      farm_id: 'FARM01',
-      episode_start: new Date('2026-01-02T03:20:00Z'),
-      episode_end: new Date(Date.parse('2026-01-02T03:30:00Z') - i * 60_000),
-      readings: 3,
+      turbineId: `TURB${String(i).padStart(3, '0')}`,
+      farmId: 'FARM01',
+      episodeStart: new Date('2026-01-02T02:00:00Z'),
+      episodeEnd: new Date(Date.parse('2026-01-02T03:30:00Z') - i * 60_000),
+      readings: 19,
       value: 126.5,
-      wind_speed_ms: null,
-      lost_kwh: null,
+      windSpeedMs: null,
+      lostKwh: null,
+      computedAt: new Date('2026-01-02T04:00:00Z'),
     });
 
-    it('returns the shared query result with totals, read-only', async () => {
-      prisma.$queryRaw.mockResolvedValue([episode(1)] as never);
+    it('returns the stored episodes with totals, read-only', async () => {
+      prisma.anomalyEpisode.findMany.mockResolvedValue([episode(1)] as never);
 
       const result = (await mcp.call('list_anomalies', RANGE)).json();
 
+      expect(prisma.anomalyEpisode.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            episodeEnd: { gte: new Date(RANGE.from) },
+            episodeStart: { lt: new Date(RANGE.to) },
+          },
+        }),
+      );
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         from: '2026-01-01T00:00:00.000Z',
         to: '2026-01-03T00:00:00.000Z',
@@ -554,7 +678,7 @@ describe('MCP server (mocked Prisma)', () => {
     });
 
     it('lists only the newest 100 episodes and counts the rest', async () => {
-      prisma.$queryRaw.mockResolvedValue(
+      prisma.anomalyEpisode.findMany.mockResolvedValue(
         Array.from({ length: 103 }, (_, i) => episode(i + 1)) as never,
       );
 
@@ -566,7 +690,9 @@ describe('MCP server (mocked Prisma)', () => {
     });
 
     it('reports a database failure as an error result', async () => {
-      prisma.$queryRaw.mockRejectedValue(new Error('connection lost'));
+      prisma.anomalyEpisode.findMany.mockRejectedValue(
+        new Error('connection lost'),
+      );
       const result = await mcp.call('list_anomalies', RANGE);
       expect(result.isError).toBe(true);
     });

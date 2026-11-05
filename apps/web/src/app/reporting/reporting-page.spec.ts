@@ -3,10 +3,12 @@ import { TestRequest } from '@angular/common/http/testing';
 import { DeferBlockBehavior, DeferBlockState, TestBed } from '@angular/core/testing';
 import { MatAutocompleteHarness } from '@angular/material/autocomplete/testing';
 import { MatDateRangeInputHarness } from '@angular/material/datepicker/testing';
+import { HttpErrorResponse } from '@angular/common/http';
+import { Subject, of, throwError } from 'rxjs';
 import { AlertConfig } from '../alerting/alert-config.model';
 import { LineChart } from '../charts/line-chart';
 import { TimeZoneSettings } from '../core/time-zone';
-import { Telemetry } from '../fleet/fleet.model';
+import { Telemetry, TurbineItem } from '../fleet/fleet.model';
 import {
   TEST_API_BASE_URL,
   mixedFleetFixture,
@@ -42,13 +44,34 @@ const turbineReadings = (): Telemetry[] => [
   }),
 ];
 
+/** The turbine search waits this long after the last keystroke (reporting-page.ts). */
+const SEARCH_DEBOUNCE_MS = 250;
+
+/** Types into the scope field and lets the debounced turbine search go out. */
+async function typeScope(scope: MatAutocompleteHarness, text: string) {
+  await scope.enterText(text);
+  await pauseTyping();
+}
+
+/** The debounce passes and the search resource sends its request (on the next change detection). */
+async function pauseTyping() {
+  await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+  TestBed.tick();
+  await vi.advanceTimersByTimeAsync(0);
+  TestBed.tick();
+}
+
 /** /reporting through the real routes (mixed fleet), the client clock at 2026-01-03T00:00:30Z. */
 describe('ReportingPage (/reporting)', () => {
   let app: Awaited<ReturnType<typeof openFleet>>;
   beforeEach(async () => {
     app = await openFleet('/reporting', () => CLOCK, mixedFleetFixture());
+    vi.useFakeTimers({ shouldAdvanceTime: true }); // the turbine search is debounced
   });
-  afterEach(() => app.http.verify());
+  afterEach(() => {
+    vi.useRealTimers();
+    app.http.verify();
+  });
 
   const q = <T extends Element = HTMLElement>(id: string) =>
     app.root().querySelector<T & HTMLElement>(`[data-testid=${id}]`);
@@ -58,7 +81,7 @@ describe('ReportingPage (/reporting)', () => {
   /** Types into the autocomplete and picks the option whose text matches. */
   async function choose(typed: string, option: string | RegExp) {
     const scope = await loader().getHarness(MatAutocompleteHarness);
-    await scope.enterText(typed);
+    await typeScope(scope, typed);
     await scope.selectOption({ text: option });
     await app.stable();
   }
@@ -101,14 +124,26 @@ describe('ReportingPage (/reporting)', () => {
     expect(errors).toEqual(['Choose a farm or turbine.', 'Choose the start and end dates.']);
   });
 
-  it('offers farms and turbines in groups, filtered by what is typed', async () => {
+  it('offers the farms from the summaries, and turbines only once something is typed', async () => {
     const scope = await loader().getHarness(MatAutocompleteHarness);
     await scope.focus();
     const groups = await scope.getOptionGroups();
-    expect(await Promise.all(groups.map((g) => g.getLabelText()))).toEqual(['Farms', 'Turbines']);
-    expect((await scope.getOptions()).length).toBe(3 + 7); // 3 farms, 7 turbines
+    expect(await Promise.all(groups.map((g) => g.getLabelText()))).toEqual(['Farms']);
+    expect((await scope.getOptions()).length).toBe(3); // 3 farms, no turbine listed or searched
+    expect(app.api.searchTurbines).not.toHaveBeenCalled();
+  });
 
+  it('searches the turbines on the server once typing pauses, and lists farms and turbines in groups', async () => {
+    const scope = await loader().getHarness(MatAutocompleteHarness);
+    await scope.focus();
     await scope.enterText('high');
+    expect(app.api.searchTurbines).not.toHaveBeenCalled(); // not while typing
+
+    await pauseTyping();
+    expect(app.api.searchTurbines).toHaveBeenCalledOnce();
+    expect(app.api.searchTurbines).toHaveBeenCalledWith('high');
+    const groups = await scope.getOptionGroups();
+    expect(await Promise.all(groups.map((g) => g.getLabelText()))).toEqual(['Farms', 'Turbines']);
     expect(await Promise.all((await scope.getOptions()).map((o) => o.getText()))).toEqual([
       'High Plains (FARM02)',
       'TURB002 · High Plains',
@@ -116,6 +151,84 @@ describe('ReportingPage (/reporting)', () => {
       'TURB006 · High Plains',
       'TURB007 · High Plains',
     ]);
+    expect(app.text(q('turbine-search-status'))).toBe('4 turbines found.');
+  });
+
+  it('sends one search for a burst of keystrokes', async () => {
+    const scope = await loader().getHarness(MatAutocompleteHarness);
+    await scope.enterText('T');
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS / 5); // well inside the pause
+    await scope.enterText('URB00'); // appended: the field now holds TURB00
+    await pauseTyping();
+
+    expect(app.api.searchTurbines.mock.calls.map((c) => c[0])).toEqual(['TURB00']);
+  });
+
+  it('says it is searching while the server answers, then lists the turbines', async () => {
+    const answer = new Subject<TurbineItem[]>();
+    app.api.searchTurbines.mockReturnValue(answer);
+    const scope = await loader().getHarness(MatAutocompleteHarness);
+    await scope.enterText('TURB002');
+    await pauseTyping();
+
+    expect(app.text(document.querySelector('[data-testid=turbine-searching]'))).toBe(
+      'Searching turbines…',
+    );
+    expect(
+      document.querySelector('[data-testid=turbine-searching]')!.getAttribute('aria-disabled'),
+    ).toBe('true');
+    expect(app.root().querySelector('mat-spinner')).not.toBeNull();
+    expect(app.text(q('turbine-search-status'))).toBe('Searching turbines…');
+
+    answer.next([{ ...mixedFleetFixture()[1].turbines[0], farmName: 'High Plains' }]);
+    answer.complete();
+    await app.stable();
+    expect(document.querySelector('[data-testid=turbine-searching]')).toBeNull();
+    expect(app.root().querySelector('mat-spinner')).toBeNull();
+    expect(app.text(q('turbine-search-status'))).toBe('1 turbines found.');
+  });
+
+  it('says so when no turbine matches', async () => {
+    const scope = await loader().getHarness(MatAutocompleteHarness);
+    await typeScope(scope, 'zzz');
+    await app.stable();
+
+    expect(app.text(document.querySelector('[data-testid=turbine-search-empty]'))).toBe(
+      'No turbines match.',
+    );
+    expect(app.text(q('turbine-search-status'))).toBe('0 turbines found.');
+  });
+
+  it('says the search failed, and searches again when the text changes', async () => {
+    app.api.searchTurbines.mockReturnValue(
+      throwError(() => new HttpErrorResponse({ status: 500 })),
+    );
+    const scope = await loader().getHarness(MatAutocompleteHarness);
+    await typeScope(scope, 'TURB');
+    await app.stable();
+
+    expect(app.text(document.querySelector('[data-testid=turbine-search-failed]'))).toBe(
+      'The turbine search failed. Change the text to try again.',
+    );
+    expect(app.text(q('turbine-search-status'))).toBe('The turbine search failed.');
+
+    app.api.searchTurbines.mockImplementation((query: string) =>
+      of(
+        mixedFleetFixture()[0]
+          .turbines.map((t) => ({ ...t, farmName: 'Prairie Ridge' }))
+          .filter((t) => t.id.includes(query)),
+      ),
+    );
+    await typeScope(scope, '001'); // appended: TURB001
+    await app.stable();
+    expect(document.querySelector('[data-testid=turbine-search-failed]')).toBeNull();
+    expect(app.text(q('turbine-search-status'))).toBe('1 turbines found.');
+  });
+
+  it('says what to type in the scope field', () => {
+    expect(app.text(q('scope-hint'))).toBe(
+      'Pick a farm, or type a turbine id to search the turbines.',
+    );
   });
 
   it('runs a turbine report for whole UTC days and shows the summary, charts and table', async () => {
@@ -253,7 +366,7 @@ describe('ReportingPage (/reporting)', () => {
 
   it('rejects typed text that is not an option, and a range over 31 days', async () => {
     const scope = await loader().getHarness(MatAutocompleteHarness);
-    await scope.enterText('somewhere');
+    await typeScope(scope, 'somewhere');
     await setDays('12/1/2025', '1/2/2026');
     run();
 
@@ -296,6 +409,44 @@ describe('ReportingPage (/reporting)', () => {
     expect(q<HTMLButtonElement>('download-csv')!.disabled).toBe(true);
   });
 
+  it("shows the API's words for a 400, without a retry, and runs again after a change", async () => {
+    await choose('TURB002', 'TURB002 · High Plains');
+    await setDays('1/1/2026', '1/2/2026');
+    run();
+    expectReport().flush(
+      { message: 'The report would have more than 100000 readings. Choose fewer days.' },
+      { status: 400, statusText: 'Bad Request' },
+    );
+    await app.stable();
+
+    expect(app.text(q('report-rejection'))).toBe(
+      'The report would have more than 100000 readings. Choose fewer days.',
+    );
+    expect(q('report-retry')).toBeNull();
+    expect(q('report-error')!.getAttribute('role')).toBe('alert');
+
+    await setDays('1/2/2026', '1/2/2026');
+    run();
+    await respond({
+      scope: { kind: 'turbine', id: 'TURB002', name: 'High Plains', farmId: 'FARM02' },
+      from: '2026-01-02T00:00:00.000Z',
+      to: '2026-01-03T00:00:00.000Z',
+      readings: [],
+    });
+    expect(q('report-error')).toBeNull();
+  });
+
+  it('keeps the retry for a server error', async () => {
+    await choose('TURB002', 'TURB002 · High Plains');
+    await setDays('1/1/2026', '1/2/2026');
+    run();
+    expectReport().flush({ message: 'boom' }, { status: 500, statusText: 'Server Error' });
+    await app.stable();
+
+    expect(q('report-rejection')).toBeNull();
+    expect(q('report-retry')).not.toBeNull();
+  });
+
   it('downloads the report as CSV, built in the browser', async () => {
     await choose('TURB002', 'TURB002 · High Plains');
     await setDays('1/1/2026', '1/2/2026');
@@ -334,8 +485,12 @@ describe('ReportingPage in local time', () => {
     app = await openFleet('/reporting', () => CLOCK, mixedFleetFixture(), undefined, 'admin', {
       timeZone: 'local',
     });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
   });
-  afterEach(() => app.http.verify());
+  afterEach(() => {
+    vi.useRealTimers();
+    app.http.verify();
+  });
 
   const q = (id: string) => app.root().querySelector<HTMLElement>(`[data-testid=${id}]`);
   const loader = () => TestbedHarnessEnvironment.loader(app.harness.fixture);
@@ -350,7 +505,7 @@ describe('ReportingPage in local time', () => {
 
   it('reports whole local days, shows local times and re-runs for the same days on a zone change', async () => {
     const scope = await loader().getHarness(MatAutocompleteHarness);
-    await scope.enterText('TURB002');
+    await typeScope(scope, 'TURB002');
     await scope.selectOption({ text: 'TURB002 · High Plains' });
     const picker = await loader().getHarness(MatDateRangeInputHarness);
     expect(await (await picker.getEndInput()).getMax()).toBe('2026-01-02'); // today, locally
@@ -420,8 +575,12 @@ describe('ReportingPage deferred charts (@defer)', () => {
       deferBlockBehavior: DeferBlockBehavior.Manual,
     });
     await app.stable();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
   });
-  afterEach(() => app.http.verify());
+  afterEach(() => {
+    vi.useRealTimers();
+    app.http.verify();
+  });
 
   const q = (id: string) => app.root().querySelector<HTMLElement>(`[data-testid=${id}]`);
   const all = (selector: string) => [...app.root().querySelectorAll<HTMLElement>(selector)];
@@ -429,7 +588,7 @@ describe('ReportingPage deferred charts (@defer)', () => {
   async function runReport() {
     const loader = TestbedHarnessEnvironment.loader(app.harness.fixture);
     const scope = await loader.getHarness(MatAutocompleteHarness);
-    await scope.enterText('TURB002');
+    await typeScope(scope, 'TURB002');
     await scope.selectOption({ text: 'TURB002 · High Plains' });
     const range = await loader.getHarness(MatDateRangeInputHarness);
     await (await range.getStartInput()).setValue('1/1/2026');

@@ -1,19 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import {
   PrismaService,
-  listAnomalies,
+  anomaliesInRange,
   type AnomaliesResponse,
 } from '@nextera/shared';
 import { httpQuery } from '../common/query-errors.js';
 import { AnomaliesQueryDto } from './dto/anomalies-query.dto.js';
 
-/** Anomaly episodes (low power in wind, stuck sensors), computed on read in Postgres. */
+/** Anomaly episodes (low power in wind, stuck sensors), stored hourly by the anomaly rollup (anomaly_episodes), read here. */
 @Injectable()
 export class AnomaliesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** The episodes in [from, to), newest end first; a reversed or over-31-day range is a 400. */
+  /**
+   * The episodes overlapping [from, to), clipped to it, newest end first; a reversed or
+   * over-31-day range is a 400. See `anomaliesInRange` for how clipping differs from the old
+   * on-read computation.
+   */
   list({ from, to }: AnomaliesQueryDto): Promise<AnomaliesResponse> {
-    return httpQuery(listAnomalies(this.prisma, { from, to }));
+    return httpQuery(anomaliesInRange(this.prisma, { from, to }));
   }
 }

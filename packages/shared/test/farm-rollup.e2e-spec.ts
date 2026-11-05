@@ -53,7 +53,7 @@ describe('farm rollup (e2e)', () => {
   });
 
   beforeEach(async () => {
-    await prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, farm_telemetry_rollups, farm_rollup_state, farm_rollup_dirty`;
+    await prisma.$executeRaw`TRUNCATE TABLE turbine_latest, telemetry_alerts, telemetry, farm_telemetry_rollups, farm_rollup_state, farm_rollup_dirty`;
     await prisma.turbine.deleteMany();
     await prisma.turbine.createMany({
       data: [

@@ -111,7 +111,7 @@ gh variable delete DEMO_FEED_JOB && tf apply
 
 ### Farm rollup
 
-`farm_rollup_enabled` (default **true**: the farm History tab reads its table) creates the Cloud Run Job `nextera-farm-rollup` (ingestion image, `node dist/farm-rollup/main.js`, Cloud SQL socket + `database-url`, its own SA with `cloudsql.client` and that secret only; 300 s timeout, 1 retry) and a Cloud Scheduler job that runs it every 15 min (`farm_rollup_schedule`, UTC; a scheduler SA with `run.invoker` on that job only). A failed run is caught up by the next one; a failed execution of any scheduled job opens the `nextera: Cloud Run Job execution failed` incident (monitoring.tf). **First apply** (it is on by default, so every environment gets it): run `db:deploy` first (the job needs its tables), apply with `-var ingestion_image=$REG/ingestion:$SHA` (else it runs the placeholder and fails every 15 min), then `gh variable set FARM_ROLLUP_JOB --body nextera-farm-rollup` so deploys update its image.
+`farm_rollup_enabled` (default **true**: the farm History tab reads its table) creates the Cloud Run Job `nextera-farm-rollup` (ingestion image, `node dist/farm-rollup/main.js`, Cloud SQL socket + `database-url`, plus Direct VPC egress (`PRIVATE_RANGES_ONLY`) and `REDIS_URL` from `redis-url` to publish `farm-rollup.completed` (best effort: an unreachable Redis only logs, so check the egress block if the event never arrives); its own SA with `cloudsql.client` and the `database-url` and `redis-url` secrets only; 300 s timeout, 1 retry) and a Cloud Scheduler job that runs it every 15 min (`farm_rollup_schedule`, UTC; a scheduler SA with `run.invoker` on that job only). A failed run is caught up by the next one; a failed execution of any scheduled job opens the `nextera: Cloud Run Job execution failed` incident (monitoring.tf). **First apply** (it is on by default, so every environment gets it): run `db:deploy` first (the job needs its tables), apply with `-var ingestion_image=$REG/ingestion:$SHA` (else it runs the placeholder and fails every 15 min), then `gh variable set FARM_ROLLUP_JOB --body nextera-farm-rollup` so deploys update its image.
 
 ```bash
 gcloud run jobs execute nextera-farm-rollup --region $REGION                                             # a run now
@@ -137,7 +137,15 @@ gcloud run jobs execute nextera-weather-sync --region $REGION --args=dist/weathe
 gh variable delete WEATHER_SYNC_JOB && tf apply
 ```
 
-A failed run has no alert policy yet (a small `monitoring.tf` follow-up).
+A failed run alerts through the `job_failures` policy (`monitoring.tf`).
+
+### Scale jobs
+
+`nextera-partition-maintenance` (daily, also run right after migrate, before the services), `nextera-live-summary` (every minute) and `nextera-anomaly-rollup` (hourly) are on by default (`*_enabled`, `*_paused`, `*_schedule`; `telemetry_retention_days`, default 31, deletes older raw readings). `deploy.yml` updates and runs each only if `PARTITION_MAINTENANCE_JOB`, `LIVE_SUMMARY_JOB` or `ANOMALY_ROLLUP_JOB` is set; delete a variable before turning its job off.
+
+**First rollout:** run `db:deploy` first, apply with `-var ingestion_image=$REG/ingestion:$SHA` (on the placeholder image the live summary fails every minute), then set the three variables. The migration `20261104120000_scale_partitions_latest` holds an ACCESS EXCLUSIVE lock on `telemetry` while it validates and moves rows, in one transaction, so at production size run it in a low-traffic window or with the push subscription paused.
+
+**Runbook:** if partition maintenance fails for more than 3 days, readings land in the DEFAULT partition. Fix the cause and run `gcloud run jobs execute nextera-partition-maintenance --region $REGION`; a successful run creates the days and moves those rows out of DEFAULT. The live summary is about 43,200 executions a month; `live_summary_schedule` lowers that. Million-turbine sizing (estimates): `docs/scaling-gcp.md`.
 
 ### Manual deploy (break-glass)
 

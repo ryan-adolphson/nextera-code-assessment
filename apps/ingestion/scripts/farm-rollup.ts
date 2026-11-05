@@ -4,7 +4,7 @@
  *   npm run rollup -- --full                # recompute the last 190 days
  *   npm run rollup -- --from 2026-10-01     # recompute every farm from that UTC day
  *   npm run rollup:watch                    # every 60 s until Ctrl+C (--every 60)
- * Reads DATABASE_URL from the repo-root .env (real env vars win).
+ * Reads DATABASE_URL and REDIS_URL (optional: publishes farm-rollup.completed) from the repo-root .env (real env vars win).
  * The ingestion image runs the same code as `node dist/farm-rollup/main.js` (see src/farm-rollup).
  */
 import { config } from 'dotenv';

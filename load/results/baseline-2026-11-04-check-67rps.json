@@ -1,0 +1,12 @@
+{
+  "sent": 2000,
+  "acked204": 2000,
+  "stored": 2000,
+  "match": true,
+  "unallocatedEntries": 0,
+  "timeToStoreMs": {
+    "p50": 2,
+    "p95": 4,
+    "max": 19
+  }
+}

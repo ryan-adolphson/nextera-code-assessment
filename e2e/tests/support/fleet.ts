@@ -1,12 +1,23 @@
-import { expect, type APIRequestContext, type Page, type Response } from '@playwright/test';
-import { API_URL } from './session.js';
-import { uploadTelemetry, type CsvReading } from './telemetry.js';
-import { listUnallocated } from './unallocated.js';
+import {
+  expect,
+  type APIRequestContext,
+  type Page,
+  type Request,
+  type Response,
+} from "@playwright/test";
+import { API_URL } from "./session.js";
+import { uploadTelemetry, type CsvReading } from "./telemetry.js";
+import { listUnallocated } from "./unallocated.js";
 
 /**
- * Fleet helpers for the browser tests: the GET /api/farms shape, reading it from the page's own
- * response (so expectations follow whatever the DB holds: the db:seed fixture in CI, plus the
- * demo data, the demo feed and earlier runs' turbines locally), and the side nav.
+ * Fleet helpers for the browser tests: the fleet as an oracle (read through the API's paged
+ * endpoints, since the web app no longer loads GET /api/farms), the summaries the page rendered,
+ * and the side nav. Expectations follow whatever the DB holds: the db:seed fixture in CI, plus the
+ * demo data, the demo feed and earlier runs' turbines locally.
+ *
+ * The server decides reporting / stale / no-data on ITS clock, the pills on the browser's fixed
+ * clock (SEED_NOW): they disagree on the fixture, so the status filter and the summary tiles are
+ * checked against the API's own answer, the pills against SEED_NOW.
  */
 
 export interface FleetReading {
@@ -24,6 +35,51 @@ export interface FleetTurbine {
   latest: FleetReading | null;
 }
 
+/** One row of GET /api/turbines. */
+export interface TurbineItem extends FleetTurbine {
+  farmId: string;
+  farmName: string;
+  latitude: number;
+  longitude: number;
+}
+
+/** GET /api/turbines?…: one page (keyset paging). */
+export interface TurbinePage {
+  items: TurbineItem[];
+  nextCursor: string | null;
+  prevCursor: string | null;
+  total: number;
+  totalCapped: boolean;
+}
+
+/** GET /api/fleet/summary. */
+export interface FleetSummary {
+  farms: number;
+  turbines: number;
+  commissioned: number;
+  reporting: number;
+  stale: number;
+  alerting: number;
+  powerOutputKw: number;
+  asOf: string | null;
+}
+
+/** One entry of GET /api/farm-summaries. */
+export interface FarmSummary {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  turbineCount: number;
+  commissioned: number;
+  reporting: number;
+  stale: number;
+  alerting: number;
+  powerOutputKw: number;
+  windSpeedMs: number | null;
+  asOf: string | null;
+}
+
 export interface FleetFarm {
   id: string;
   name: string;
@@ -31,28 +87,142 @@ export interface FleetFarm {
 }
 
 /** The side nav ("Main" landmark). */
-export const mainNav = (page: Page) => page.getByRole('navigation', { name: 'Main' });
+export const mainNav = (page: Page) =>
+  page.getByRole("navigation", { name: "Main" });
 
-/** The next GET /api/farms response of the page (start waiting before the action). */
-export const farmsResponse = (page: Page): Promise<Response> =>
+/** Whether the request is a GET of `/api/<path>` (any query). */
+export const isApiRequest = (request: Request, path: string): boolean =>
+  request.method() === "GET" &&
+  new URL(request.url()).pathname.endsWith(`/api/${path}`);
+
+/** Whether the response answers a GET of `/api/<path>` (any query). */
+export const isApiGet = (response: Response, path: string): boolean =>
+  isApiRequest(response.request(), path);
+
+/** The next GET /api/farm-summaries and /api/fleet/summary answers of the page (wait before acting). */
+export async function waitForSummaries(
+  page: Page,
+): Promise<{ fleet: FleetSummary; farms: FarmSummary[] }> {
+  const fleet = page.waitForResponse((r) => isApiGet(r, "fleet/summary"));
+  const farms = page.waitForResponse((r) => isApiGet(r, "farm-summaries"));
+  const [f, fa] = await Promise.all([fleet, farms]);
+  expect(f.status(), "GET /api/fleet/summary").toBe(200);
+  expect(fa.status(), "GET /api/farm-summaries").toBe(200);
+  return {
+    fleet: (await f.json()) as FleetSummary,
+    farms: (await fa.json()) as FarmSummary[],
+  };
+}
+
+/** The next GET /api/turbines of the page whose query satisfies `match` (wait before acting). */
+export const turbinesResponse = (
+  page: Page,
+  match: (params: URLSearchParams) => boolean = () => true,
+): Promise<Response> =>
   page.waitForResponse(
-    (r) => /\/api\/farms$/.test(new URL(r.url()).pathname) && r.request().method() === 'GET',
+    (r) => isApiGet(r, "turbines") && match(new URL(r.url()).searchParams),
   );
 
-export async function farmsFrom(response: Promise<Response>): Promise<FleetFarm[]> {
-  const res = await response;
-  expect(res.status(), 'GET /api/farms').toBe(200);
-  return (await res.json()) as FleetFarm[];
+/** The signed-in page's access token (from its session in localStorage). */
+export async function pageToken(page: Page): Promise<string> {
+  let token: string | null = null;
+  await expect
+    .poll(async () => {
+      token = await page
+        .evaluate(
+          () =>
+            (
+              JSON.parse(localStorage.getItem("nextera.session") ?? "null") as {
+                accessToken: string;
+              } | null
+            )?.accessToken ?? null,
+        )
+        .catch(() => null); // a navigation in flight
+      return token;
+    })
+    .not.toBeNull();
+  return token!;
 }
 
-/** GET /api/farms through the API (setup and oracles outside the page). */
-export async function fetchFarms(request: APIRequestContext, token: string): Promise<FleetFarm[]> {
-  const response = await request.get(`${API_URL}/farms`, {
+/** GET /api/turbines?… through the API (an oracle for what the table must show). */
+export async function fetchTurbinePage(
+  request: APIRequestContext,
+  token: string,
+  query: Record<string, string | number | boolean>,
+): Promise<TurbinePage> {
+  const params = new URLSearchParams(
+    Object.entries(query).map(([k, v]) => [k, String(v)]),
+  );
+  const response = await request.get(`${API_URL}/turbines?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  expect(response.status(), 'GET /api/farms').toBe(200);
-  return (await response.json()) as FleetFarm[];
+  expect(
+    response.status(),
+    `GET /api/turbines?${params}: ${await response.text()}`,
+  ).toBe(200);
+  return (await response.json()) as TurbinePage;
 }
+
+/** One turbine with its latest reading (GET /api/turbines/:id). */
+export async function fetchTurbine(
+  request: APIRequestContext,
+  token: string,
+  id: string,
+): Promise<TurbineItem> {
+  const response = await request.get(`${API_URL}/turbines/${id}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(response.status(), `GET /api/turbines/${id}`).toBe(200);
+  return (await response.json()) as TurbineItem;
+}
+
+/**
+ * The whole fleet, farm by farm, read through GET /api/farm-summaries and GET /api/turbines (100 a
+ * page, by id). Only for small fleets (the fixture, the 200-turbine demo): at a million turbines
+ * the oracle would be the million.
+ */
+export async function fetchFarms(
+  request: APIRequestContext,
+  token: string,
+): Promise<FleetFarm[]> {
+  const summaries = await request.get(`${API_URL}/farm-summaries`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(summaries.status(), "GET /api/farm-summaries").toBe(200);
+  const farms = (await summaries.json()) as FarmSummary[];
+  const fleet: FleetFarm[] = [];
+  for (const farm of farms) {
+    const turbines: FleetTurbine[] = [];
+    let cursor: string | null = null;
+    do {
+      const query: Record<string, string | number> = {
+        farmId: farm.id,
+        sort: "id",
+        dir: "asc",
+        limit: 100,
+      };
+      if (cursor) query["cursor"] = cursor;
+      const page: TurbinePage = await fetchTurbinePage(request, token, query);
+      turbines.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor);
+    fleet.push({ id: farm.id, name: farm.name, turbines });
+  }
+  return fleet;
+}
+
+/**
+ * The fleet as the API holds it once the signed-in page has loaded its summaries (start before
+ * the sign-in; replaces the old wait for GET /api/farms, which the web app no longer calls).
+ */
+export async function farmsResponse(page: Page): Promise<FleetFarm[]> {
+  await page.waitForResponse((r) => isApiGet(r, "farm-summaries"));
+  return fetchFarms(page.request, await pageToken(page));
+}
+
+/** Kept for call sites that await `farmsFrom(farmsResponse(page))`. */
+export const farmsFrom = (farms: Promise<FleetFarm[]>): Promise<FleetFarm[]> =>
+  farms;
 
 /** PATCH /api/turbines/:id through the API (setup and cleanup): expects 200. */
 export async function setCommissioned(
@@ -69,7 +239,9 @@ export async function setCommissioned(
 }
 
 /** Every turbine with its farm. */
-export function turbinesOf(farms: FleetFarm[]): (FleetTurbine & { farm: FleetFarm })[] {
+export function turbinesOf(
+  farms: FleetFarm[],
+): (FleetTurbine & { farm: FleetFarm })[] {
   return farms.flatMap((farm) => farm.turbines.map((t) => ({ ...t, farm })));
 }
 
@@ -83,20 +255,23 @@ export async function createTurbine(
   ownerToken: string,
   turbineId: string,
   farmId: string,
-  readings: Omit<CsvReading, 'turbineId' | 'farmId'>[],
+  readings: Omit<CsvReading, "turbineId" | "farmId">[],
 ): Promise<void> {
   const held = await uploadTelemetry(
     request,
     readings.map((r) => ({ ...r, turbineId, farmId })),
   );
   expect(held).toMatchObject({ held: readings.length, inserted: 0 });
-  const [entry] = (await listUnallocated(request, ownerToken, 'pending')).filter(
-    (e) => e.turbineId === turbineId,
-  );
+  const [entry] = (
+    await listUnallocated(request, ownerToken, "pending")
+  ).filter((e) => e.turbineId === turbineId);
   expect(entry, `${turbineId} is held`).toBeTruthy();
-  const assigned = await request.post(`${API_URL}/unallocated-turbines/${entry.id}/assign`, {
-    data: { farmId },
-    headers: { Authorization: `Bearer ${ownerToken}` },
-  });
+  const assigned = await request.post(
+    `${API_URL}/unallocated-turbines/${entry.id}/assign`,
+    {
+      data: { farmId },
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    },
+  );
   expect(assigned.status(), await assigned.text()).toBe(200);
 }

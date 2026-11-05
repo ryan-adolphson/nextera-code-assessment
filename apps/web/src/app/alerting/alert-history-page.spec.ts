@@ -32,7 +32,10 @@ const lowPower = rule({
   alertLevel: 'info',
 });
 
-/** What GET /api/alerts returns: grouped by turbine, newest first. */
+/** What GET /api/alerts returns: one page of flagged readings, newest first. */
+const page = (items: Telemetry[], nextCursor: string | null = null) => ({ items, nextCursor });
+
+/** The flagged readings, grouped by turbine as the table shows them. */
 const flagged = (): Telemetry[] => [
   reading({
     id: 't1',
@@ -64,8 +67,8 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     TestBed.tick();
     return app.http.expectOne((r) => r.method === 'GET' && r.url === ALERTS_URL);
   };
-  async function flush(readings: Telemetry[]) {
-    expectAlerts().flush(readings);
+  async function flush(readings: Telemetry[], nextCursor: string | null = null) {
+    expectAlerts().flush(page(readings, nextCursor));
     await app.stable();
   }
   /**
@@ -130,7 +133,9 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     const req = expectAlerts();
     expect(req.request.params.get('from')).toBe('2026-01-02T00:00:00.000Z');
     expect(req.request.params.get('to')).toBe('2026-01-04T00:00:00.000Z'); // the day after today
-    req.flush([]);
+    expect(req.request.params.get('limit')).toBe('500');
+    expect(req.request.params.has('cursor')).toBe(false);
+    req.flush(page([]));
     await app.stable();
 
     const range = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
@@ -281,7 +286,7 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     const req = expectAlerts();
     expect(req.request.params.get('from')).toBe('2026-01-01T00:00:00.000Z');
     expect(req.request.params.get('to')).toBe('2026-01-04T00:00:00.000Z');
-    req.flush(flagged().slice(1));
+    req.flush(page(flagged().slice(1)));
     await app.stable();
     expect(all('history-turbine')).toHaveLength(1);
 
@@ -322,7 +327,7 @@ describe('AlertHistoryPage (/alerting/history)', () => {
       '2025-12-30T00:00:00.000Z',
       '2026-01-01T00:00:00.000Z',
     ]);
-    req.flush([]);
+    req.flush(page([]));
     await app.stable();
     expect(calendar.isOpen()).toBe(false);
     expect(app.text(q('history-count'))).toBe('0 flagged readings on 0 turbines');
@@ -358,6 +363,108 @@ describe('AlertHistoryPage (/alerting/history)', () => {
     await flush(flagged());
     expect(q('history-error')).toBeNull();
     expect(all('history-turbine')).toHaveLength(2);
+  });
+
+  describe('with more alerts than one request returns', () => {
+    const levelCounts = () => all('level-count').map((b) => app.text(b));
+    const older = () => [
+      reading({
+        id: 't3',
+        turbineId: 'TURB003',
+        timestamp: '2026-01-02T01:00:00.000Z',
+        alerts: [rule()],
+      }),
+    ];
+
+    it('shows "N+" in the counts and says the list is the newest so far', async () => {
+      await flush(flagged(), 'cursor-1');
+
+      expect(app.text(q('history-count'))).toBe(
+        '4+ flagged readings on 2+ turbines so far (newest first)',
+      );
+      expect(levelCounts()).toEqual(['Info: 1+', 'Error: 3+', 'Warning: 3+']);
+      expect(app.text(q('history-more-note'))).toBe(
+        'Showing the newest 4 flagged readings; counts grow as older ones load.',
+      );
+      expect(app.text(q('history-load-more'))).toBe('Load older alerts');
+    });
+
+    it('appends the next page, asks with its cursor, and drops the "+" on the last page', async () => {
+      await flush(flagged(), 'cursor-1');
+
+      q<HTMLButtonElement>('history-load-more')!.click();
+      TestBed.tick();
+      expect(q<HTMLButtonElement>('history-load-more')!.disabled).toBe(true);
+      expect(app.text(q('history-load-more'))).toBe('Loading…');
+      const req = expectAlerts();
+      expect(req.request.params.get('cursor')).toBe('cursor-1');
+      expect(req.request.params.get('from')).toBe('2026-01-02T00:00:00.000Z'); // the same range
+      req.flush(page(older()));
+      await app.stable();
+
+      expect(all('history-turbine').map((tr) => tr.getAttribute('data-turbine-id'))).toEqual([
+        'TURB001',
+        'TURB002',
+        'TURB003',
+      ]);
+      expect(app.text(q('history-count'))).toBe('5 flagged readings on 3 turbines');
+      expect(levelCounts()).toEqual(['Info: 1', 'Error: 3', 'Warning: 3', 'Error: 1']);
+      expect(q('history-load-more')).toBeNull();
+      expect(q('history-more-note')).toBeNull();
+    });
+
+    it('keeps the expanded rows and offers more again while pages remain', async () => {
+      await flush(flagged(), 'cursor-1');
+      expandButton('TURB002').click();
+      await app.stable();
+
+      q<HTMLButtonElement>('history-load-more')!.click();
+      expectAlerts().flush(page(older(), 'cursor-2'));
+      await app.stable();
+
+      expect(details('TURB002')).toHaveLength(3);
+      expect(app.text(q('history-count'))).toContain('5+ flagged readings on 3+ turbines');
+      expect(q('history-load-more')).not.toBeNull();
+    });
+
+    it('starts again from the first page when the range changes', async () => {
+      await flush(flagged(), 'cursor-1');
+
+      setDays('1/1/2026', null);
+      const req = expectAlerts();
+      expect(req.request.params.has('cursor')).toBe(false);
+      req.flush(page(older()));
+      await app.stable();
+
+      expect(all('history-turbine')).toHaveLength(1); // replaced, not appended
+      expect(q('history-load-more')).toBeNull();
+    });
+
+    it('shows the error with a retry when the next page fails, and retry loads that page', async () => {
+      await flush(flagged(), 'cursor-1');
+      q<HTMLButtonElement>('history-load-more')!.click();
+      expectAlerts().flush('boom', { status: 500, statusText: 'Server Error' });
+      await app.stable();
+      expect(q('history-error')).not.toBeNull();
+
+      q<HTMLButtonElement>('history-retry')!.click();
+      TestBed.tick();
+      const req = expectAlerts();
+      expect(req.request.params.get('cursor')).toBe('cursor-1');
+      req.flush(page(older()));
+      await app.stable();
+
+      expect(q('history-error')).toBeNull();
+      expect(all('history-turbine')).toHaveLength(3);
+    });
+  });
+
+  it('shows only the farm id for a farm the fleet summaries do not list', async () => {
+    await flush([reading({ id: 'x', turbineId: 'TURB900', farmId: 'FARM99', alerts: [rule()] })]);
+
+    const row = all('history-turbine')[0];
+    const farm = app.text(row.querySelectorAll('td')[2]);
+    expect(farm).toBe('FARM99');
   });
 
   it('fits range and table in one window-high view: only the rows scroll, above the paginator', async () => {
@@ -400,7 +507,7 @@ describe('AlertHistoryPage in local time', () => {
     // 2026-01-03 00:00:30 UTC is Jan 2, 18:00 CST: yesterday and today are Jan 1 and Jan 2.
     const req = expectAlerts();
     expect(range(req)).toEqual(['2026-01-01T06:00:00.000Z', '2026-01-03T06:00:00.000Z']);
-    req.flush(flagged());
+    req.flush(page(flagged()));
     await app.stable();
 
     const picker = await TestbedHarnessEnvironment.loader(app.harness.fixture).getHarness(
@@ -418,13 +525,13 @@ describe('AlertHistoryPage in local time', () => {
   });
 
   it('keeps the picked calendar days and queries them again when the zone changes', async () => {
-    expectAlerts().flush([]);
+    expectAlerts().flush(page([]));
     await app.stable();
 
     TestBed.inject(TimeZoneSettings).setMode('utc');
     const req = expectAlerts();
     expect(range(req)).toEqual(['2026-01-01T00:00:00.000Z', '2026-01-03T00:00:00.000Z']);
-    req.flush(flagged());
+    req.flush(page(flagged()));
     await app.stable();
     expect(app.text(q('history-range')!.querySelector('mat-label'))).toBe('Dates (UTC)');
   });
@@ -438,7 +545,7 @@ describe('AlertHistoryPage deferred chips (@defer)', () => {
       deferBlockBehavior: DeferBlockBehavior.Manual,
     });
     TestBed.tick();
-    app.http.expectOne((r) => r.url === ALERTS_URL).flush(flagged());
+    app.http.expectOne((r) => r.url === ALERTS_URL).flush(page(flagged()));
     await app.stable();
   });
   afterEach(() => app.http.verify());

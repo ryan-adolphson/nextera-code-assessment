@@ -19,9 +19,11 @@ import {
   lockUnallocated,
   toTelemetryResponse,
   toTurbineResponse,
+  turbineChannel,
   type FleetChangedEvent,
   type HeldReadingResponse,
   type ImportResult,
+  type TelemetryResponse,
   type Prisma,
   type Turbine,
   type UnallocatedChangedEvent,
@@ -31,6 +33,7 @@ import {
   type UnallocatedTurbineResponse,
 } from '@nextera/shared';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
+import { FarmsCacheService } from '../farms-cache/farms-cache.service.js';
 import { httpQuery } from '../common/query-errors.js';
 import { AssignUnallocatedDto } from './dto/unallocated.dto.js';
 
@@ -53,6 +56,7 @@ export class UnallocatedTurbinesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventStore,
+    private readonly farmsCache: FarmsCacheService,
   ) {}
 
   list(status: UnallocatedStatus): Promise<UnallocatedTurbineResponse[]> {
@@ -197,14 +201,13 @@ export class UnallocatedTurbinesService {
       { timeout: ACTION_TIMEOUT_MS },
     );
 
+    // The turbine joined or moved farms: GET /api/farms changes (the event reaches other instances).
+    this.farmsCache.invalidate();
     await this.publish(UNALLOCATED_CHANGED, changed(action, entry));
     const fleet: FleetChangedEvent = { turbineId: entry.turbineId };
     await this.publish(FLEET_CHANGED, fleet);
     if (imported.newest) {
-      await this.publish(
-        TELEMETRY_RECEIVED,
-        toTelemetryResponse(imported.newest),
-      );
+      await this.publishReading(toTelemetryResponse(imported.newest));
     }
     return {
       action,
@@ -264,6 +267,23 @@ export class UnallocatedTurbinesService {
    * Called after the commit. A Redis failure is logged, not thrown: the change is stored, and a
    * 500 would invite a retry that now fails with 404.
    */
+  private async publishReading(reading: TelemetryResponse): Promise<void> {
+    try {
+      await this.events.publishLive([
+        {
+          channel: turbineChannel(reading.turbineId),
+          type: TELEMETRY_RECEIVED,
+          data: reading,
+        },
+      ]);
+    } catch (error) {
+      this.logger.error(
+        `Could not publish ${TELEMETRY_RECEIVED}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
   private async publish(type: string, data: unknown): Promise<void> {
     try {
       await this.events.publish(type, data);

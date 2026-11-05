@@ -3,10 +3,10 @@ import { FleetStore } from './fleet.store';
 import { TurbineTable } from './turbine-table';
 
 /**
- * /turbines: every turbine of every farm with its status and latest reading, live (FleetStore),
- * in the shared `TurbineTable`: sortable by any column (default: last reading, newest first),
- * filterable by text (turbine id, farm id or name), status and commissioning, hiding turbines that
- * have never reported unless asked.
+ * /turbines: every turbine of every farm with its status and latest reading, one page at a time
+ * from the API, in the shared `TurbineTable`: sorted by the server (default: last reading, newest
+ * first), filterable by text (turbine id, farm id or name), status and commissioning, hiding
+ * turbines that have never reported unless asked.
  */
 @Component({
   selector: 'app-turbine-list',
@@ -20,10 +20,10 @@ import { TurbineTable } from './turbine-table';
       Every turbine in the fleet with its status and latest reading, live.
     </p>
 
-    @if (store.turbines().length === 0) {
+    @if (store.fleetLoadedOk() && store.fleet().turbines === 0) {
       <p class="mt-6 text-muted" data-testid="no-turbines">No turbines are registered yet.</p>
     } @else {
-      <app-turbine-table [turbines]="store.turbines()" />
+      <app-turbine-table />
     }
   `,
 })
