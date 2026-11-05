@@ -11,9 +11,12 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import * as L from 'leaflet';
+import L from 'leaflet';
 // Adds L.markerClusterGroup (the plugin reads Leaflet's global `L`, which Leaflet sets on load; the
 // import order matters). Both stay in this component's lazy chunk.
+// Import Leaflet as the default, never `import * as L`: the production bundler turns a namespace
+// import of this CommonJS module into a COPY of its exports taken before the plugin runs, so the
+// copy lacks MarkerClusterGroup/markerClusterGroup. The default is the live object the plugin patches.
 import 'leaflet.markercluster';
 import type { Staleness } from '../fleet/staleness';
 

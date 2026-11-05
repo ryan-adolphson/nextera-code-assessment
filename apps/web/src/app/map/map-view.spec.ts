@@ -1,6 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import * as L from 'leaflet';
+import L from 'leaflet';
 import { CLUSTER_FROM, LegendItem, MapMarker, MapView } from './map-view';
 
 @Component({
@@ -137,6 +137,16 @@ describe('MapView (Leaflet)', () => {
   });
 
   describe('clustering', () => {
+    // The test runner's module interop is more forgiving than the production bundler's (which copies a
+    // namespace import before the plugin patches Leaflet), so this can't catch a `import * as L`
+    // regression itself: it pins the default import to the live object the plugin patches. The built
+    // chunk was checked by hand (see the fix's notes).
+    it('binds the default import to the object the cluster plugin patches', () => {
+      expect(L).toBe((window as unknown as { L: typeof L }).L);
+      expect(typeof L.markerClusterGroup).toBe('function');
+      expect(typeof L.MarkerClusterGroup).toBe('function');
+    });
+
     const many = (count: number, status: MapMarker['status'] = 'ok') =>
       Array.from({ length: count }, (_, i) =>
         marker(`T${i}`, {
