@@ -139,6 +139,9 @@ export interface TurbineMarkerResponse {
 /** Fleet-wide, low-volume event: the summaries were rebuilt (`{ asOf }`). */
 export const FLEET_TICK = 'fleet.tick';
 
+/** Fleet-wide event: a farm rollup run committed (`{ asOf }`, every 15 min); the History tab reloads. */
+export const FARM_ROLLUP_COMPLETED = 'farm-rollup.completed';
+
 /** SSE event published by the ingestion worker for every stored reading. */
 export const TELEMETRY_EVENTS = ['telemetry.received'] as const;
 

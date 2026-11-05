@@ -1,4 +1,4 @@
-import type { FarmRollupResult } from '@nextera/shared';
+import type { EventStore, FarmRollupResult } from '@nextera/shared';
 import {
   describeRun,
   parseFarmRollupArgs,
@@ -97,6 +97,73 @@ describe('runFarmRollupCli', () => {
       ),
     );
     expect(db.$disconnect).toHaveBeenCalled();
+  });
+
+  describe('completion event', () => {
+    const withEvents = (overrides: Partial<FarmRollupCliDeps> = {}) => {
+      const events = {
+        publish: vi.fn().mockResolvedValue({}),
+        onModuleDestroy: vi.fn().mockResolvedValue(undefined),
+      };
+      const createEvents = vi.fn(() => events as unknown as EventStore);
+      const s = setup({
+        env: { ...ENV, REDIS_URL: 'redis://localhost' },
+        createEvents,
+        ...overrides,
+      });
+      return { ...s, events, createEvents };
+    };
+
+    it('publishes asOf = the watermark after a successful run, then closes', async () => {
+      const { events, createEvents, log, deps } = withEvents();
+      expect(await runFarmRollupCli(deps)).toBe(0);
+      expect(createEvents).toHaveBeenCalledWith(deps.env);
+      expect(events.publish).toHaveBeenCalledWith('farm-rollup.completed', {
+        asOf: '2026-11-01T10:00:00.000Z',
+      });
+      expect(log.log).toHaveBeenCalledWith(
+        expect.stringMatching(/event published$/),
+      );
+      expect(events.onModuleDestroy).toHaveBeenCalled();
+    });
+
+    it('does not publish when the run is skipped or fails', async () => {
+      const skipped = withEvents({
+        run: vi
+          .fn()
+          .mockResolvedValue(result({ skipped: true, watermark: null })),
+      });
+      expect(await runFarmRollupCli(skipped.deps)).toBe(0);
+      expect(skipped.events.publish).not.toHaveBeenCalled();
+
+      const failed = withEvents({
+        run: vi.fn().mockRejectedValue(new Error('boom')),
+      });
+      expect(await runFarmRollupCli(failed.deps)).toBe(1);
+      expect(failed.events.publish).not.toHaveBeenCalled();
+      expect(failed.events.onModuleDestroy).toHaveBeenCalled();
+    });
+
+    it('still exits 0 when Redis fails', async () => {
+      const { events, log, deps } = withEvents();
+      events.publish.mockRejectedValue(new Error('redis down'));
+      expect(await runFarmRollupCli(deps)).toBe(0);
+      expect(log.log).toHaveBeenCalledWith(
+        expect.stringContaining('event NOT published: redis down'),
+      );
+      expect(log.error).not.toHaveBeenCalled();
+    });
+
+    it('without REDIS_URL creates no EventStore and publishes nothing', async () => {
+      const createEvents = vi.fn();
+      const { log, run, deps } = setup({ createEvents });
+      expect(await runFarmRollupCli(deps)).toBe(0);
+      expect(run).toHaveBeenCalled();
+      expect(createEvents).not.toHaveBeenCalled();
+      expect(log.log).toHaveBeenCalledWith(
+        expect.stringContaining('REDIS_URL is not set'),
+      );
+    });
   });
 
   it('exits 0 when another run holds the lock', async () => {

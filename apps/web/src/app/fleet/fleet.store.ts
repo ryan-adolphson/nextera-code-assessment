@@ -25,6 +25,7 @@ import { FleetApi, MAX_WATCHED_TURBINES, TelemetryWindow } from './fleet-api.ser
 import {
   CLOCK_TICK_MS,
   DEFAULT_HISTORY_RANGE_MS,
+  FARM_ROLLUP_COMPLETED,
   FLEET_TICK,
   FarmSummaryResponse,
   FleetSummaryResponse,
@@ -48,6 +49,7 @@ const LIVE_EVENTS = [
   UNALLOCATED_CHANGED,
   FLEET_CHANGED,
   FLEET_TICK,
+  FARM_ROLLUP_COMPLETED,
 ];
 
 /**
@@ -180,6 +182,12 @@ export class FleetStore {
    * here or in another browser): pages showing rules reload when it changes.
    */
   readonly alertConfigVersion = signal(0);
+  /**
+   * Bumped on every `farm-rollup.completed` event (the farm rollup committed, every 15 min) and
+   * after a resync (a missed event): the farm History tab reloads and its cache entries from an
+   * earlier version count as misses.
+   */
+  readonly farmRollupVersion = signal(0);
   /**
    * Bumped on every `unallocated-turbine.changed` event (an entry was held, resolved, blocked or
    * unblocked) and after a resync: the Unallocated pages reload when it changes.
@@ -314,6 +322,8 @@ export class FleetStore {
           else if (event.type === UNALLOCATED_CHANGED) this.unallocatedVersion.update((v) => v + 1);
           else if (event.type === FLEET_CHANGED) this.reloadFleet();
           else if (event.type === FLEET_TICK) this.loadSummaries({ quiet: true });
+          else if (event.type === FARM_ROLLUP_COMPLETED)
+            this.farmRollupVersion.update((v) => v + 1);
           else this.receive(event.data as Telemetry);
         },
         error: () => this.liveStatus.set('offline'),
@@ -381,6 +391,7 @@ export class FleetStore {
     const selected = this.selectedTurbineId();
     if (selected) this.select(selected);
     this.alertConfigVersion.update((v) => v + 1);
+    this.farmRollupVersion.update((v) => v + 1);
     this.unallocatedVersion.update((v) => v + 1);
   }
 

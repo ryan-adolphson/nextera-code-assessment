@@ -415,6 +415,241 @@ describe('FarmHistoryPage (/farms/:farmId/history)', () => {
     expect(TestBed.inject(Title).getTitle()).toBe('FARM99 · History · Nextera');
   });
 
+  describe('reload on farm-rollup.completed', () => {
+    const newDays = (): FarmDailyDay[] => [
+      ...seedDays(),
+      day('2026-01-03', { powerOutputKw: ohlc(2000, 2200, 100, 2500) }),
+    ];
+    const candles = () =>
+      (charts()[0].chart!.getOption()['series'] as { data: unknown[][] }[])[0].data;
+    const rollup = () => {
+      app.sse.farmRollup();
+      TestBed.tick();
+    };
+    const focused = () => document.activeElement as HTMLElement | null;
+    const chartGroup = () =>
+      app.harness.fixture.debugElement.query((d) => d.name === 'app-chart-group')
+        .componentInstance as { resetKey: () => string };
+
+    it('sends one new request on the event and shows the new data, none on page open', async () => {
+      await open();
+      await answer(expectDaily());
+      expectNoDaily();
+      expect(candles()).toHaveLength(2);
+
+      app.sse.farmRollup();
+      const req = expectDaily();
+      expect(params(req)).toEqual(['2025-12-05T00:00:00.000Z', '2026-01-04T00:00:00.000Z', 'UTC']);
+      await answer(req, newDays(), { computedAt: '2026-01-03T00:00:00.000Z' });
+
+      expect(candles()).toHaveLength(3);
+      expect(app.text(q('farm-history-updated'))).toBe('Updated Jan 3, 00:00 UTC.');
+      expectNoDaily();
+    });
+
+    it('shows no skeleton, no dimming and an enabled Refresh during the quiet reload', async () => {
+      await open();
+      await answer(expectDaily());
+      app.sse.farmRollup();
+      const req = expectDaily();
+      TestBed.tick();
+
+      expect(q('chart-skeleton')).toBeNull();
+      expect(q('farm-history-charts')).not.toBeNull();
+      expect(q('farm-history-charts')!.hasAttribute('data-refreshing')).toBe(false);
+      expect(q('farm-history-refresh')!.hasAttribute('aria-disabled')).toBe(false);
+      expect(app.text(q('farm-history-status'))).not.toContain('Loading');
+      await answer(req, newDays());
+    });
+
+    it('keeps the old chart and shows no error when the quiet reload fails, and recovers on the next event', async () => {
+      await open();
+      await answer(expectDaily());
+      app.sse.farmRollup();
+      await fail(expectDaily());
+
+      expect(q('farm-history-error')).toBeNull();
+      expect(q('farm-history-charts')).not.toBeNull();
+      expect(q('farm-history-refresh')).not.toBeNull();
+      expect(candles()).toHaveLength(2);
+
+      app.sse.farmRollup();
+      await answer(expectDaily(), newDays());
+      expect(candles()).toHaveLength(3);
+      expect(q('farm-history-error')).toBeNull();
+    });
+
+    it('recovers with Refresh after a failed quiet reload (a visible load)', async () => {
+      await open();
+      await answer(expectDaily());
+      app.sse.farmRollup();
+      await fail(expectDaily());
+
+      q<HTMLButtonElement>('farm-history-refresh')!.click();
+      const req = expectDaily();
+      TestBed.tick();
+      expect(q('farm-history-charts')!.hasAttribute('data-refreshing')).toBe(true);
+      await answer(req, newDays());
+      expect(candles()).toHaveLength(3);
+    });
+
+    it('shows the chart and clears the error when a quiet reload succeeds after a visible failure', async () => {
+      await open();
+      await answer(expectDaily());
+      q<HTMLButtonElement>('farm-history-refresh')!.click();
+      await fail(expectDaily());
+      expect(q('farm-history-error')).not.toBeNull();
+
+      app.sse.farmRollup();
+      await answer(expectDaily(), newDays());
+      expect(q('farm-history-error')).toBeNull();
+      expect(q('farm-history-charts')).not.toBeNull();
+      expect(candles()).toHaveLength(3);
+    });
+
+    it('goes back to an earlier range with a request after an event, but from the cache without one', async () => {
+      await open();
+      await answer(expectDaily());
+      await pickRange('90d');
+      await answer(expectDaily(), [day('2025-11-01'), ...seedDays()]);
+
+      // No event: the 30-day answer is still fresh.
+      await pickRange('30d');
+      expectNoDaily();
+      await app.stable();
+      await pickRange('90d');
+      expectNoDaily();
+      await app.stable();
+
+      // The event reloads 90 days; 30 days (loaded under the old version) is a miss.
+      app.sse.farmRollup();
+      await answer(expectDaily(), [day('2025-11-01'), ...newDays()]);
+      await pickRange('30d');
+      const thirty = expectDaily();
+      expect(params(thirty)[0]).toBe('2025-12-05T00:00:00.000Z');
+      await answer(thirty, newDays());
+      expect(candles()).toHaveLength(3);
+    });
+
+    it('still expires an answer after 15 minutes within the same rollup version', async () => {
+      await open();
+      await answer(expectDaily());
+      app.sse.farmRollup();
+      await answer(expectDaily(), newDays());
+
+      now = CLOCK + 14 * MIN + 59_000;
+      await navigate('/farms/FARM01');
+      await app.stable();
+      await navigate('/farms/FARM01/history');
+      expectNoDaily();
+      await app.stable();
+
+      now = CLOCK + 15 * MIN;
+      await navigate('/farms/FARM01');
+      await app.stable();
+      await navigate('/farms/FARM01/history');
+      await answer(expectDaily());
+    });
+
+    it('does not serve an answer that started before the event as fresh: the old request is dropped, the new one is cached', async () => {
+      await open();
+      const early = expectDaily(); // started under the old version
+      app.sse.farmRollup();
+      const late = expectDaily();
+      expect(early.cancelled).toBe(true);
+      await answer(late, newDays());
+      expect(candles()).toHaveLength(3);
+
+      await navigate('/farms/FARM01');
+      await app.stable();
+      await navigate('/farms/FARM01/history');
+      expectNoDaily();
+      await app.stable();
+      expect(candles()).toHaveLength(3);
+    });
+
+    it('goes back after an event to the tab with a request, because the cached answer is from an earlier version', async () => {
+      await open();
+      await answer(expectDaily());
+      await navigate('/farms/FARM01');
+      await app.stable();
+      app.sse.farmRollup();
+      TestBed.tick();
+      await navigate('/farms/FARM01/history');
+      await answer(expectDaily(), newDays());
+      expect(candles()).toHaveLength(3);
+    });
+
+    it('shows loading normally when the range changes during a quiet reload, and the older answer never wins', async () => {
+      await open();
+      await answer(expectDaily());
+      rollup();
+      const quiet = expectDaily();
+
+      await pickRange('90d');
+      const ninety = expectDaily();
+      expect(quiet.cancelled).toBe(true);
+      TestBed.tick();
+      expect(q('farm-history-charts')!.hasAttribute('data-refreshing')).toBe(true);
+      expect(q('farm-history-refresh')!.getAttribute('aria-disabled')).toBe('true');
+
+      await answer(ninety, [day('2025-11-01'), ...newDays()]);
+      expect(charts()[0].domain().from).toBe(Date.parse('2025-10-06T00:00:00.000Z'));
+      expect(candles()).toHaveLength(4);
+      expect(q('farm-history-charts')!.hasAttribute('data-refreshing')).toBe(false);
+    });
+
+    it('keeps the loading state when an event arrives during a user load', async () => {
+      await open();
+      await answer(expectDaily());
+      await pickRange('90d');
+      const first = expectDaily();
+      TestBed.tick();
+      expect(q('farm-history-charts')!.hasAttribute('data-refreshing')).toBe(true);
+
+      rollup();
+      const second = expectDaily();
+      expect(first.cancelled).toBe(true);
+      expect(params(second)[0]).toBe('2025-10-06T00:00:00.000Z');
+      expect(q('farm-history-charts')!.hasAttribute('data-refreshing')).toBe(true);
+
+      await fail(second);
+      expect(q('farm-history-error')).not.toBeNull();
+    });
+
+    it('does not move focus during a quiet reload', async () => {
+      await open();
+      await answer(expectDaily());
+      const range = q('farm-history-range-90d')!.querySelector('button')!;
+      range.focus();
+
+      app.sse.farmRollup();
+      const req = expectDaily();
+      TestBed.tick();
+      expect(focused()).toBe(range);
+      await answer(req, newDays());
+      expect(focused()).toBe(range);
+
+      app.sse.farmRollup();
+      await fail(expectDaily());
+      expect(focused()).toBe(range);
+    });
+
+    it('keeps the zoom key for a reload of the same days and changes it with the range', async () => {
+      await open();
+      await answer(expectDaily());
+      const before = chartGroup().resetKey();
+
+      app.sse.farmRollup();
+      await answer(expectDaily(), newDays());
+      expect(chartGroup().resetKey()).toBe(before);
+
+      await pickRange('90d');
+      await answer(expectDaily());
+      expect(chartGroup().resetKey()).not.toBe(before);
+    });
+  });
+
   describe('while the charts chunk loads (@defer)', () => {
     async function openManual() {
       await open('/farms/FARM01/history', 'utc', DeferBlockBehavior.Manual);

@@ -24,6 +24,15 @@ import type { TelemetryMetric } from './responses.js';
  */
 
 /** Width of a rollup bucket. */
+/** SSE event (global stream): a farm rollup run committed. Payload `FarmRollupCompletedEvent`. */
+export const FARM_ROLLUP_COMPLETED = 'farm-rollup.completed';
+
+/** Payload of `farm-rollup.completed`: global, no farm ids. */
+export interface FarmRollupCompletedEvent {
+  /** The run's watermark (ISO, UTC). */
+  asOf: string;
+}
+
 export const FARM_ROLLUP_BUCKET_MINUTES = 30;
 /** Rollups older than this before the newest reading (or now, whichever is earlier) are pruned. */
 export const FARM_ROLLUP_RETENTION_DAYS = 190;

@@ -33,7 +33,7 @@ import { FarmHistoryCache, FarmHistoryKey } from './farm-history-cache';
 import { FarmDailyHistory } from './farm-history.model';
 import { FARM_HISTORY_RANGES, FarmHistoryRange, lastDays, powerCandles } from './farm-history';
 
-/** A load: the cached answer when fresh, unless `bypass` (Retry, Refresh). */
+/** A load: the cached answer when fresh, unless `bypass` (Retry, Refresh, a rollup reload). */
 interface HistoryLoad extends FarmHistoryKey {
   bypass?: boolean;
 }
@@ -47,8 +47,11 @@ const POWER = METRICS.find((m) => m.key === 'powerOutputKw')!;
  * /farms/:farmId/history (the farm's History tab): the farm's power output (the sum over its
  * turbines) as one candle per day, precomputed by the farm rollup job every 15 minutes. Ranges
  * 30d / 90d / 6 months of whole days ending today in the zone shown (Settings). One request per
- * farm, range or zone (none on live readings); answers are reused from `FarmHistoryCache` for 15
- * minutes, so switching ranges or tabs back sends nothing. Retry and Refresh skip the cache.
+ * farm, range or zone (none on live readings); answers are reused from `FarmHistoryCache` until
+ * the next `farm-rollup.completed` event (`FleetStore.farmRollupVersion`), or 15 minutes as the
+ * fallback, so switching ranges or tabs back sends nothing. Retry and Refresh skip the cache. When
+ * the version changes, the shown days reload quietly (skipping the cache): the chart stays,
+ * undimmed, and a failure of that reload shows no error.
  */
 @Component({
   selector: 'app-farm-history-page',
@@ -106,16 +109,21 @@ export class FarmHistoryPage {
   );
 
   private readonly load = latestLoad(({ bypass, ...key }: HistoryLoad) => {
-    const cached = bypass ? null : this.cache.get(key);
+    // The version when the request starts: an answer that began before a rollup is stored under
+    // the old version, so it never counts as fresh afterwards.
+    const version = untracked(this.store.farmRollupVersion);
+    const cached = bypass ? null : this.cache.get(key, version);
     const answer$ = cached
       ? of(cached)
       : this.api
           .daily(key.farmId, { from: key.from, to: key.to, timeZone: key.zone })
-          .pipe(tap((history) => this.cache.set(key, history)));
+          .pipe(tap((history) => this.cache.set(key, history, version)));
     return answer$.pipe(map((history: FarmDailyHistory) => ({ key, history })));
   });
-  protected readonly loading = this.load.loading;
-  protected readonly failed = this.load.failed;
+  /** The request in flight is a quiet rollup reload: no loading state, no error. */
+  private readonly quiet = signal(false);
+  protected readonly loading = computed(() => this.load.loading() && !this.quiet());
+  protected readonly failed = computed(() => this.load.failed() && !this.quiet());
   /** The latest answer for this farm (an earlier range's stays, dimmed, until the next arrives). */
   protected readonly shown = computed(() => {
     const value = this.load.value();
@@ -142,6 +150,8 @@ export class FarmHistoryPage {
     const domain: TimeRange = { from: Date.parse(key.from), to: Date.parse(key.to) };
     return { charts: [series], domain, key };
   });
+  /** Zoom resets for another farm, range, zone or days, not when the same days reload. */
+  protected readonly resetKey = computed(() => JSON.stringify(this.chart()?.key ?? null));
   protected readonly hasCharts = computed(() => this.chart() !== null);
   protected readonly chartSkeleton: ChartSkeletonCard[] = [
     { title: 'Farm power output', lines: 1 },
@@ -154,7 +164,21 @@ export class FarmHistoryPage {
       const key = this.key();
       if (!key || sameKey(key, loaded)) return;
       loaded = key;
-      untracked(() => this.load.run(key));
+      untracked(() => this.send(key));
+    });
+    // A farm rollup committed: reload the shown days quietly (chart stays, no error on failure).
+    // The first run (page open) is skipped: the key effect already loads.
+    let firstVersion = true;
+    effect(() => {
+      this.store.farmRollupVersion();
+      if (firstVersion) {
+        firstVersion = false;
+        return;
+      }
+      untracked(() => {
+        const key = this.key();
+        if (key) this.send({ ...key, bypass: true }, true);
+      });
     });
     // "<Farm> · History · Nextera" once the farm's name is known (the route names it by id).
     effect(() => {
@@ -187,6 +211,16 @@ export class FarmHistoryPage {
     if (this.loading()) return;
     this.restoreFocus = true;
     // The buttons are only shown for a known farm, so there is a key.
-    this.load.run({ ...this.key()!, bypass: true });
+    this.send({ ...this.key()!, bypass: true });
+  }
+
+  /**
+   * Starts a load. A quiet one is demoted to a normal one while a user-started load is in flight
+   * (it replaces that request, which must keep its loading state); any user-started load clears
+   * the quiet flag, so `loading`/`failed` are right whichever came last.
+   */
+  private send(request: HistoryLoad, quiet = false): void {
+    this.quiet.set(quiet && !(this.load.loading() && !this.quiet()));
+    this.load.run(request);
   }
 }

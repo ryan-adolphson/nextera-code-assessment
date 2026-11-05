@@ -241,6 +241,7 @@ export type {
 // (`node dist/farm-rollup/main.js` in the ingestion image, `npm run rollup`, the seeds)
 export {
   FARM_ROLLUP_BUCKET_MINUTES,
+  FARM_ROLLUP_COMPLETED,
   FARM_ROLLUP_LOCK,
   FARM_ROLLUP_LOOKBACK_MS,
   FARM_ROLLUP_METRICS,
@@ -251,6 +252,7 @@ export {
 } from './wind/farm-rollup.js';
 export type {
   FarmRollupClient,
+  FarmRollupCompletedEvent,
   FarmRollupMode,
   FarmRollupOptions,
   FarmRollupResult,

@@ -59,13 +59,25 @@ run "enabled_by_default_creates_job_identities_and_schedule" {
   assert {
     condition = (
       contains([for e in google_cloud_run_v2_job.farm_rollup[0].template[0].template[0].containers[0].env : e.name], "DATABASE_URL")
-      && !contains([for e in google_cloud_run_v2_job.farm_rollup[0].template[0].template[0].containers[0].env : e.name], "REDIS_URL")
       && contains([
         for e in google_cloud_run_v2_job.farm_rollup[0].template[0].template[0].containers[0].env :
         e.value_source[0].secret_key_ref[0].secret if e.name == "DATABASE_URL"
       ], "database-url")
+      && contains([
+        for e in google_cloud_run_v2_job.farm_rollup[0].template[0].template[0].containers[0].env :
+        e.value_source[0].secret_key_ref[0].secret if e.name == "REDIS_URL"
+      ], "redis-url")
     )
-    error_message = "The job needs DATABASE_URL from the database-url secret, and no REDIS_URL."
+    error_message = "The job needs DATABASE_URL from the database-url secret and REDIS_URL from the redis-url secret."
+  }
+
+  assert {
+    condition = (
+      length(google_cloud_run_v2_job.farm_rollup[0].template[0].template[0].vpc_access) == 1
+      && google_cloud_run_v2_job.farm_rollup[0].template[0].template[0].vpc_access[0].egress == "PRIVATE_RANGES_ONLY"
+      && length(google_cloud_run_v2_job.farm_rollup[0].template[0].template[0].vpc_access[0].network_interfaces) == 1
+    )
+    error_message = "The job needs Direct VPC egress (PRIVATE_RANGES_ONLY) to reach Memorystore; without it publishing fails silently."
   }
 
   assert {
@@ -82,8 +94,9 @@ run "enabled_by_default_creates_job_identities_and_schedule" {
       google_service_account.farm_rollup[0].account_id == "nextera-farm-rollup"
       && google_project_iam_member.farm_rollup_cloudsql_client[0].role == "roles/cloudsql.client"
       && google_secret_manager_secret_iam_member.farm_rollup_database_url[0].role == "roles/secretmanager.secretAccessor"
+      && google_secret_manager_secret_iam_member.farm_rollup_redis_url[0].role == "roles/secretmanager.secretAccessor"
     )
-    error_message = "The job's own SA should get Cloud SQL client and the database-url secret only."
+    error_message = "The job's own SA should get Cloud SQL client and the database-url and redis-url secrets only."
   }
 
   assert {
@@ -159,6 +172,7 @@ run "disabled_creates_nothing" {
       && length(google_cloud_run_v2_job_iam_member.farm_rollup_scheduler_invoker) == 0
       && length(google_project_iam_member.farm_rollup_cloudsql_client) == 0
       && length(google_secret_manager_secret_iam_member.farm_rollup_database_url) == 0
+      && length(google_secret_manager_secret_iam_member.farm_rollup_redis_url) == 0
     )
     error_message = "farm_rollup_enabled = false must create no farm rollup resources."
   }

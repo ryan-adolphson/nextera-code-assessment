@@ -62,6 +62,7 @@ describe('FleetStore', () => {
         'unallocated-turbine.changed',
         'fleet.changed',
         'fleet.tick',
+        'farm-rollup.completed',
       ]);
       expect(sse.connect.mock.invocationCallOrder[0]).toBeLessThan(
         api.fleetSummary.mock.invocationCallOrder[0],
@@ -79,6 +80,24 @@ describe('FleetStore', () => {
 
       expect(store.alertConfigVersion()).toBe(2);
       expect(api.fleetSummary).toHaveBeenCalledTimes(1);
+      expect(sse.connect).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts farm-rollup.completed events without touching readings, summaries or other versions', () => {
+      const { store, api, sse } = setup();
+      const farms = store.farms();
+      const fleet = store.fleet();
+
+      sse.farmRollup();
+      sse.farmRollup('2026-01-02T23:55:00.000Z');
+
+      expect(store.farmRollupVersion()).toBe(2);
+      expect(store.farms()).toEqual(farms);
+      expect(store.fleet()).toEqual(fleet);
+      expect(store.alertConfigVersion()).toBe(0);
+      expect(store.unallocatedVersion()).toBe(0);
+      expect(api.fleetSummary).toHaveBeenCalledTimes(1);
+      expect(api.farmSummaries).toHaveBeenCalledTimes(1);
       expect(sse.connect).toHaveBeenCalledTimes(1);
     });
 
@@ -1012,6 +1031,7 @@ describe('FleetStore', () => {
       expect(api.telemetryStats).toHaveBeenCalledTimes(2);
       expect(store.alertConfigVersion()).toBe(1);
       expect(store.unallocatedVersion()).toBe(1); // missed unallocated-turbine.changed
+      expect(store.farmRollupVersion()).toBe(1); // missed farm-rollup.completed
       expect(store.loading()).toBe(false); // no loading screen for a resync
     });
 

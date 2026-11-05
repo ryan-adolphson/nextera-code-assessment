@@ -222,7 +222,7 @@ services:
   # 15-minute schedule of the Cloud Run Job nextera-farm-rollup). Each run recomputes the farm rollups
   # touched since its watermark (farm_telemetry_rollups, read by the farm History tab). Starts with
   # `docker compose up -d`; run one at once with `npm run rollup` on the host (db:seed and
-  # db:seed:demo run one too). Needs only Postgres, so it doesn't wait for Redis or Pub/Sub.
+  # db:seed:demo run one too). Needs Postgres and Redis (it publishes farm-rollup.completed), not Pub/Sub.
   farm-rollup:
     image: ${REGISTRY:-nextera}/ingestion:${TAG:-latest}
     build:
@@ -235,12 +235,15 @@ services:
     cpus: 1
     environment:
       DATABASE_URL: *database-url
+      REDIS_URL: *redis-url # publishes farm-rollup.completed (best effort)
     healthcheck:
       disable: true # the image's HEALTHCHECK probes the worker's HTTP port, which the rollup doesn't open
     depends_on:
       migrate:
         condition: service_completed_successfully
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - backend

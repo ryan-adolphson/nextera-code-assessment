@@ -14,7 +14,7 @@ locals {
   farm_rollup_job_name = "nextera-farm-rollup"
 }
 
-# Runtime identity of the job: Cloud SQL and the database-url secret, nothing else.
+# Runtime identity of the job: Cloud SQL, the database-url secret and the redis-url secret, nothing else.
 resource "google_service_account" "farm_rollup" {
   count = var.farm_rollup_enabled ? 1 : 0
 
@@ -40,6 +40,14 @@ resource "google_secret_manager_secret_iam_member" "farm_rollup_database_url" {
   member    = "serviceAccount:${google_service_account.farm_rollup[0].email}"
 }
 
+resource "google_secret_manager_secret_iam_member" "farm_rollup_redis_url" {
+  count = var.farm_rollup_enabled ? 1 : 0
+
+  secret_id = google_secret_manager_secret.app["redis-url"].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.farm_rollup[0].email}"
+}
+
 resource "google_cloud_run_v2_job" "farm_rollup" {
   count = var.farm_rollup_enabled ? 1 : 0
 
@@ -57,8 +65,17 @@ resource "google_cloud_run_v2_job" "farm_rollup" {
       timeout         = "300s" # an incremental run takes seconds; a --full rebuild should fit too
       max_retries     = 1      # the upsert is idempotent and the lock serialises runs
 
-      # No vpc_access: Cloud SQL comes through the built-in connector (the volume below), and the
-      # job needs no Redis.
+      # Direct VPC egress for Memorystore (the Cloud SQL socket needs none), like nextera-ingestion.
+      # The job publishes farm-rollup.completed to Redis, best effort: without this block a Redis
+      # timeout would only show up as a log line.
+      vpc_access {
+        network_interfaces {
+          network    = local.vpc_network_interface.network
+          subnetwork = local.vpc_network_interface.subnetwork
+        }
+        egress = "PRIVATE_RANGES_ONLY"
+      }
+
       volumes {
         name = "cloudsql"
         cloud_sql_instance {
@@ -93,6 +110,15 @@ resource "google_cloud_run_v2_job" "farm_rollup" {
             }
           }
         }
+        env {
+          name = "REDIS_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.app["redis-url"].secret_id
+              version = "latest"
+            }
+          }
+        }
 
         volume_mounts {
           name       = "cloudsql"
@@ -111,6 +137,7 @@ resource "google_cloud_run_v2_job" "farm_rollup" {
     google_project_service.this,
     google_project_iam_member.farm_rollup_cloudsql_client,
     google_secret_manager_secret_iam_member.farm_rollup_database_url,
+    google_secret_manager_secret_iam_member.farm_rollup_redis_url,
     google_secret_manager_secret_version.app,
   ]
 }

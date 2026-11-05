@@ -1,12 +1,16 @@
 import { parseArgs } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
+import { ConfigService } from '@nestjs/config';
 import {
+  EventStore,
+  FARM_ROLLUP_COMPLETED,
   FARM_ROLLUP_RETENTION_DAYS,
   createPrismaClient,
   isUtcDay,
   runFarmRollup,
   utcDay,
   type FarmRollupClient,
+  type FarmRollupCompletedEvent,
   type FarmRollupMode,
   type FarmRollupOptions,
   type FarmRollupResult,
@@ -21,7 +25,10 @@ import {
  *
  * Args: none = one incremental run; --full = every farm over the last 190 days; --from YYYY-MM-DD
  * = every farm from that UTC day; --every <seconds> = loop (incremental) until SIGTERM/SIGINT.
- * Env: DATABASE_URL (required).
+ * Env: DATABASE_URL (required); REDIS_URL (optional): after a committed, non-skipped run the job
+ * publishes `farm-rollup.completed` (`{ asOf }` = the watermark) so open clients refetch the History
+ * tab. Best effort: a Redis failure is logged and the run still succeeds; without REDIS_URL nothing
+ * is published (logged once).
  * Exit code: a single run exits 1 on bad arguments/env or a failed run, 0 otherwise (also when
  * another run held the lock). In loop mode a failed run is logged and the loop goes on (a database
  * blip must not restart-loop the container); it exits 0 on a signal.
@@ -101,6 +108,8 @@ export interface FarmRollupCliDeps {
     options: FarmRollupOptions,
   ) => Promise<FarmRollupResult>;
   now?: () => Date;
+  /** Builds the event publisher from REDIS_URL (only called when it is set). */
+  createEvents?: (env: Record<string, string | undefined>) => EventStore;
   /** Waits between loop runs; resolves early (or rejects) when `signal` aborts. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<unknown>;
   /** Aborted on SIGTERM/SIGINT in loop mode (default: a listener on the process). */
@@ -115,6 +124,11 @@ export async function runFarmRollupCli({
   createDb = (url) => createPrismaClient(url, { max: 2 }),
   run = runFarmRollup,
   now = () => new Date(),
+  createEvents = (e) =>
+    // EventStore only needs REDIS_URL from the config; a job has no Nest app.
+    new EventStore({
+      getOrThrow: (key: string) => e[key],
+    } as unknown as ConfigService),
   sleep = (ms, signal) =>
     delay(ms, undefined, { signal }).catch(() => undefined),
   signal,
@@ -134,16 +148,42 @@ export async function runFarmRollupCli({
   }
 
   const db = createDb(url);
+  // REDIS_URL is optional: the job image can roll out before Terraform sets it.
+  let events: EventStore | undefined;
+  if (env.REDIS_URL) {
+    try {
+      events = createEvents(env);
+    } catch (error) {
+      log.error(`Farm rollup: events disabled: ${(error as Error).message}`);
+    }
+  } else {
+    log.log(
+      'Farm rollup: REDIS_URL is not set, completion events are not published',
+    );
+  }
+
   const once = async (): Promise<boolean> => {
     const started = Date.now();
+    let result: FarmRollupResult;
     try {
-      const result = await run(db, { mode: args.mode, now: now() });
-      log.log(describeRun(result, Date.now() - started));
-      return true;
+      result = await run(db, { mode: args.mode, now: now() });
     } catch (error) {
       log.error(`Farm rollup: failed: ${(error as Error).message}`);
       return false;
     }
+    // The run has committed: publishing is best effort and never fails it.
+    let published = '';
+    if (events && !result.skipped && result.watermark) {
+      try {
+        const event: FarmRollupCompletedEvent = { asOf: result.watermark };
+        await events.publish(FARM_ROLLUP_COMPLETED, event);
+        published = ', event published';
+      } catch (error) {
+        published = `, event NOT published: ${(error as Error).message}`;
+      }
+    }
+    log.log(describeRun(result, Date.now() - started) + published);
+    return true;
   };
 
   try {
@@ -159,6 +199,7 @@ export async function runFarmRollupCli({
     log.log('Farm rollup: stopped');
     return 0;
   } finally {
+    await events?.onModuleDestroy().catch(() => undefined);
     await db.$disconnect().catch(() => undefined);
   }
 }

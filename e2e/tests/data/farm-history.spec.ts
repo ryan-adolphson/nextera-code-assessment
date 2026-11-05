@@ -28,8 +28,8 @@ import { removeUnallocated } from "../support/unallocated.js";
  * Re-runnable on the same database:
  * - FARM09 (Rolling Hills), which no other test uses. The turbine is new per run (`E2E-<run>-FH`:
  *   held, then assigned through the API), so the "N of M turbines reporting" texts are this run's.
- * - Each run uses three new days after the farm's newest day since Jan 10, 2026 (D-1 baseline,
- *   D and D+1 uploads), so every upload is a new day for the farm, and nothing lands in the windows
+ * - Each run uses four new days after the farm's newest day since Jan 10, 2026 (D-1 baseline,
+ *   D, D+1 and D+2 uploads), so every upload is a new day for the farm, and nothing lands in the windows
  *   the read-only tests show at SEED_NOW (they end on Jan 3). The browser clock is fixed on the
  *   day under test, so the 30d range ends there.
  * - The rollup prunes (and never computes) rollups older than 190 days before the newest reading
@@ -69,7 +69,7 @@ async function dayWindow(
 
 let TURBINE = "";
 let token = "";
-/** The baseline day (midnight UTC, epoch ms); the uploads use base + 1 and base + 2 days. */
+/** The baseline day (midnight UTC, epoch ms); the uploads use base + 1, + 2 and + 3 days. */
 let base = 0;
 
 const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10);
@@ -155,7 +155,7 @@ test.describe("[DATA] Farm History: upload, rollup, Refresh", () => {
     const newest = since.days.at(-1)?.date;
     base = newest ? Date.parse(`${newest}T00:00:00Z`) + DAY_MS : first;
     expect(
-      base + 2 * DAY_MS,
+      base + 3 * DAY_MS,
       `${FARM}'s History days reached ${isoDay(last)}: reset the database (docker compose down -v, db:seed)`,
     ).toBeLessThanOrEqual(last);
 
@@ -246,5 +246,35 @@ test.describe("[DATA] Farm History: upload, rollup, Refresh", () => {
     expect((await refreshed).days.at(-1)!.date).toBe(isoDay(day));
     await expectNewest(page, after);
     await expect(powerChart(page).getByTestId("latest")).toHaveText("1,500 kW");
+  });
+
+  // The live path (plan 14.10, `farm-rollup.completed`): no navigation and no Refresh. The rollup
+  // run publishes the event through Redis; the open tab's API stream carries it and the page
+  // reloads quietly. Routes nothing, so the real event stream is used.
+  test("[DATA] An open History tab shows a newly rolled-up day on the rollup event, without Refresh", async ({
+    page,
+    request,
+  }) => {
+    const day = base + 3 * DAY_MS;
+    const before = await openHistoryOn(page, day);
+    expect(before.days.at(-1)!.date).toBe(isoDay(base + 2 * DAY_MS));
+    await expectNewest(page, before);
+    await expect(page.getByTestId("live-status")).toHaveText("Live");
+
+    await uploadTelemetry(request, [
+      {
+        turbineId: TURBINE,
+        farmId: FARM,
+        timestamp: at(day, "10:00"),
+        powerOutputKw: 1777,
+      },
+    ]);
+    // The page's own reload (not Refresh): start waiting before the rollup publishes.
+    const reloaded = nextDaily(page);
+    await rollUpUntil(request, day);
+    expect((await reloaded).days.at(-1)!.date).toBe(isoDay(day));
+
+    await expect(powerChart(page).getByTestId("latest")).toHaveText("1,777 kW");
+    await expect(page.getByTestId("farm-history-error")).toHaveCount(0);
   });
 });

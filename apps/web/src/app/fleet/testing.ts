@@ -469,6 +469,9 @@ export function fakes(
     }),
     push: (data: Telemetry) =>
       events.next({ kind: 'message', id: '', type: 'telemetry.received', data }),
+    /** The fleet-wide `farm-rollup.completed` event. */
+    farmRollup: (asOf = '2026-01-02T23:45:00.000Z') =>
+      events.next({ kind: 'message', id: '4-0', type: 'farm-rollup.completed', data: { asOf } }),
     /** The fleet-wide `fleet.tick` event. */
     tick: (asOf = '2026-01-02T23:55:00.000Z') =>
       events.next({ kind: 'message', id: '3-0', type: 'fleet.tick', data: { asOf } }),
