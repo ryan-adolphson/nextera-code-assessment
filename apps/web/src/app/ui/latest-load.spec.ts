@@ -103,4 +103,20 @@ describe('latestLoad', () => {
     await answer('c', 'C');
     expect([loader.value(), loader.failed()]).toEqual(['C', false]);
   });
+
+  it('exposes why the latest request failed, and nothing otherwise', async () => {
+    const { loader, run, answer, settle } = setup();
+    expect(loader.error()).toBeNull();
+    run('a');
+    await answer('a', 'A');
+    expect(loader.error()).toBeNull();
+
+    run('boom');
+    await settle();
+
+    expect(loader.error()).toBeInstanceOf(Error);
+    run('c');
+    await answer('c', 'C');
+    expect(loader.error()).toBeNull();
+  });
 });

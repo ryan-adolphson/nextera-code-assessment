@@ -23,7 +23,7 @@ describe('farm rollup runner after a CSV backfill (e2e)', () => {
 
   beforeEach(async () => {
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, held_telemetry, unallocated_turbines, farm_telemetry_rollups, farm_rollup_state, farm_rollup_dirty`;
+      .$executeRaw`TRUNCATE TABLE turbine_latest, telemetry_alerts, telemetry, held_telemetry, unallocated_turbines, farm_telemetry_rollups, farm_rollup_state, farm_rollup_dirty`;
   });
 
   const rollup = (argv: string[] = []) =>

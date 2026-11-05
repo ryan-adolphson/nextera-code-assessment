@@ -1,15 +1,24 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { createTurbine, mainNav } from '../support/fleet.js';
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
+import { createTurbine, mainNav } from "../support/fleet.js";
 import {
   ensureRule,
   expectRuleState,
   findRule,
   mutedColor,
   ruleRow,
-} from '../support/rules.js';
-import { INGESTION_URL, apiToken, signIn } from '../support/session.js';
-import { telemetryCsv, turbineTelemetry, uploadTelemetry } from '../support/telemetry.js';
-import { removeUnallocated } from '../support/unallocated.js';
+} from "../support/rules.js";
+import { INGESTION_URL, apiToken, signIn } from "../support/session.js";
+import {
+  telemetryCsv,
+  turbineTelemetry,
+  uploadTelemetry,
+} from "../support/telemetry.js";
+import { removeUnallocated } from "../support/unallocated.js";
 
 /**
  * [DATA] Live updates end to end (plan 9.2–9.4, 9.6, 6.4, 7.7, 7.9, 3.10, 8.8 with alerts): readings
@@ -30,40 +39,46 @@ import { removeUnallocated } from '../support/unallocated.js';
  */
 
 /** New per run (and per repetition: set in beforeAll). */
-let TURBINE = '';
-const FARM = 'FARM04';
+let TURBINE = "";
+const FARM = "FARM04";
 const RULE = {
-  measurementMetric: 'rotorRpm',
-  comparison: 'above',
+  measurementMetric: "rotorRpm",
+  comparison: "above",
   valueMetric: 50,
-  alertLevel: 'warn',
+  alertLevel: "warn",
 } as const;
-const RULE_TEXT = 'Rotor speed above 50 rpm';
-const TOOLTIP = 'Warning: Rotor speed 55 rpm > 50';
+const RULE_TEXT = "Rotor speed above 50 rpm";
+const TOOLTIP = "Warning: Rotor speed 55 rpm > 50";
 
 let cleanupRule: ((request: APIRequestContext) => Promise<void>) | undefined;
-let ruleId = '';
+let ruleId = "";
 
 async function markDocument(page: Page): Promise<void> {
-  await page.evaluate(() => ((window as { e2eNoReload?: boolean }).e2eNoReload = true));
+  await page.evaluate(
+    () => ((window as { e2eNoReload?: boolean }).e2eNoReload = true),
+  );
 }
 async function expectSameDocument(page: Page): Promise<void> {
-  expect(await page.evaluate(() => (window as { e2eNoReload?: boolean }).e2eNoReload)).toBe(true);
+  expect(
+    await page.evaluate(
+      () => (window as { e2eNoReload?: boolean }).e2eNoReload,
+    ),
+  ).toBe(true);
 }
 
-test.describe('[DATA] Live updates through ingestion', () => {
-  test.describe.configure({ mode: 'serial' });
+test.describe("[DATA] Live updates through ingestion", () => {
+  test.describe.configure({ mode: "serial" });
 
   test.beforeAll(async ({ request }) => {
     TURBINE = `E2E-${Date.now().toString(36).toUpperCase()}-LV`;
-    const token = await apiToken(request, 'owner');
+    const token = await apiToken(request, "owner");
     const ensured = await ensureRule(request, token, RULE);
     cleanupRule = ensured.cleanup;
     ruleId = ensured.rule.id;
     // 22:55 is the latest: 65 min before the browser clock, so the turbine reads as stale.
     await createTurbine(request, token, TURBINE, FARM, [
-      { timestamp: '2026-01-02T22:50:00Z', powerOutputKw: 1200 },
-      { timestamp: '2026-01-02T22:55:00Z', powerOutputKw: 1250 },
+      { timestamp: "2026-01-02T22:50:00Z", powerOutputKw: 1200 },
+      { timestamp: "2026-01-02T22:55:00Z", powerOutputKw: 1250 },
     ]);
   });
 
@@ -71,23 +86,25 @@ test.describe('[DATA] Live updates through ingestion', () => {
     await cleanupRule?.(request);
     await removeUnallocated(
       request,
-      await apiToken(request, 'owner'),
+      await apiToken(request, "owner"),
       (e) => e.turbineId === TURBINE,
     );
   });
 
-  test('[DATA] a new reading turns a stale Turbines row back to Reporting, without a reload', async ({
+  test("[DATA] a new reading turns a stale Turbines row back to Reporting, without a reload", async ({
     page,
     request,
   }) => {
-    await signIn(page, 'owner');
-    await expect(page.getByTestId('live-status')).toHaveText('Live');
-    await mainNav(page).getByRole('link', { name: 'Turbines' }).click();
-    await page.getByRole('searchbox', { name: 'Turbine or farm' }).fill(TURBINE);
+    await signIn(page, "owner");
+    await expect(page.getByTestId("live-status")).toHaveText("Live");
+    await mainNav(page).getByRole("link", { name: "Turbines" }).click();
+    await page
+      .getByRole("searchbox", { name: "Turbine or farm" })
+      .fill(TURBINE);
     const row = page.locator(`tr[data-turbine-id="${TURBINE}"]`);
-    const cells = row.getByRole('cell');
-    await expect(cells.nth(2)).toHaveText('No data in 60 min');
-    await expect(cells.nth(7)).toHaveText('Jan 2, 22:55');
+    const cells = row.getByRole("cell");
+    await expect(cells.nth(2)).toHaveText("No data in 60 min");
+    await expect(cells.nth(7)).toHaveText("Jan 2, 22:55");
     await markDocument(page);
 
     expect(
@@ -95,160 +112,221 @@ test.describe('[DATA] Live updates through ingestion', () => {
         {
           turbineId: TURBINE,
           farmId: FARM,
-          timestamp: '2026-01-02T23:58:00Z',
+          timestamp: "2026-01-02T23:58:00Z",
           powerOutputKw: 1777,
         },
       ]),
     ).toMatchObject({ rows: 1, inserted: 1 });
 
-    await expect(cells.nth(2)).toHaveText('Reporting');
-    await expect(cells.nth(7)).toHaveText('Jan 2, 23:58');
-    await expect(cells.nth(4)).toHaveText('1,777');
+    await expect(cells.nth(2)).toHaveText("Reporting");
+    await expect(cells.nth(7)).toHaveText("Jan 2, 23:58");
+    await expect(cells.nth(4)).toHaveText("1,777");
     await expectSameDocument(page);
   });
 
-  test('[DATA] a flagged reading joins the turbine page live, with its alert pill and tooltip', async ({
+  test("[DATA] a flagged reading joins the turbine page live, with its alert pill and tooltip", async ({
     page,
     request,
   }) => {
-    await signIn(page, 'owner');
+    await signIn(page, "owner");
     await page.goto(`/farms/${FARM}/turbines/${TURBINE}`);
-    await expect(page.getByTestId('live-status')).toHaveText('Live');
-    const rows = page.getByTestId('history').getByRole('row');
+    await expect(page.getByTestId("live-status")).toHaveText("Live");
+    const rows = page.getByTestId("history").getByRole("row");
     await expect(rows).toHaveCount(4); // header + 22:50, 22:55, 23:58
-    await expect(rows.nth(1).getByRole('cell').first()).toHaveText('Jan 2, 23:58');
-    await expect(page.getByTestId('reading-alerts')).toHaveText(['–', '–', '–']);
+    await expect(rows.nth(1).getByRole("cell").first()).toHaveText(
+      "Jan 2, 23:58",
+    );
+    await expect(page.getByTestId("reading-alerts")).toHaveText([
+      "–",
+      "–",
+      "–",
+    ]);
     await markDocument(page);
 
     expect(
       await uploadTelemetry(request, [
-        { turbineId: TURBINE, farmId: FARM, timestamp: '2026-01-02T23:59:00Z', rotorRpm: 55 },
+        {
+          turbineId: TURBINE,
+          farmId: FARM,
+          timestamp: "2026-01-02T23:59:00Z",
+          rotorRpm: 55,
+        },
       ]),
     ).toMatchObject({ rows: 1, inserted: 1 });
 
-    await expect(page.getByTestId('status')).toContainText('Latest reading Jan 2, 23:59 UTC');
+    await expect(page.getByTestId("status")).toContainText(
+      "Latest reading Jan 2, 23:59 UTC",
+    );
     await expect(rows).toHaveCount(5);
     const newest = rows.nth(1);
-    await expect(newest.getByRole('cell').first()).toHaveText('Jan 2, 23:59');
-    await expect(newest.getByRole('cell').nth(4)).toHaveText('55.0');
-    const pill = newest.getByTestId('alerts-cell-trigger');
-    await expect(pill.getByTestId('level-count')).toHaveText(['Warning: 1']);
-    await expect(pill.getByTestId('level-count')).toHaveAttribute('data-level', 'warn');
+    await expect(newest.getByRole("cell").first()).toHaveText("Jan 2, 23:59");
+    await expect(newest.getByRole("cell").nth(4)).toHaveText("55.0");
+    const pill = newest.getByTestId("alerts-cell-trigger");
+    await expect(pill.getByTestId("level-count")).toHaveText(["Warning: 1"]);
+    await expect(pill.getByTestId("level-count")).toHaveAttribute(
+      "data-level",
+      "warn",
+    );
     // The rules are the button's accessible description and a Material tooltip (the app's
     // `app-tooltip` class; the overlay has no tooltip role) that a click shows.
     await expect(pill).toHaveAccessibleDescription(TOOLTIP);
     await pill.click();
-    await expect(page.locator('.app-tooltip')).toHaveText(TOOLTIP);
+    await expect(page.locator(".app-tooltip")).toHaveText(TOOLTIP);
 
     // The alerts chart marks the reading, and the rotor chart's latest value is the new one.
     const alertsChart = page.locator('app-line-chart[data-metric="alerts"]');
-    await expect(alertsChart.getByTestId('marker-legend')).toContainText('Warning 1');
+    await expect(alertsChart.getByTestId("marker-legend")).toContainText(
+      "Warning 1",
+    );
     await expect(
-      page.locator('app-line-chart[data-metric="rotorRpm"]').getByTestId('latest'),
-    ).toHaveText('55.0 rpm');
+      page
+        .locator('app-line-chart[data-metric="rotorRpm"]')
+        .getByTestId("latest"),
+    ).toHaveText("55.0 rpm");
     await expectSameDocument(page);
   });
 
-  test('[DATA] Alerting History lists the flagged reading; expanding shows its chip', async ({
+  test("[DATA] Alerting History lists the flagged reading; expanding shows its chip", async ({
     page,
   }) => {
-    await signIn(page, 'viewer');
-    await mainNav(page).getByRole('link', { name: 'Alerting' }).click();
-    const row = page.locator(`[data-testid="history-turbine"][data-turbine-id="${TURBINE}"]`);
-    await expect(row.getByTestId('level-count')).toHaveText(['Warning: 1']);
-    await expect(row.getByRole('cell').nth(2)).toHaveText(`Buffalo Creek ${FARM}`);
-    await expect(row.getByRole('cell').nth(3)).toHaveText('Jan 2, 23:59');
+    await signIn(page, "viewer");
+    await mainNav(page).getByRole("link", { name: "Alerting" }).click();
+    const row = page.locator(
+      `[data-testid="history-turbine"][data-turbine-id="${TURBINE}"]`,
+    );
+    await expect(row.getByTestId("level-count")).toHaveText(["Warning: 1"]);
+    await expect(row.getByRole("cell").nth(2)).toHaveText(
+      `Buffalo Creek ${FARM}`,
+    );
+    await expect(row.getByRole("cell").nth(3)).toHaveText("Jan 2, 23:59");
 
-    await row.getByRole('button', { name: `Show readings for ${TURBINE}` }).click();
+    await row
+      .getByRole("button", { name: `Show readings for ${TURBINE}` })
+      .click();
     const reading = page
-      .getByRole('list', { name: `Readings for ${TURBINE}` })
-      .getByTestId('history-reading');
+      .getByRole("list", { name: `Readings for ${TURBINE}` })
+      .getByTestId("history-reading");
     await expect(reading).toHaveCount(1);
-    await expect(reading).toContainText('Jan 2, 23:59');
-    await expect(reading.getByTestId('alert-chip')).toHaveText([TOOLTIP]);
-    await expect(reading.getByTestId('alert-chip')).toHaveAttribute('data-level', 'warn');
+    await expect(reading).toContainText("Jan 2, 23:59");
+    await expect(reading.getByTestId("alert-chip")).toHaveText([TOOLTIP]);
+    await expect(reading.getByTestId("alert-chip")).toHaveAttribute(
+      "data-level",
+      "warn",
+    );
   });
 
-  test('[DATA] the report shows the alert and its CSV names the rule', async ({ page }) => {
-    await signIn(page, 'owner');
-    await mainNav(page).getByRole('link', { name: 'Reporting' }).click();
-    await page.getByRole('combobox', { name: 'Farm or turbine' }).fill(TURBINE);
-    await page.getByRole('option', { name: new RegExp(`^${TURBINE}`) }).click();
-    await page.getByRole('textbox', { name: 'Start date' }).fill('1/2/2026');
-    await page.getByRole('textbox', { name: 'End date' }).fill('1/2/2026');
-    await page.getByRole('button', { name: 'Run report' }).click();
-    await expect(page.getByTestId('report-readings')).toContainText('4');
-    await expect(page.getByTestId('report-alerts')).toContainText('1');
+  test("[DATA] the report shows the alert and its CSV names the rule", async ({
+    page,
+  }) => {
+    await signIn(page, "owner");
+    await mainNav(page).getByRole("link", { name: "Reporting" }).click();
+    await page.getByRole("combobox", { name: "Farm or turbine" }).fill(TURBINE);
+    await page.getByRole("option", { name: new RegExp(`^${TURBINE}`) }).click();
+    await page.getByRole("textbox", { name: "Start date" }).fill("1/2/2026");
+    await page.getByRole("textbox", { name: "End date" }).fill("1/2/2026");
+    await page.getByRole("button", { name: "Run report" }).click();
+    await expect(page.getByTestId("report-readings")).toContainText("4");
+    await expect(page.getByTestId("report-alerts")).toContainText("1");
     await expect(
-      page.getByTestId('report-row-alerts').getByTestId('alerts-cell-trigger'),
+      page.getByTestId("report-row-alerts").getByTestId("alerts-cell-trigger"),
     ).toHaveText(/Warning\s*1/);
 
-    const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Download CSV' }).click();
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download CSV" }).click();
     const file = await download;
-    expect(file.suggestedFilename()).toBe(`report-${TURBINE}-2026-01-02-2026-01-02.csv`);
-    const lines = (await (await file.createReadStream()).toArray()).join('').split('\r\n');
-    const flagged = lines.filter((l) => l.includes('2026-01-02T23:59:00.000Z'));
+    expect(file.suggestedFilename()).toBe(
+      `report-${TURBINE}-2026-01-02-2026-01-02.csv`,
+    );
+    const lines = (await (await file.createReadStream()).toArray())
+      .join("")
+      .split("\r\n");
+    const flagged = lines.filter((l) => l.includes("2026-01-02T23:59:00.000Z"));
     expect(flagged).toHaveLength(1);
-    expect(flagged[0].endsWith(',warn:rotor_rpm above 50')).toBe(true);
+    expect(flagged[0].endsWith(",warn:rotor_rpm above 50")).toBe(true);
   });
 
-  test('[DATA] a rule that readings triggered can’t be deleted: the dialog offers Disable rule, which disables it', async ({
+  test("[DATA] a rule that readings triggered can’t be deleted: the dialog offers Disable rule, which disables it", async ({
     page,
     request,
   }) => {
-    await signIn(page, 'owner');
-    await page.goto('/alerting/rules');
+    await signIn(page, "owner");
+    await page.goto("/alerting/rules");
     const row = ruleRow(page, ruleId);
     await expectRuleState(row, RULE_TEXT, true);
-    await row.getByRole('button', { name: `Delete rule: ${RULE_TEXT}` }).click();
-    const dialog = page.getByTestId('delete-dialog');
-    await expect(dialog).toContainText(`${RULE_TEXT} (Warning) will be removed.`);
-    await dialog.getByTestId('confirm-delete').click();
+    await row
+      .getByRole("button", { name: `Delete rule: ${RULE_TEXT}` })
+      .click();
+    const dialog = page.getByTestId("delete-dialog");
+    await expect(dialog).toContainText(
+      `${RULE_TEXT} (Warning) will be removed.`,
+    );
+    await dialog.getByTestId("confirm-delete").click();
 
     // 409 (telemetry_alerts keeps the flagged reading's history): explained in words, not the API's text.
-    await expect(dialog.getByRole('heading')).toHaveText('This rule can’t be deleted');
-    await expect(dialog.getByTestId('delete-triggered')).toHaveText(
-      'This rule has flagged readings, so it can’t be deleted — they keep their history. Disable it instead to stop it from being evaluated.',
+    await expect(dialog.getByRole("heading")).toHaveText(
+      "This rule can’t be deleted",
     );
-    await expect(dialog.getByTestId('delete-triggered')).toHaveRole('alert');
-    await expect(dialog.getByTestId('confirm-delete')).toHaveCount(0);
-    await expect(dialog.getByTestId('delete-error')).toHaveCount(0);
-    await expect(dialog.getByRole('button')).toHaveText(['Cancel', 'Disable rule']);
-    await expect(dialog.getByTestId('disable-rule')).toBeFocused();
+    await expect(dialog.getByTestId("delete-triggered")).toHaveText(
+      "This rule has flagged readings, so it can’t be deleted — they keep their history. Disable it instead to stop it from being evaluated.",
+    );
+    await expect(dialog.getByTestId("delete-triggered")).toHaveRole("alert");
+    await expect(dialog.getByTestId("confirm-delete")).toHaveCount(0);
+    await expect(dialog.getByTestId("delete-error")).toHaveCount(0);
+    await expect(dialog.getByRole("button")).toHaveText([
+      "Cancel",
+      "Disable rule",
+    ]);
+    await expect(dialog.getByTestId("disable-rule")).toBeFocused();
 
-    await dialog.getByTestId('disable-rule').click();
+    await dialog.getByTestId("disable-rule").click();
     await expect(dialog).toBeHidden();
-    await expect(page.getByTestId('rules-notice')).toHaveText(`Rule disabled: ${RULE_TEXT}.`);
+    await expect(page.getByTestId("rules-notice")).toHaveText(
+      `Rule disabled: ${RULE_TEXT}.`,
+    );
     // Kept, switched off, labelled Disabled and muted.
     await expectRuleState(row, RULE_TEXT, false);
-    await expect(row.getByRole('cell').first()).toHaveCSS('color', await mutedColor(page));
-    expect(await findRule(request, await apiToken(request, 'owner'), RULE)).toMatchObject({
+    await expect(row.getByRole("cell").first()).toHaveCSS(
+      "color",
+      await mutedColor(page),
+    );
+    expect(
+      await findRule(request, await apiToken(request, "owner"), RULE),
+    ).toMatchObject({
       id: ruleId,
       enabled: false,
     });
   });
 
-  test('[DATA] an invalid CSV is rejected by line and stores nothing', async ({ request }) => {
+  test("[DATA] an invalid CSV is rejected by line and stores nothing", async ({
+    request,
+  }) => {
     const csv = telemetryCsv([
-      { turbineId: TURBINE, farmId: FARM, timestamp: '2026-01-02T23:57:00Z' },
-      { turbineId: TURBINE, farmId: FARM, timestamp: 'not-a-time' },
+      { turbineId: TURBINE, farmId: FARM, timestamp: "2026-01-02T23:57:00Z" },
+      { turbineId: TURBINE, farmId: FARM, timestamp: "not-a-time" },
     ]);
     const response = await request.post(`${INGESTION_URL}/ingest/telemetry`, {
-      multipart: { file: { name: 'bad.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) } },
+      multipart: {
+        file: {
+          name: "bad.csv",
+          mimeType: "text/csv",
+          buffer: Buffer.from(csv),
+        },
+      },
     });
     expect(response.status()).toBe(400);
-    const body = (await response.json()) as { errors: { line: number; errors: string[] }[] };
+    const body = (await response.json()) as {
+      errors: { line: number; errors: string[] }[];
+    };
     expect(body.errors.map((e) => e.line)).toEqual([3]);
     // All or nothing: the valid row was not stored either.
-    const token = await apiToken(request, 'viewer');
+    const token = await apiToken(request, "viewer");
     expect(
       await turbineTelemetry(
         request,
         token,
         TURBINE,
-        '2026-01-02T23:57:00Z',
-        '2026-01-02T23:58:00Z',
+        "2026-01-02T23:57:00Z",
+        "2026-01-02T23:58:00Z",
       ),
     ).toEqual([]);
   });

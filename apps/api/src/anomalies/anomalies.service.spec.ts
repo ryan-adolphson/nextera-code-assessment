@@ -4,17 +4,19 @@ import { PrismaService } from '@nextera/shared';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { AnomaliesService } from './anomalies.service.js';
 
-const row = (over: object = {}) => ({
+const episode = (over: object = {}) => ({
+  id: 'e1',
   kind: 'low_power_in_wind',
   metric: null,
-  turbine_id: 'TURB001',
-  farm_id: 'FARM01',
-  episode_start: new Date('2026-01-01T13:40:00Z'),
-  episode_end: new Date('2026-01-01T13:50:00Z'),
+  turbineId: 'TURB001',
+  farmId: 'FARM01',
+  episodeStart: new Date('2026-01-01T13:40:00Z'),
+  episodeEnd: new Date('2026-01-01T13:50:00Z'),
   readings: 3,
   value: null,
-  wind_speed_ms: '15.8',
-  lost_kwh: '875',
+  windSpeedMs: 15.8,
+  lostKwh: 875,
+  computedAt: new Date('2026-01-01T14:00:00Z'),
   ...over,
 });
 
@@ -34,7 +36,7 @@ describe('AnomaliesService', () => {
   });
 
   it('maps the query rows to the response', async () => {
-    prisma.$queryRaw.mockResolvedValue([row()] as never);
+    prisma.anomalyEpisode.findMany.mockResolvedValue([episode()] as never);
 
     const result = await service.list({
       from: '2026-01-01T00:00:00Z',
@@ -70,11 +72,11 @@ describe('AnomaliesService', () => {
     await expect(service.list({ from, to })).rejects.toBeInstanceOf(
       BadRequestException,
     );
-    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    expect(prisma.anomalyEpisode.findMany).not.toHaveBeenCalled();
   });
 
   it('leaves database failures to the global filters', async () => {
-    prisma.$queryRaw.mockRejectedValue(new Error('boom'));
+    prisma.anomalyEpisode.findMany.mockRejectedValue(new Error('boom'));
     await expect(
       service.list({
         from: '2026-01-01T00:00:00Z',

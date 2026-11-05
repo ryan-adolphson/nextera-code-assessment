@@ -22,7 +22,7 @@ describe('Fleet API (e2e, CSV seed data)', () => {
   beforeAll(async () => {
     t = await createTestApp();
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
+      .$executeRaw`TRUNCATE TABLE turbine_latest, farm_live_summary, anomaly_episodes, telemetry_alerts, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
   });
 
@@ -874,7 +874,11 @@ describe('Fleet API (e2e, CSV seed data)', () => {
         const body = await res.json();
         expect(body.days[0].powerOutputKw.high).toBe(9999);
       } finally {
-        await t.prisma.telemetry.delete({ where: { id: reading.id } });
+        await t.prisma.telemetry.delete({
+          where: {
+            id_timestamp: { id: reading.id, timestamp: reading.timestamp },
+          },
+        });
         await runFarmRollup(t.prisma, { mode: { kind: 'full' }, now: NOW });
       }
     });

@@ -14,9 +14,10 @@ locals {
     "sts.googleapis.com", # GitHub Actions: Workload Identity Federation token exchange
   ]
   optional_services = concat(
-    # Only when a scheduled job is on (demo-feed.tf, weather-sync.tf, farm-rollup.tf): Cloud
+    # Only when a scheduled job is on (demo-feed.tf, weather-sync.tf, farm-rollup.tf,
+    # partition-maintenance.tf, live-summary.tf, anomaly-rollup.tf): Cloud
     # Scheduler triggers their Cloud Run Jobs.
-    var.demo_feed_enabled || var.weather_sync_enabled || var.farm_rollup_enabled ? ["cloudscheduler.googleapis.com"] : [],
+    var.demo_feed_enabled || var.weather_sync_enabled || var.farm_rollup_enabled || var.partition_maintenance_enabled || var.live_summary_enabled || var.anomaly_rollup_enabled ? ["cloudscheduler.googleapis.com"] : [],
     # Only with a billing budget (monitoring.tf); also the budget provider's quota project API.
     var.billing_account != "" ? ["billingbudgets.googleapis.com"] : [],
   )

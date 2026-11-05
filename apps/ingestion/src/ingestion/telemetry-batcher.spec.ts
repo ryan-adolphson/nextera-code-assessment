@@ -10,6 +10,7 @@ import {
 } from '@nextera/shared';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { QueueFullException, QueueFullFilter } from './queue-full.exception.js';
+import type { AlertRulesCache } from './alert-rules-cache.js';
 import { TelemetryBatcher } from './telemetry-batcher.js';
 
 const row = (turbineId: string, minute = 0, farmId = 'FARM01') =>
@@ -33,7 +34,8 @@ const stored = (r: TelemetryRowInput): Telemetry => ({
 
 describe('TelemetryBatcher', () => {
   let prisma: DeepMockProxy<PrismaService>;
-  const events = { publish: vi.fn(), publishMany: vi.fn() };
+  const events = { publish: vi.fn(), publishLive: vi.fn() };
+  const rules = { get: vi.fn(), invalidate: vi.fn() };
   /** Transactions that wait for `release()`, in call order, to hold a flush open. */
   let gates: (() => void)[];
   let hold: boolean;
@@ -46,6 +48,7 @@ describe('TelemetryBatcher', () => {
         get: (key: string) =>
           key === 'INGEST_BATCH_MAX' ? batchMax : maxQueued,
       } as unknown as ConfigService,
+      rules as unknown as AlertRulesCache,
     );
 
   beforeEach(() => {
@@ -77,7 +80,9 @@ describe('TelemetryBatcher', () => {
       return fn(prisma);
     }) as never);
     events.publish.mockReset();
-    events.publishMany.mockReset();
+    events.publishLive.mockReset();
+    rules.get.mockReset().mockResolvedValue([]);
+    rules.invalidate.mockReset();
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
 
@@ -163,9 +168,9 @@ describe('TelemetryBatcher', () => {
   it('publishes one telemetry.received per stored reading (not per turbine), only after the commit', async () => {
     const batcher = make();
     const order: string[] = [];
-    events.publishMany.mockImplementation(() => {
+    events.publishLive.mockImplementation(() => {
       order.push('publish');
-      return Promise.resolve([]);
+      return Promise.resolve();
     });
     prisma.$transaction.mockImplementation((async (
       fn: (tx: unknown) => unknown,
@@ -180,9 +185,14 @@ describe('TelemetryBatcher', () => {
     const results = [0, 5, 10].map((m) => batcher.submit(row('TURB001', m)));
     await Promise.all(results);
 
-    const published = events.publishMany.mock.calls.flatMap(([items]) => items);
+    const published = events.publishLive.mock.calls.flatMap(([items]) => items);
     expect(published).toHaveLength(3);
     expect(published.every((e) => e.type === TELEMETRY_RECEIVED)).toBe(true);
+    // Each on its turbine's channel, and never on the stream (no XADD path is even offered).
+    expect(published.every((e) => e.channel === 'telemetry:TURB001')).toBe(
+      true,
+    );
+    expect(events.publish).not.toHaveBeenCalled();
     expect(order.indexOf('publish')).toBeGreaterThan(order.indexOf('commit'));
     expect(order.filter((o) => o === 'commit').length).toBeGreaterThan(0);
   });
@@ -192,7 +202,7 @@ describe('TelemetryBatcher', () => {
     prisma.$transaction.mockRejectedValue(new Error('db down'));
 
     await expect(batcher.submit(row('TURB001'))).rejects.toThrow('db down');
-    expect(events.publishMany).not.toHaveBeenCalled();
+    expect(events.publishLive).not.toHaveBeenCalled();
     expect(events.publish).not.toHaveBeenCalled();
   });
 
@@ -219,13 +229,16 @@ describe('TelemetryBatcher', () => {
     expect(rejected.reason).toBeInstanceOf(BadRequestException);
     // 1 (first) + 1 failed batch + 3 singles.
     expect(prisma.$transaction).toHaveBeenCalledTimes(5);
-    // The singles publish through the single-event path.
-    expect(events.publish).toHaveBeenCalledTimes(2);
+    // The first reading's flush, then one live event for each of the two good singles; the failed
+    // batch published nothing and told the rules cache to forget its rules (the retries read the
+    // current ones).
+    expect(events.publishLive).toHaveBeenCalledTimes(3);
+    expect(rules.invalidate).toHaveBeenCalledOnce();
   });
 
   it('still acks when the live update fails (the data is committed)', async () => {
     const batcher = make();
-    events.publishMany.mockRejectedValue(new Error('redis down'));
+    events.publishLive.mockRejectedValue(new Error('redis down'));
 
     await expect(batcher.submit(row('TURB001'))).resolves.toBe('stored');
     expect(prisma.telemetry.delete).not.toHaveBeenCalled();

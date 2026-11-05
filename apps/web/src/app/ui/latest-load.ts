@@ -9,6 +9,8 @@ export interface LatestLoad<Req, Res> {
   readonly loading: Signal<boolean>;
   /** The latest request failed (the previous `value` is still there). */
   readonly failed: Signal<boolean>;
+  /** Why the latest request failed (an `HttpErrorResponse` for a failed request); null otherwise. */
+  readonly error: Signal<unknown>;
   /** Sends a request; an answer to an earlier one still in flight is dropped. */
   run(request: Req): void;
   /** Sends the last request again (after a failure; ignored while a request is in flight). */
@@ -50,6 +52,7 @@ export function latestLoad<Req, Res>(
     value: value.asReadonly(),
     loading: resource.isLoading,
     failed: computed(() => resource.status() === 'error'),
+    error: computed(() => (resource.status() === 'error' ? resource.error() : null)),
     run: (request) => params.set({ request }),
     retry: () => resource.reload(),
   };

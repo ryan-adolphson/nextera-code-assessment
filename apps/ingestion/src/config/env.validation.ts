@@ -23,6 +23,15 @@ export class EnvironmentVariables extends CommonEnvironmentVariables {
   @Min(1)
   @Max(100000)
   INGEST_MAX_QUEUED: number = 500;
+
+  /**
+   * How long the enabled alert rules are cached (ms; 0 = read them for every batch). A rule edit
+   * may take this long to apply to new readings in each worker.
+   */
+  @IsInt()
+  @Min(0)
+  @Max(3_600_000)
+  ALERT_RULES_CACHE_TTL_MS: number = 30_000;
 }
 
 /** Fails fast at startup with every invalid variable listed. */

@@ -327,8 +327,25 @@ describe('unallocated turbines', () => {
         ],
       );
       expect(db.telemetryAlert.createMany).toHaveBeenCalledWith({
-        data: [{ telemetryId: 't1', alertId: 'rule' }],
+        data: [
+          {
+            telemetryId: 't1',
+            readingTimestamp: new Date('2026-03-01T00:05:00Z'),
+            alertId: 'rule',
+          },
+        ],
       });
+      // turbine_latest follows the import: one upsert with the turbine's newest held reading
+      // (the one that triggered the error rule).
+      const upsert = db.$executeRaw.mock.calls.at(-1) as unknown as [
+        TemplateStringsArray,
+        ...unknown[][],
+      ];
+      expect(upsert[0].join('?')).toMatch(/INSERT INTO turbine_latest/);
+      expect(upsert[1]).toEqual(['TURB999']);
+      expect(upsert[2]).toEqual(['FARM03']);
+      expect(upsert[3]).toEqual(['t1']);
+      expect(upsert[11]).toEqual(['error']);
       expect(db.unallocatedTurbine.delete).toHaveBeenCalledWith({
         where: { id: ID },
       });

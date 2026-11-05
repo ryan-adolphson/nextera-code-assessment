@@ -6,10 +6,12 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { of, throwError } from 'rxjs';
 import { LineChart } from '../charts/line-chart';
 import { TimeZoneSettings } from '../core/time-zone';
-import { FarmOverview, TelemetryStats } from './fleet.model';
+import { TelemetryStats } from './fleet.model';
+import { LIVE_BATCH_MS } from './turbine-page.store';
 import {
   FakeFleetApi,
   FakeSse,
+  FarmOverview,
   farmsFixture,
   openFleet,
   reading,
@@ -82,9 +84,9 @@ describe('Fleet routes', () => {
         [...row.querySelectorAll('td')].map((td) => td.textContent?.replace(/\s+/g, ' ').trim()),
       );
       expect(rows).toEqual([
-        ['Prairie Ridge FARM01', '41.25, -96.53', '1', '1', '1,961', '6.7'],
-        ['High Plains FARM02', '39.75, -101.22', '1', '1', '2,259', '8.5'],
-        ['Red Canyon FARM03', '35.12, -106.55', '0', '–', '–', '–'],
+        ['Prairie Ridge FARM01', '41.25, -96.53', '1', '1', '1,961', '6.7', '23:55'],
+        ['High Plains FARM02', '39.75, -101.22', '1', '1', '2,259', '8.5', '23:55'],
+        ['Red Canyon FARM03', '35.12, -106.55', '0', '–', '–', '–', '23:55'],
       ]);
     });
 
@@ -95,29 +97,36 @@ describe('Fleet routes', () => {
       expect(marker('FARM03')!.classList).toContain('marker-empty');
     });
 
-    it('updates fleet totals and farm markers as turbines go quiet', async () => {
+    it('updates fleet totals and farm markers on each fleet.tick as turbines go quiet, not before', async () => {
       TestBed.resetTestingModule();
       vi.useFakeTimers({ shouldAdvanceTime: true });
       try {
-        await start('/');
+        const fleet = farmsFixture();
+        await start('/', [], undefined, fleet);
         const marker = (id: string) => el().querySelector(`[data-marker-id="${id}"]`)!.classList;
 
         await advanceClock(26 * MINUTE); // 31 min since 23:55
+        expect(text('[data-testid=fleet-reporting]')).toBe('2 / 2'); // the summary is the server's
+        sse.tick();
+        await stable();
         expect(text('[data-testid=fleet-reporting]')).toBe('0 / 2');
-        expect(marker('FARM01')).toContain('marker-stale-30');
+        expect(marker('FARM01')).toContain('marker-stale-15'); // the summary doesn't say how long
         expect(marker('FARM03')).toContain('marker-empty');
 
-        sse.push(
-          reading({
-            turbineId: 'TURB002',
-            farmId: 'FARM02',
-            timestamp: new Date(clockNow).toISOString(),
-          }),
-        );
+        // A live reading does not move the fleet figures; the next summary does.
+        fleet[1].turbines[0].latest = reading({
+          turbineId: 'TURB002',
+          farmId: 'FARM02',
+          timestamp: new Date(clockNow).toISOString(),
+        });
+        sse.push(fleet[1].turbines[0].latest);
+        await stable();
+        expect(text('[data-testid=fleet-reporting]')).toBe('0 / 2');
+        sse.tick();
         await stable();
         expect(text('[data-testid=fleet-reporting]')).toBe('1 / 2');
         expect(marker('FARM02')).toContain('marker-ok');
-        expect(marker('FARM01')).toContain('marker-stale-30');
+        expect(marker('FARM01')).toContain('marker-stale-15');
       } finally {
         vi.useRealTimers();
       }
@@ -247,21 +256,28 @@ describe('Fleet routes', () => {
       expect(text('h1')).toBe('TURB001 Prairie Ridge');
     });
 
-    it('updates a turbine row live', async () => {
-      await start('/farms/FARM01');
+    it('updates a turbine row live, within a second', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        await start('/farms/FARM01');
 
-      sse.push(reading({ timestamp: '2026-01-03T00:00:00.000Z', powerOutputKw: 3100 }));
-      await stable();
+        sse.push(reading({ timestamp: '2026-01-03T00:00:00.000Z', powerOutputKw: 3100 }));
+        await vi.advanceTimersByTimeAsync(LIVE_BATCH_MS);
+        await stable();
 
-      expect(cells(rows()[0])[3]).toBe('3,100');
-      expect(cells(rows()[0])[6]).toBe('Jan 3, 00:00');
-      expect(rows()[0].hasAttribute('data-updated')).toBe(true);
+        expect(cells(rows()[0])[3]).toBe('3,100');
+        expect(cells(rows()[0])[6]).toBe('Jan 3, 00:00');
+        expect(rows()[0].hasAttribute('data-updated')).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('moves the turbine rows through 15, 30 and 60 min on the clock alone', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true }); // timers only; the clock is NOW
       try {
-        await start('/farms/FARM01'); // TURB001's latest (23:55) is 5 min old
+        const fleet = farmsFixture();
+        await start('/farms/FARM01', [], undefined, fleet); // TURB001's latest (23:55) is 5 min old
         const status = () => badge(rows()[0])!;
         const marker = () => el().querySelector('[data-marker-id="TURB001"]')!.classList;
         // The table's status pill, as on /turbines (the cards hid it while reporting).
@@ -276,17 +292,28 @@ describe('Fleet routes', () => {
           [15, 'stale-30', 'No data in 30 min', '0 / 1'], // 31 min
           [30, 'stale-60', 'No data in 60 min', '0 / 1'], // 61 min
         ] as const;
+        let shown = '1 / 1';
         for (const [minutes, level, label, reporting] of steps) {
           await advanceClock(minutes * MINUTE);
           expect(status().getAttribute('data-staleness')).toBe(level);
           expect(status().textContent?.trim()).toBe(label);
           expect(marker()).toContain(`marker-${level}`);
+          expect(text('[data-testid=farm-reporting]')).toBe(shown); // the summary waits for its tick
+          sse.tick();
+          await stable();
           expect(text('[data-testid=farm-reporting]')).toBe(reporting);
+          shown = reporting;
         }
 
-        sse.push(reading({ timestamp: new Date(clockNow).toISOString() }));
+        const fresh = reading({ timestamp: new Date(clockNow).toISOString() });
+        fleet[0].turbines[0].latest = fresh;
+        sse.push(fresh);
+        await vi.advanceTimersByTimeAsync(LIVE_BATCH_MS);
         await stable();
         expect(status().getAttribute('data-staleness')).toBe('ok');
+        expect(text('[data-testid=farm-reporting]')).toBe('0 / 1'); // not live
+        sse.tick();
+        await stable();
         expect(text('[data-testid=farm-reporting]')).toBe('1 / 1');
       } finally {
         vi.useRealTimers();
@@ -891,7 +918,8 @@ describe('Fleet routes', () => {
     await harness.navigateByUrl('/');
     await harness.navigateByUrl('/farms/FARM02');
 
-    expect(api.farms).toHaveBeenCalledTimes(1);
+    expect(api.fleetSummary).toHaveBeenCalledTimes(1);
+    expect(api.farmSummaries).toHaveBeenCalledTimes(1);
     expect(sse.connect).toHaveBeenCalledTimes(1);
   });
 

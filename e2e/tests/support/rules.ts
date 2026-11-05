@@ -1,5 +1,10 @@
-import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
-import { API_URL } from './session.js';
+import {
+  expect,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+} from "@playwright/test";
+import { API_URL } from "./session.js";
 
 /**
  * Alert rule helpers for [DATA] tests (GET/POST/PATCH/DELETE /api/alert-configs; writes need an
@@ -8,19 +13,23 @@ import { API_URL } from './session.js';
  */
 
 export type Metric =
-  'powerOutputKw' | 'windSpeedMs' | 'rotorRpm' | 'bladePitchDeg' | 'gearboxTempC';
-export type Level = 'info' | 'warn' | 'error';
+  | "powerOutputKw"
+  | "windSpeedMs"
+  | "rotorRpm"
+  | "bladePitchDeg"
+  | "gearboxTempC";
+export type Level = "info" | "warn" | "error";
 
 export interface Rule {
   id: string;
   measurementMetric: Metric;
-  comparison: 'above' | 'below';
+  comparison: "above" | "below";
   valueMetric: number;
   alertLevel: Level;
   enabled: boolean;
 }
 
-export type RuleInput = Omit<Rule, 'id' | 'enabled'>;
+export type RuleInput = Omit<Rule, "id" | "enabled">;
 
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
@@ -29,9 +38,14 @@ const sameKey = (a: RuleInput, b: RuleInput) =>
   a.comparison === b.comparison &&
   a.alertLevel === b.alertLevel;
 
-export async function listRules(request: APIRequestContext, token: string): Promise<Rule[]> {
-  const response = await request.get(`${API_URL}/alert-configs`, { headers: auth(token) });
-  expect(response.status(), 'GET /api/alert-configs').toBe(200);
+export async function listRules(
+  request: APIRequestContext,
+  token: string,
+): Promise<Rule[]> {
+  const response = await request.get(`${API_URL}/alert-configs`, {
+    headers: auth(token),
+  });
+  expect(response.status(), "GET /api/alert-configs").toBe(200);
   return response.json();
 }
 
@@ -60,7 +74,7 @@ export async function updateRule(
   request: APIRequestContext,
   token: string,
   id: string,
-  patch: Partial<Omit<Rule, 'id'>>,
+  patch: Partial<Omit<Rule, "id">>,
 ): Promise<void> {
   const response = await request.patch(`${API_URL}/alert-configs/${id}`, {
     data: patch,
@@ -75,7 +89,9 @@ export async function deleteRule(
   token: string,
   id: string,
 ): Promise<number> {
-  const response = await request.delete(`${API_URL}/alert-configs/${id}`, { headers: auth(token) });
+  const response = await request.delete(`${API_URL}/alert-configs/${id}`, {
+    headers: auth(token),
+  });
   expect([204, 404, 409], await response.text()).toContain(response.status());
   return response.status();
 }
@@ -89,11 +105,17 @@ export async function ensureRule(
   request: APIRequestContext,
   token: string,
   rule: RuleInput,
-): Promise<{ rule: Rule; cleanup: (request: APIRequestContext) => Promise<void> }> {
+): Promise<{
+  rule: Rule;
+  cleanup: (request: APIRequestContext) => Promise<void>;
+}> {
   const existing = await findRule(request, token, rule);
   let id: string;
   if (existing) {
-    await updateRule(request, token, existing.id, { valueMetric: rule.valueMetric, enabled: true });
+    await updateRule(request, token, existing.id, {
+      valueMetric: rule.valueMetric,
+      enabled: true,
+    });
     id = existing.id;
   } else {
     id = (await createRule(request, token, rule)).id;
@@ -114,7 +136,9 @@ export async function removeRules(
   token: string,
   key: RuleInput,
 ): Promise<void> {
-  for (const rule of (await listRules(request, token)).filter((r) => sameKey(r, key)))
+  for (const rule of (await listRules(request, token)).filter((r) =>
+    sameKey(r, key),
+  ))
     await deleteRule(request, token, rule.id);
 }
 
@@ -129,7 +153,7 @@ export const ruleRow = (page: Page, id: string): Locator =>
  * `rule-enabled-toggle`, named by what switching does ("Disable <rule>" / "Enable <rule>").
  */
 export const ruleSwitch = (row: Locator): Locator =>
-  row.getByTestId('rule-enabled-toggle').getByRole('switch');
+  row.getByTestId("rule-enabled-toggle").getByRole("switch");
 
 /** Asserts a row shows the rule as enabled or disabled: switch, name, pill and `data-enabled`. */
 export async function expectRuleState(
@@ -137,19 +161,22 @@ export async function expectRuleState(
   describe: string,
   enabled: boolean,
 ): Promise<void> {
-  await expect(row).toHaveAttribute('data-enabled', String(enabled));
+  await expect(row).toHaveAttribute("data-enabled", String(enabled));
   const toggle = ruleSwitch(row);
-  await expect(toggle).toHaveAttribute('aria-checked', String(enabled));
-  await expect(toggle).toHaveAccessibleName(`${enabled ? 'Disable' : 'Enable'} ${describe}`);
-  await expect(row.getByTestId('rule-disabled')).toHaveCount(enabled ? 0 : 1);
-  if (!enabled) await expect(row.getByTestId('rule-disabled')).toHaveText('Disabled');
+  await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+  await expect(toggle).toHaveAccessibleName(
+    `${enabled ? "Disable" : "Enable"} ${describe}`,
+  );
+  await expect(row.getByTestId("rule-disabled")).toHaveCount(enabled ? 0 : 1);
+  if (!enabled)
+    await expect(row.getByTestId("rule-disabled")).toHaveText("Disabled");
 }
 
 /** The theme's muted text colour (`--muted`) as the browser computes it (rgb(…)). */
 export async function mutedColor(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const probe = document.createElement('span');
-    probe.style.color = 'var(--muted)';
+    const probe = document.createElement("span");
+    probe.style.color = "var(--muted)";
     document.body.append(probe);
     const color = getComputedStyle(probe).color;
     probe.remove();

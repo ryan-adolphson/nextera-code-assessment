@@ -12,7 +12,7 @@ import {
   MatRowDef,
   MatTable,
 } from '@angular/material/table';
-import { PagingDirective } from './paging';
+import { CursorPagingDirective, PagingDirective } from './paging';
 import { TableFrame } from './table-frame';
 
 /**
@@ -33,5 +33,6 @@ export const TABLE_IMPORTS = [
   MatNoDataRow,
   MatPaginator,
   PagingDirective,
+  CursorPagingDirective,
   TableFrame,
 ] as const;

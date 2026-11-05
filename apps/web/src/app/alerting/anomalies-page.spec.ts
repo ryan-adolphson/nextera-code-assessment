@@ -157,6 +157,23 @@ describe('AnomaliesPage (/alerting/anomalies)', () => {
     expect(q('anomalies')).toBeNull();
   });
 
+  it('says that only the newest 5,000 episodes are listed when the server truncated them', async () => {
+    await open(() => of({ ...report([lowPower, stuck], 12_000), truncated: true as const }));
+
+    const note = q('anomalies-truncated')!;
+    expect(note.getAttribute('role')).toBe('status');
+    expect(app.text(note)).toBe(
+      'More than 5,000 episodes overlap these 7 days. Only the newest 5,000 are listed, and the lost output below counts those.',
+    );
+    expect(app.root().querySelectorAll('[data-testid=anomaly]')).toHaveLength(2);
+  });
+
+  it('shows no truncation note for a complete list', async () => {
+    await open(() => of(report([lowPower, stuck])));
+
+    expect(q('anomalies-truncated')).toBeNull();
+  });
+
   it('shows an error and loads again on Retry', async () => {
     let calls = 0;
     await open(() => (calls++ === 0 ? throwError(() => new Error('boom')) : of(report([stuck]))));

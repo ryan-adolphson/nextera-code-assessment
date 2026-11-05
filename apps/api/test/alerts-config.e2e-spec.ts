@@ -242,7 +242,11 @@ describe('Alert configs API (e2e)', () => {
       });
       expect(disabled.status).toBe(200);
     } finally {
-      await t.prisma.telemetry.delete({ where: { id: reading.id } }); // cascades its alerts
+      await t.prisma.telemetry.delete({
+        where: {
+          id_timestamp: { id: reading.id, timestamp: reading.timestamp },
+        },
+      }); // cascades its alerts
     }
   });
 

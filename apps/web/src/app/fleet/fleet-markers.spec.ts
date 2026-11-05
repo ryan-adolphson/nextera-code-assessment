@@ -1,6 +1,6 @@
 import { FARM_LEGEND, TURBINE_LEGEND, farmMarkers, turbineMarkers } from './fleet-markers';
 import { FarmSummary } from './fleet.store';
-import { reading } from './testing';
+import { TurbineMarkerResponse } from './fleet.model';
 
 const farm = (overrides: Partial<FarmSummary> = {}): FarmSummary => ({
   id: 'FARM01',
@@ -8,10 +8,14 @@ const farm = (overrides: Partial<FarmSummary> = {}): FarmSummary => ({
   latitude: 41.25,
   longitude: -96.53,
   turbineCount: 1,
+  commissioned: 1,
   reporting: 1,
+  stale: 0,
+  alerting: 0,
   staleness: 'ok',
   powerKw: 1960.5,
   avgWindMs: 6.7,
+  asOf: '2026-01-02T23:55:00.000Z',
   ...overrides,
 });
 
@@ -55,38 +59,39 @@ describe('farmMarkers', () => {
 });
 
 describe('turbineMarkers', () => {
-  const turbine = {
+  const NOW_MS = Date.parse('2026-01-03T00:00:00.000Z');
+  const marker = (overrides: Partial<TurbineMarkerResponse> = {}): TurbineMarkerResponse => ({
     id: 'TURB001',
-    farmId: 'FARM01',
     latitude: 41.263,
     longitude: -96.518,
-    commissioned: true,
-  };
+    status: 'reporting',
+    timestamp: '2026-01-02T23:55:00.000Z',
+    ...overrides,
+  });
 
-  it('places turbines at their own coordinates with their latest reading', () => {
-    expect(
-      turbineMarkers([
-        { ...turbine, latest: reading({ powerOutputKw: 2331.2, windSpeedMs: 8 }), staleness: 'ok' },
-      ]),
-    ).toEqual([
+  it('places turbines at their own coordinates with their level', () => {
+    expect(turbineMarkers([marker()], NOW_MS)).toEqual([
       {
         id: 'TURB001',
         lat: 41.263,
         lng: -96.518,
         status: 'ok',
         radius: 9,
-        tooltip: ['TURB001', '2,331 kW · wind 8.0 m/s'],
+        tooltip: ['TURB001', 'Reporting'],
       },
     ]);
   });
 
   it('flags each staleness level by colour and label, and turbines without readings', () => {
-    const markers = turbineMarkers([
-      { ...turbine, latest: reading(), staleness: 'stale-15' },
-      { ...turbine, latest: reading(), staleness: 'stale-30' },
-      { ...turbine, latest: reading(), staleness: 'stale-60' },
-      { ...turbine, id: 'TURB009', latest: null, staleness: 'empty' },
-    ]);
+    const markers = turbineMarkers(
+      [
+        marker({ status: 'stale', timestamp: '2026-01-02T23:40:00.000Z' }),
+        marker({ status: 'stale', timestamp: '2026-01-02T23:20:00.000Z' }),
+        marker({ status: 'stale', timestamp: '2026-01-02T22:00:00.000Z' }),
+        marker({ id: 'TURB009', status: 'no_data', timestamp: null }),
+      ],
+      NOW_MS,
+    );
     expect(markers.map((m) => [m.status, m.tooltip.at(-1)])).toEqual([
       ['stale-15', 'No data in 15 min'],
       ['stale-30', 'No data in 30 min'],
@@ -94,6 +99,17 @@ describe('turbineMarkers', () => {
       ['empty', 'No readings yet'],
     ]);
     expect(markers[3].tooltip).toEqual(['TURB009', 'No readings yet']);
+  });
+
+  it('never shows a turbine the server calls stale as reporting', () => {
+    // The server's clock is ahead of ours: its "stale" reading is only 5 minutes old here.
+    const [m] = turbineMarkers([marker({ status: 'stale' })], NOW_MS);
+    expect(m.status).toBe('stale-15');
+  });
+
+  it('shows a turbine without a time as having no readings', () => {
+    const [m] = turbineMarkers([marker({ status: 'reporting', timestamp: null })], NOW_MS);
+    expect(m.status).toBe('empty');
   });
 });
 

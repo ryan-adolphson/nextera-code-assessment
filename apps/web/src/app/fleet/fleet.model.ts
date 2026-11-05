@@ -48,8 +48,8 @@ export interface TelemetryStats {
   metrics: Record<TelemetryMetric, MetricStats | null>;
 }
 
-/** Mirrors FarmOverview / TurbineOverview from GET /api/farms. */
-export interface TurbineOverview {
+/** Mirrors TurbineResponse (PATCH /api/turbines/:id): a turbine without its latest reading. */
+export interface TurbineResponse {
   /** The turbine's business key ("TURB001"); the API never exposes its internal UUID. */
   id: string;
   farmId: string;
@@ -57,19 +57,85 @@ export interface TurbineOverview {
   longitude: number;
   /** Whether the turbine has been commissioned (handed over to operations). */
   commissioned: boolean;
+}
+
+/** One row of GET /api/turbines (and GET /api/turbines/:id): a turbine, its farm's name, its latest reading. */
+export interface TurbineItem extends TurbineResponse {
+  farmName: string;
   latest: Telemetry | null;
 }
 
-/** Mirrors TurbineResponse from PATCH /api/turbines/:id: a turbine without its latest reading. */
-export type TurbineResponse = Omit<TurbineOverview, 'latest'>;
+/** The server's three reporting states (the client keeps the finer `Staleness` per row). */
+export type TurbineStatus = 'reporting' | 'stale' | 'no_data';
 
-export interface FarmOverview {
+/** The columns the server can sort turbines by; the metrics need a single-farm scope. */
+export type TurbineSortKey = 'id' | 'farm' | 'commissioned' | 'time' | 'power' | 'wind' | 'gearbox';
+export const METRIC_SORT_KEYS: readonly TurbineSortKey[] = ['power', 'wind', 'gearbox'];
+
+/** Query of GET /api/turbines. */
+export interface TurbineQuery {
+  farmId?: string;
+  /** Matches turbine id, farm id or farm name. */
+  q?: string;
+  status?: TurbineStatus;
+  commissioned?: boolean;
+  /** true = only turbines that have reported. */
+  hasData?: boolean;
+  sort?: TurbineSortKey;
+  dir?: 'asc' | 'desc';
+  /** At most 100. */
+  limit?: number;
+  cursor?: string | null;
+}
+
+/** GET /api/turbines: one page (keyset paging). `total` is counted up to 10,001. */
+export interface TurbinePageResponse {
+  items: TurbineItem[];
+  nextCursor: string | null;
+  prevCursor: string | null;
+  total: number;
+  totalCapped: boolean;
+}
+
+/** GET /api/fleet/summary (refreshed about once a minute). */
+export interface FleetSummaryResponse {
+  farms: number;
+  turbines: number;
+  commissioned: number;
+  reporting: number;
+  stale: number;
+  alerting: number;
+  powerOutputKw: number;
+  asOf: string | null;
+}
+
+/** One entry of GET /api/farm-summaries: a farm with its totals and no turbines. */
+export interface FarmSummaryResponse {
   id: string;
   name: string;
   latitude: number;
   longitude: number;
-  turbines: TurbineOverview[];
+  turbineCount: number;
+  commissioned: number;
+  reporting: number;
+  stale: number;
+  alerting: number;
+  powerOutputKw: number;
+  windSpeedMs: number | null;
+  asOf: string | null;
 }
+
+/** One entry of GET /api/farms/:farmId/turbine-markers (at most 2,000). */
+export interface TurbineMarkerResponse {
+  id: string;
+  latitude: number;
+  longitude: number;
+  status: TurbineStatus;
+  timestamp: string | null;
+}
+
+/** Fleet-wide, low-volume event: the summaries were rebuilt (`{ asOf }`). */
+export const FLEET_TICK = 'fleet.tick';
 
 /** SSE event published by the ingestion worker for every stored reading. */
 export const TELEMETRY_EVENTS = ['telemetry.received'] as const;

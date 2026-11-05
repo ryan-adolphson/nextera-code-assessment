@@ -163,12 +163,18 @@ export interface ClearedReadings {
   unallocatedTurbines: number;
   farmWeather: number;
   farmRollups: number;
+  /** Derived tables that hang off the readings: latest per turbine, farm summaries, anomaly episodes. */
+  turbineLatest: number;
+  farmLiveSummary: number;
+  anomalyEpisodes: number;
 }
 
 /**
  * Deletes the readings and what hangs off them, in one transaction: telemetry_alerts, telemetry,
  * held_telemetry, unallocated_turbines, farm_weather and the farm rollups (rows, dirty markers and
- * the watermark, so the next rollup run is a full one). Farms, turbines, users and alert
+ * the watermark, so the next rollup run is a full one), plus what is derived from the readings:
+ * turbine_latest, farm_live_summary and the anomaly episodes with their calibration and state (the
+ * next anomaly rollup starts over). Farms, turbines, users and alert
  * rules stay (so a moved turbine stays moved). DELETE, not TRUNCATE: it doesn't take an ACCESS
  * EXCLUSIVE lock, so the running services' reads aren't blocked behind it.
  */
@@ -186,6 +192,11 @@ export async function clearDemoReadings(
       const farmRollups = await tx.farmTelemetryRollup.deleteMany();
       await tx.farmRollupDirty.deleteMany();
       await tx.farmRollupState.deleteMany();
+      const turbineLatest = await tx.turbineLatest.deleteMany();
+      const farmLiveSummary = await tx.farmLiveSummary.deleteMany();
+      const anomalyEpisodes = await tx.anomalyEpisode.deleteMany();
+      await tx.anomalyExpectedPower.deleteMany();
+      await tx.anomalyRollupState.deleteMany();
       return {
         telemetryAlerts: telemetryAlerts.count,
         telemetry: telemetry.count,
@@ -193,6 +204,9 @@ export async function clearDemoReadings(
         unallocatedTurbines: unallocatedTurbines.count,
         farmWeather: farmWeather.count,
         farmRollups: farmRollups.count,
+        turbineLatest: turbineLatest.count,
+        farmLiveSummary: farmLiveSummary.count,
+        anomalyEpisodes: anomalyEpisodes.count,
       };
     },
     { timeout: 120_000 },

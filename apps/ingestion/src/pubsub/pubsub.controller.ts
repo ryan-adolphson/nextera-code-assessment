@@ -35,7 +35,9 @@ export class PubSubController {
     const { messageId, data, publishTime } = envelope.message;
     const reading = await this.decode(messageId, data);
     const result = await this.ingestion.ingest(reading, publishTime);
-    this.logger.log(
+    // debug: at thousands of readings a second an info line per message is hundreds of millions
+    // of log entries a day. Rejections and failures are still logged (warn / error).
+    this.logger.debug(
       `Message ${messageId}: ${reading.turbine_id} @ ${reading.timestamp} ${result}`,
     );
   }

@@ -1,5 +1,5 @@
 import { Prisma } from '../generated/prisma/client.js';
-import type { HeldTelemetry, Telemetry } from '../generated/prisma/client.js';
+import type { HeldTelemetry } from '../generated/prisma/client.js';
 import type {
   AlertLevel,
   UnallocatedStatus,
@@ -8,12 +8,11 @@ import {
   ANOMALY_MIN_READINGS,
   ANOMALY_STEP_MINUTES,
   EXPECTED_POWER_MIN_BIN_READINGS,
-  LOW_POWER_FALLBACK_KW,
-  LOW_POWER_MAX_RATIO,
-  LOW_POWER_MIN_WIND_MS,
-  STUCK_SENSOR_MIN_POWER_RANGE_KW,
   STUCK_SENSOR_MIN_READINGS,
+  type AnomalyKind,
+  type AnomalyMetric,
 } from './anomalies.js';
+import { anomalyEpisodesSql } from './anomaly-sql.js';
 import {
   toAlertConfigResponse,
   type AlertConfigResponse,
@@ -41,7 +40,6 @@ import {
   type TelemetryResponse,
   type TelemetryStatsResponse,
   type TelemetryStatsRow,
-  type TelemetryWithAlerts,
   type TurbineResponse,
   type WeatherDayRow,
   type WeatherInterval,
@@ -55,50 +53,32 @@ import {
   type UnallocatedTurbineResponse,
 } from './unallocated.js';
 
-/**
- * The fleet's read queries, shared by the API (behind its HTTP wrappers) and the MCP server. Plain
- * functions over any Prisma client (or a transaction); they return the public response shapes and
- * throw `QueryNotFoundError` / `QueryInputError` (no HTTP types), which each caller maps itself.
- */
-export type ReadClient = Prisma.TransactionClient;
+import {
+  QueryInputError,
+  QueryNotFoundError,
+  QueryTooLargeError,
+  parseRange,
+  type ReadClient,
+  type TimeRange,
+} from './query-support.js';
+import { latestReadings } from './fleet-queries.js';
+
+export {
+  MAX_QUERY_RANGE_DAYS,
+  QueryError,
+  QueryInputError,
+  QueryNotFoundError,
+  QueryTooLargeError,
+  parseRange,
+} from './query-support.js';
+export type { ReadClient, TimeRange } from './query-support.js';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** 288 readings = 24 hours at the 5-minute reporting interval. */
 export const DEFAULT_TELEMETRY_LIMIT = 288;
 /** 2016 readings = 7 days. */
 export const MAX_TELEMETRY_LIMIT = 2016;
-/** The widest [from, to) range of the alert and report queries, so one call can't pull the table. */
-export const MAX_QUERY_RANGE_DAYS = 31;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Base class of the errors the read queries throw on purpose (never for database failures). */
-export class QueryError extends Error {}
-/** An unknown farm or turbine (the API answers 404). */
-export class QueryNotFoundError extends QueryError {
-  override readonly name = 'QueryNotFoundError';
-}
-/** Arguments that break a data rule, e.g. a reversed or too long range (the API answers 400). */
-export class QueryInputError extends QueryError {
-  override readonly name = 'QueryInputError';
-}
-
-/**
- * Parses a [from, to) range of ISO instants (already validated as timestamps by the caller) and
- * rejects an empty or reversed range, or one longer than `maxDays`.
- */
-export function parseRange(
-  from: string,
-  to: string,
-  maxDays: number = MAX_QUERY_RANGE_DAYS,
-): { start: Date; end: Date } {
-  const start = new Date(from);
-  const end = new Date(to);
-  if (end <= start) throw new QueryInputError('to must be after from');
-  if (end.getTime() - start.getTime() > maxDays * DAY_MS) {
-    throw new QueryInputError(`The range may span at most ${maxDays} days`);
-  }
-  return { start, end };
-}
 
 // ---------------------------------------------------------------------------------------------
 // Fleet overview: farms → turbines → latest reading
@@ -112,91 +92,38 @@ export interface FarmOverview extends FarmResponse {
   turbines: TurbineOverview[];
 }
 
-/** Raw row shape of the telemetry table (snake_case columns). */
-interface TelemetryRow {
-  id: string;
-  turbine_id: string;
-  farm_id: string;
-  timestamp: Date;
-  received_at: Date;
-  created_at: Date;
-  power_output_kw: number;
-  wind_speed_ms: number;
-  rotor_rpm: number;
-  blade_pitch_deg: number;
-  gearbox_temp_c: number;
-}
+/** The most turbines the deprecated GET /api/farms overview will load; above it, 413. */
+export const MAX_FARMS_OVERVIEW_TURBINES = 5000;
 
-const fromRow = (r: TelemetryRow): Telemetry => ({
-  id: r.id,
-  turbineId: r.turbine_id,
-  farmId: r.farm_id,
-  timestamp: r.timestamp,
-  receivedAt: r.received_at,
-  createdAt: r.created_at,
-  powerOutputKw: r.power_output_kw,
-  windSpeedMs: r.wind_speed_ms,
-  rotorRpm: r.rotor_rpm,
-  bladePitchDeg: r.blade_pitch_deg,
-  gearboxTempC: r.gearbox_temp_c,
-});
-
-/** Every farm with its turbines and each turbine's latest reading: the fleet overview. */
+/**
+ * Every farm with its turbines and each turbine's latest reading: the fleet overview. DEPRECATED
+ * (the web app reads `listFarmSummaries` and `listTurbines`): it loads the whole fleet, so above
+ * MAX_FARMS_OVERVIEW_TURBINES turbines it throws `QueryTooLargeError` before loading anything.
+ */
 export async function listFarms(db: ReadClient): Promise<FarmOverview[]> {
-  const [farms, latestRows] = await Promise.all([
-    db.farm.findMany({
-      orderBy: { id: 'asc' },
-      include: { turbines: { orderBy: { turbineId: 'asc' } } },
-    }),
-    // One index lookup per turbine on (turbine_id, timestamp). Prisma's nested `take: 1` would
-    // load every reading into memory, which doesn't scale with history size.
-    db.$queryRaw<TelemetryRow[]>`
-      SELECT latest.*
-      FROM turbines t
-      CROSS JOIN LATERAL (
-        SELECT * FROM telemetry r
-        WHERE r.turbine_id = t.turbine_id
-        ORDER BY r.timestamp DESC
-        LIMIT 1
-      ) latest`,
-  ]);
-
-  const latest = await withAlerts(db, latestRows.map(fromRow));
-  const latestByTurbine = new Map(
-    latest.map((reading) => [reading.turbineId, toTelemetryResponse(reading)]),
+  const [{ n }] = await db.$queryRaw<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM (
+      SELECT 1 FROM turbines LIMIT ${MAX_FARMS_OVERVIEW_TURBINES + 1}) c`;
+  if (n > MAX_FARMS_OVERVIEW_TURBINES) {
+    throw new QueryTooLargeError(
+      `The fleet has more than ${MAX_FARMS_OVERVIEW_TURBINES} turbines: GET /api/farms is deprecated ` +
+        'and no longer serves it. Use /api/farm-summaries and /api/turbines instead',
+    );
+  }
+  const farms = await db.farm.findMany({
+    orderBy: { id: 'asc' },
+    include: { turbines: { orderBy: { turbineId: 'asc' } } },
+  });
+  const latest = await latestReadings(
+    db,
+    farms.flatMap((farm) => farm.turbines.map((t) => t.turbineId)),
   );
   return farms.map((farm) => ({
     ...toFarmResponse(farm),
     turbines: farm.turbines.map((turbine) => ({
       ...toTurbineResponse(turbine),
-      latest: latestByTurbine.get(turbine.turbineId) ?? null,
+      latest: latest.get(turbine.turbineId) ?? null,
     })),
-  }));
-}
-
-/**
- * Adds each reading's triggered rules (telemetry_alerts joined with alerts_config) to readings
- * loaded with raw SQL: one query for all of them.
- */
-async function withAlerts(
-  db: ReadClient,
-  readings: Telemetry[],
-): Promise<TelemetryWithAlerts[]> {
-  if (!readings.length) return [];
-  const links = await db.telemetryAlert.findMany({
-    where: { telemetryId: { in: readings.map((r) => r.id) } },
-    include: { alert: true },
-  });
-  const byReading = new Map<string, typeof links>();
-  for (const link of links) {
-    byReading.set(link.telemetryId, [
-      ...(byReading.get(link.telemetryId) ?? []),
-      link,
-    ]);
-  }
-  return readings.map((reading) => ({
-    ...reading,
-    alerts: byReading.get(reading.id) ?? [],
   }));
 }
 
@@ -207,7 +134,7 @@ export interface TurbineDetail extends TurbineOverview {
   farm: FarmResponse;
 }
 
-/** A turbine (by business key) with its farm and its latest reading by measurement time. */
+/** A turbine (by business key) with its farm and its latest reading (turbine_latest). */
 export async function getTurbine(
   db: ReadClient,
   turbineId: string,
@@ -217,15 +144,11 @@ export async function getTurbine(
     include: { farm: true },
   });
   if (!turbine) throw turbineNotFound(turbineId);
-  const latest = await db.telemetry.findFirst({
-    where: { turbineId },
-    orderBy: { timestamp: 'desc' },
-    include: TELEMETRY_ALERTS_INCLUDE,
-  });
+  const latest = await latestReadings(db, [turbineId]);
   return {
     ...toTurbineResponse(turbine),
     farm: toFarmResponse(turbine.farm),
-    latest: latest ? toTelemetryResponse(latest) : null,
+    latest: latest.get(turbineId) ?? null,
   };
 }
 
@@ -325,73 +248,97 @@ const turbineNotFound = (turbineId: string) =>
   new QueryNotFoundError(`Turbine ${turbineId} not found`);
 
 // ---------------------------------------------------------------------------------------------
-// Alerts
-
-/** A required [from, to) range on measurement time (ISO instants), at most 31 days. */
-export interface TimeRange {
-  from: string;
-  to: string;
-}
-
-/**
- * Every reading measured in [from, to) that triggered at least one rule, with those rules
- * (joined from alerts_config, worst level first), grouped by turbine (turbine id ascending) and
- * newest first within a turbine. Disabled rules still show on the readings they flagged.
- */
-export async function alertsInRange(
-  db: ReadClient,
-  { from, to }: TimeRange,
-): Promise<TelemetryResponse[]> {
-  const { start, end } = parseRange(from, to);
-
-  const readings = await db.telemetry.findMany({
-    where: {
-      timestamp: { gte: start, lt: end },
-      alerts: { some: {} },
-    },
-    orderBy: [{ turbineId: 'asc' }, { timestamp: 'desc' }],
-    include: TELEMETRY_ALERTS_INCLUDE,
-  });
-  return readings.map(toTelemetryResponse);
-}
-
-// ---------------------------------------------------------------------------------------------
 // Anomalies
 
-/** The columns `listAnomalies` can find a stuck sensor on: label, value column, run-id column. */
-const STUCK_METRICS = [
-  { metric: 'gearboxTempC', value: 'g', run: 'g_run' },
-  { metric: 'windSpeedMs', value: 'w', run: 'w_run' },
-  { metric: 'rotorRpm', value: 'rpm', run: 'rpm_run' },
-] as const;
+/** The most episodes one anomalies response lists (newest end first); `truncated` says more exist. */
+export const MAX_ANOMALY_EPISODES = 5000;
+
+const STEP_MS = ANOMALY_STEP_MINUTES * 60_000;
 
 /**
- * The stuck-sensor episodes of one metric, from the `marked` CTE: the readings of its long runs
- * (`long_runs`), grouped, whose power range shows the turbine kept moving. Identifiers come from
- * the constant above, never from input.
+ * Anomaly episodes in [from, to) read from `anomaly_episodes` (stored hourly by the anomaly
+ * rollup with the rules of `listAnomalies`): GET /api/anomalies and the MCP `list_anomalies`.
+ * Episodes are stored whole, so ones that cross the range are clipped here:
+ *
+ * - Selected when they overlap the range (last reading >= from, first reading < to), newest
+ *   `end` first, at most MAX_ANOMALY_EPISODES (`truncated: true` past it; the lost-output sum then
+ *   covers the listed ones).
+ * - A clipped episode keeps only the readings on the 5-minute grid from its start that fall in
+ *   the range: `start`/`end` become the first and last of those, `readings` their count, and
+ *   `estimatedLostKwh` is the stored figure pro rata by readings (the per-reading losses aren't
+ *   stored). An episode left with fewer readings than its rule needs (3 low-power, 12 stuck)
+ *   is dropped, as `listAnomalies` (which only ever sees the range's readings) would not find it.
+ * - Differences from `listAnomalies`: expected power comes from the rollup's last 24 hours
+ *   (calibrated on a turbine sample at scale), not from the queried range; an episode is whole
+ *   when it lies inside the range (its own start and end decide, not the range's edges); a gap in
+ *   a clipped episode's readings isn't known, so its clipped count assumes none.
+ *   Episodes appear up to an hour after their readings.
  */
-const stuckEpisodes = (
-  metric: string,
-  value: string,
-  run: string,
-) => Prisma.sql`
-      SELECT 'stuck_sensor'::text AS kind, ${metric}::text AS metric,
-             m.turbine_id, max(m.farm_id) AS farm_id,
-             min(m.timestamp) AS episode_start, max(m.timestamp) AS episode_end,
-             count(*)::int AS readings,
-             min(m.${Prisma.raw(value)})::float8 AS value,
-             NULL::float8 AS wind_speed_ms,
-             NULL::float8 AS lost_kwh
-      FROM marked m
-      JOIN long_runs lr
-        ON lr.metric = ${metric} AND lr.turbine_id = m.turbine_id AND lr.run = m.${Prisma.raw(run)}
-      GROUP BY m.turbine_id, m.${Prisma.raw(run)}
-      HAVING count(*) >= ${STUCK_SENSOR_MIN_READINGS}::int
-         AND max(m.p) - min(m.p) >= ${STUCK_SENSOR_MIN_POWER_RANGE_KW}::float8`;
+export async function anomaliesInRange(
+  db: ReadClient,
+  { from, to }: TimeRange,
+): Promise<AnomaliesResponse & { truncated?: true }> {
+  const { start, end } = parseRange(from, to);
+  const rows = await db.anomalyEpisode.findMany({
+    where: { episodeEnd: { gte: start }, episodeStart: { lt: end } },
+    orderBy: [{ episodeEnd: 'desc' }, { id: 'asc' }],
+    take: MAX_ANOMALY_EPISODES + 1,
+  });
+  const truncated = rows.length > MAX_ANOMALY_EPISODES;
+  const anomalyRows: AnomalyRow[] = [];
+  for (const row of rows.slice(0, MAX_ANOMALY_EPISODES)) {
+    let episodeStart = row.episodeStart;
+    let episodeEnd = row.episodeEnd;
+    let readings = row.readings;
+    let lost = row.lostKwh;
+    if (episodeStart < start || episodeEnd >= end) {
+      const first =
+        episodeStart < start
+          ? episodeStart.getTime() +
+            Math.ceil((start.getTime() - episodeStart.getTime()) / STEP_MS) *
+              STEP_MS
+          : episodeStart.getTime();
+      const last =
+        episodeEnd >= end
+          ? episodeStart.getTime() +
+            Math.floor((end.getTime() - 1 - episodeStart.getTime()) / STEP_MS) *
+              STEP_MS
+          : episodeEnd.getTime();
+      const clipped = Math.round((last - first) / STEP_MS) + 1;
+      const minimum =
+        row.kind === 'stuck_sensor'
+          ? STUCK_SENSOR_MIN_READINGS
+          : ANOMALY_MIN_READINGS;
+      if (last < first || clipped < minimum) continue;
+      if (lost !== null) lost = (lost * Math.min(clipped, readings)) / readings;
+      episodeStart = new Date(first);
+      episodeEnd = new Date(last);
+      readings = Math.min(clipped, readings);
+    }
+    anomalyRows.push({
+      kind: row.kind as AnomalyKind,
+      metric: row.metric as AnomalyMetric | null,
+      turbine_id: row.turbineId,
+      farm_id: row.farmId,
+      episode_start: episodeStart,
+      episode_end: episodeEnd,
+      readings,
+      value: row.value,
+      wind_speed_ms: row.windSpeedMs,
+      lost_kwh: lost,
+    });
+  }
+  anomalyRows.sort((a, b) => b.episode_end.getTime() - a.episode_end.getTime());
+  return {
+    ...toAnomaliesResponse(start, end, anomalyRows),
+    ...(truncated && { truncated: true as const }),
+  };
+}
 
 /**
  * Anomaly episodes in [from, to) on measurement time, computed on read in one SQL statement over
- * the telemetry table (no stored state):
+ * the telemetry table (no stored state). It scans every reading of the range, so it is for small
+ * fleets and for checking the rollup against (the API and MCP read `anomaliesInRange`):
  *
  * - `low_power_in_wind`: readings with wind >= 10 m/s and power < 0.1 x the expected power, in
  *   runs of >= 3 consecutive readings of one turbine. Expected power is the median power of all
@@ -416,102 +363,22 @@ export async function listAnomalies(
   { from, to }: TimeRange,
 ): Promise<AnomaliesResponse> {
   const { start, end } = parseRange(from, to);
-  const step = ANOMALY_STEP_MINUTES;
 
-  const rows = await db.$queryRaw<AnomalyRow[]>`
-    WITH r AS NOT MATERIALIZED (
-      SELECT turbine_id, farm_id, timestamp,
-             power_output_kw AS p, wind_speed_ms AS w, rotor_rpm AS rpm, gearbox_temp_c AS g,
-             floor(wind_speed_ms)::int AS bin
-      FROM telemetry
-      WHERE timestamp >= ${start} AND timestamp < ${end}
-    ),
-    -- MATERIALIZED: else the planner inlines it and re-aggregates the table for every reading.
-    bins AS MATERIALIZED (
-      SELECT bin, percentile_cont(0.5) WITHIN GROUP (ORDER BY p) AS expected
-      FROM r
-      GROUP BY bin
-      HAVING count(*) >= ${EXPECTED_POWER_MIN_BIN_READINGS}::int
-    ),
-    judged AS (
-      SELECT r.*, e.expected,
-             (r.w >= ${LOW_POWER_MIN_WIND_MS}::float8
-              AND r.p < CASE WHEN e.expected IS NULL THEN ${LOW_POWER_FALLBACK_KW}::float8
-                             ELSE ${LOW_POWER_MAX_RATIO}::float8 * e.expected END) AS low
-      FROM r
-      LEFT JOIN LATERAL (
-        SELECT bins.expected FROM bins
-        WHERE r.w >= ${LOW_POWER_MIN_WIND_MS}::float8 AND bins.bin <= r.bin
-        ORDER BY bins.bin DESC LIMIT 1
-      ) e ON true
-    ),
-    -- One pass per turbine (a single sort): the previous reading's values, then a run id per
-    -- rule that increments whenever the run breaks (gap, or the condition doesn't hold again).
-    prev AS (
-      SELECT *,
-             timestamp - lag(timestamp) OVER t <= make_interval(mins => ${step}::int) AS contiguous,
-             lag(low) OVER t AS prev_low,
-             lag(g) OVER t AS prev_g,
-             lag(w) OVER t AS prev_w,
-             lag(rpm) OVER t AS prev_rpm
-      FROM judged
-      WINDOW t AS (PARTITION BY turbine_id ORDER BY timestamp)
-    ),
-    marked AS MATERIALIZED (
-      SELECT *,
-             sum(CASE WHEN low AND prev_low AND contiguous THEN 0 ELSE 1 END) OVER t AS low_run,
-             sum(CASE WHEN g = prev_g AND contiguous THEN 0 ELSE 1 END) OVER t AS g_run,
-             sum(CASE WHEN w = prev_w AND contiguous THEN 0 ELSE 1 END) OVER t AS w_run,
-             sum(CASE WHEN rpm = prev_rpm AND contiguous THEN 0 ELSE 1 END) OVER t AS rpm_run
-      FROM prev
-      WINDOW t AS (PARTITION BY turbine_id ORDER BY timestamp)
-    ),
-    low_episodes AS (
-      SELECT 'low_power_in_wind'::text AS kind, NULL::text AS metric,
-             turbine_id, max(farm_id) AS farm_id,
-             min(timestamp) AS episode_start, max(timestamp) AS episode_end,
-             count(*)::int AS readings,
-             NULL::float8 AS value,
-             round(avg(w)::numeric, 2)::float8 AS wind_speed_ms,
-             round((sum(CASE WHEN expected IS NOT NULL THEN greatest(0, expected - p) END)
-                    * ${step}::float8 / 60)::numeric, 1)::float8 AS lost_kwh
-      FROM marked
-      WHERE low
-      GROUP BY turbine_id, low_run
-      HAVING count(*) >= ${ANOMALY_MIN_READINGS}::int
-    ),
-    -- A run of >= N equal values: its run id equals the id N-1 readings earlier. Finding those
-    -- (turbine, metric, run) keys first means only their readings are grouped below, instead of
-    -- a group per reading (~1M hash groups spilling to disk on a week of a 200-turbine fleet).
-    long_runs AS (
-      SELECT DISTINCT x.turbine_id, m.metric, m.run
-      FROM (
-        SELECT turbine_id,
-               g_run, lag(g_run, ${STUCK_SENSOR_MIN_READINGS - 1}::int) OVER t AS g_back,
-               w_run, lag(w_run, ${STUCK_SENSOR_MIN_READINGS - 1}::int) OVER t AS w_back,
-               rpm_run, lag(rpm_run, ${STUCK_SENSOR_MIN_READINGS - 1}::int) OVER t AS rpm_back
-        FROM marked
-        WINDOW t AS (PARTITION BY turbine_id ORDER BY timestamp)
-      ) x
-      CROSS JOIN LATERAL (VALUES
-        ('gearboxTempC', x.g_run, x.g_back),
-        ('windSpeedMs', x.w_run, x.w_back),
-        ('rotorRpm', x.rpm_run, x.rpm_back)
-      ) AS m(metric, run, back)
-      WHERE m.run = m.back
-    ),
-    stuck_episodes AS (
-      ${Prisma.join(
-        STUCK_METRICS.map(({ metric, value, run }) =>
-          stuckEpisodes(metric, value, run),
-        ),
-        ' UNION ALL ',
-      )}
-    )
-    SELECT * FROM low_episodes
-    UNION ALL
-    SELECT * FROM stuck_episodes
-    ORDER BY episode_end DESC, turbine_id, kind, metric`;
+  const rows = await db.$queryRaw<AnomalyRow[]>(
+    anomalyEpisodesSql({
+      readings: Prisma.sql`
+        SELECT turbine_id, farm_id, timestamp,
+               power_output_kw AS p, wind_speed_ms AS w, rotor_rpm AS rpm, gearbox_temp_c AS g,
+               floor(wind_speed_ms)::int AS bin
+        FROM telemetry
+        WHERE timestamp >= ${start} AND timestamp < ${end}`,
+      bins: Prisma.sql`
+        SELECT bin, percentile_cont(0.5) WITHIN GROUP (ORDER BY p) AS expected
+        FROM r
+        GROUP BY bin
+        HAVING count(*) >= ${EXPECTED_POWER_MIN_BIN_READINGS}::int`,
+    }),
+  );
   return toAnomaliesResponse(start, end, rows);
 }
 
@@ -567,13 +434,36 @@ export interface TelemetryReport {
   readings: TelemetryResponse[];
 }
 
-/** All readings of a farm or a turbine measured in [from, to), with their triggered rules. */
+/** The most readings one report loads; a bigger one is refused (400) before any row is read. */
+export const MAX_REPORT_ROWS = 100_000;
+
+/**
+ * All readings of a farm or a turbine measured in [from, to), with their triggered rules. At most
+ * MAX_REPORT_ROWS: a bigger report is a `QueryInputError` (400) that says so, found by counting up
+ * to the cap first (an index range scan over the pruned partitions), before loading any row.
+ * `reportSummary` has no cap: it aggregates in Postgres.
+ */
 export async function reportTelemetry(
   db: ReadClient,
   query: ReportQuery,
 ): Promise<TelemetryReport> {
   const scope = await reportScope(db, query);
   const { start, end } = parseRange(query.from, query.to);
+  const [{ n }] = await db.$queryRaw<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM (
+      SELECT 1 FROM telemetry r
+      WHERE ${
+        scope.kind === 'farm'
+          ? Prisma.sql`r.farm_id = ${scope.id}`
+          : Prisma.sql`r.turbine_id = ${scope.id}`
+      } AND r.timestamp >= ${start} AND r.timestamp < ${end}
+      LIMIT ${MAX_REPORT_ROWS + 1}) c`;
+  if (n > MAX_REPORT_ROWS) {
+    throw new QueryInputError(
+      `This report would have more than ${MAX_REPORT_ROWS.toLocaleString('en-US')} readings: ` +
+        'choose a shorter range or a single turbine',
+    );
+  }
 
   const readings = await db.telemetry.findMany({
     where: { ...scopeWhere(scope), timestamp: { gte: start, lt: end } },
@@ -653,7 +543,8 @@ export async function reportSummary(
              count(*)::int AS triggers,
              count(DISTINCT r.id)::int AS readings
       FROM telemetry r
-      JOIN telemetry_alerts ta ON ta.telemetry_id = r.id
+      JOIN telemetry_alerts ta ON ta.telemetry_id = r.id AND ta.reading_timestamp = r.timestamp
+        AND ta.reading_timestamp >= ${start} AND ta.reading_timestamp < ${end}
       JOIN alerts_config c ON c.id = ta.alert_id
       WHERE ${where}
       GROUP BY ROLLUP (c.alert_level)`,

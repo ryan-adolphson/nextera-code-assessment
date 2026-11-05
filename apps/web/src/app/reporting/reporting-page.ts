@@ -1,5 +1,5 @@
 import { DecimalPipe } from '@angular/common';
-import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Field, FormField, FormRoot, form, required, validate } from '@angular/forms/signals';
 import { MatAutocomplete, MatAutocompleteTrigger } from '@angular/material/autocomplete';
 import { MatButton } from '@angular/material/button';
@@ -16,8 +16,10 @@ import {
   MatEndDate,
   MatStartDate,
 } from '@angular/material/datepicker';
-import { MatError, MatFormField, MatLabel, MatSuffix } from '@angular/material/form-field';
+import { MatError, MatFormField, MatHint, MatLabel, MatSuffix } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
+import { MatProgressSpinner } from '@angular/material/progress-spinner';
+import { errorMessage, statusOf } from '../core/http-errors';
 import { AlertsCell } from '../alerting/alerts-cell';
 import { AlertSeries } from '../charts/alert-series';
 import { ChartGroup } from '../charts/chart-group';
@@ -28,6 +30,7 @@ import { NOW } from '../core/clock';
 import { dayOf, dayRange, defaultDays, lastDay, pickerDate, rangeError } from '../core/days';
 import { TimeZoneSettings } from '../core/time-zone';
 import { Telemetry } from '../fleet/fleet.model';
+import { FleetApi } from '../fleet/fleet-api.service';
 import { FleetStore } from '../fleet/fleet.store';
 import { METRICS } from '../fleet/metrics';
 import { latestLoad } from '../ui/latest-load';
@@ -80,10 +83,12 @@ interface ReportModel {
     MatEndDate,
     MatError,
     MatFormField,
+    MatHint,
     MatInput,
     MatLabel,
     MatOptgroup,
     MatOption,
+    MatProgressSpinner,
     MatStartDate,
     MatSuffix,
     FormField,
@@ -140,19 +145,35 @@ export class ReportingPage {
     pickerDate(defaultDays(this.now(), this.tz.zone()).end, this.tz.zone()),
   );
 
+  private readonly fleetApi = inject(FleetApi);
+  /** The turbines matching the typed text, from the server (the fleet is too big to list). */
+  private readonly turbineSearch = latestLoad((q: string) => this.fleetApi.searchTurbines(q));
+  /**
+   * Farms come from the summaries the shell holds; turbines are searched on the server as the
+   * user types (UI seam: `turbineSearching` for a spinner, `turbineSearchFailed` for a hint).
+   */
   private readonly options = computed(() =>
-    scopeOptions(this.fleet.farms(), this.fleet.turbines()),
+    scopeOptions(this.fleet.farms(), this.turbineSearch.value() ?? []),
   );
+  protected readonly turbineSearching = this.turbineSearch.loading;
+  protected readonly turbineSearchFailed = this.turbineSearch.failed;
+  /** A search has answered (the turbines listed may belong to text typed a moment ago). */
+  protected readonly turbineSearched = computed(() => this.turbineSearch.value() !== null);
   /** The autocomplete's `displayWith`: a chosen option's label, or the typed text. */
   protected readonly displayOption = (value: ScopeValue): string =>
     typeof value === 'string' ? value : (value?.label ?? '');
   /** What was typed (or the chosen option's label), to filter the options by. */
   private readonly typed = computed(() => this.displayOption(this.model().scope));
-  /** The autocomplete's groups, filtered by what was typed. */
+  /** The autocomplete's groups: farms filtered by what was typed, turbines as the server found them. */
   protected readonly filtered = computed(() => ({
     farms: filterOptions(this.options().farms, this.typed()),
-    turbines: filterOptions(this.options().turbines, this.typed()),
+    turbines: this.searchText() ? this.options().turbines : [],
   }));
+  /** The typed text to search turbines for (nothing once an option is chosen or for an empty field). */
+  protected readonly searchText = computed(() => {
+    const scope = this.model().scope;
+    return typeof scope === 'string' ? scope.trim() : '';
+  });
 
   /** The latest run's report (an earlier run's late answer is dropped); kept when a run fails. */
   private readonly reportLoad = latestLoad(
@@ -162,6 +183,15 @@ export class ReportingPage {
   protected readonly report = this.reportLoad.value;
   protected readonly loading = this.reportLoad.loading;
   protected readonly failed = this.reportLoad.failed;
+  /**
+   * Why the run failed. A 400 (a range or a size the API refuses, e.g. a farm report over 100,000
+   * readings) carries a clear message to show as is; retrying it would fail again, so it has no
+   * Retry. Anything else gets the generic text.
+   */
+  protected readonly rejection = computed(() => {
+    const error = this.reportLoad.error();
+    return statusOf(error) === 400 ? errorMessage(error) : null;
+  });
 
   // --- What the report shows ---------------------------------------------------------------
   protected readonly readings = computed(() => this.report()?.readings ?? []);
@@ -199,7 +229,17 @@ export class ReportingPage {
 
   protected readonly paging = paginate(this.readings, 50, [25, 50, 100, 250]);
 
+  private searchTimer?: ReturnType<typeof setTimeout>;
+
   constructor() {
+    // Search turbines 250 ms after the last keystroke; a newer search replaces an older one.
+    effect(() => {
+      const text = this.searchText();
+      clearTimeout(this.searchTimer);
+      if (!text) return;
+      this.searchTimer = setTimeout(() => untracked(() => this.turbineSearch.run(text)), 250);
+    });
+    inject(DestroyRef).onDestroy(() => clearTimeout(this.searchTimer));
     // A zone change (Settings) re-runs a report that was run, for the same calendar days in the
     // new zone (the form keeps the picked dates); nothing is run before the first Run.
     let zone = this.tz.zone();

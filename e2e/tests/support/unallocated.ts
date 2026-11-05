@@ -1,20 +1,20 @@
-import { expect, type APIRequestContext } from '@playwright/test';
-import { API_URL } from './session.js';
+import { expect, type APIRequestContext } from "@playwright/test";
+import { API_URL } from "./session.js";
 
 /** The fields of an /api/unallocated-turbines entry the tests need. */
 export interface UnallocatedEntry {
   id: string;
   turbineId: string;
   reportedFarmId: string;
-  kind: 'unknown_turbine' | 'farm_mismatch';
-  status: 'pending' | 'blocked';
+  kind: "unknown_turbine" | "farm_mismatch";
+  status: "pending" | "blocked";
   heldCount: number;
 }
 
 export async function listUnallocated(
   request: APIRequestContext,
   token: string,
-  status: 'pending' | 'blocked',
+  status: "pending" | "blocked",
 ): Promise<UnallocatedEntry[]> {
   const response = await request.get(`${API_URL}/unallocated-turbines`, {
     params: { status },
@@ -35,16 +35,26 @@ export async function removeUnallocated(
   match: (entry: UnallocatedEntry) => boolean,
 ): Promise<void> {
   const headers = { Authorization: `Bearer ${token}` };
-  for (const entry of (await listUnallocated(request, token, 'pending')).filter(match)) {
-    const blocked = await request.post(`${API_URL}/unallocated-turbines/${entry.id}/block`, {
-      headers,
-    });
+  for (const entry of (await listUnallocated(request, token, "pending")).filter(
+    match,
+  )) {
+    const blocked = await request.post(
+      `${API_URL}/unallocated-turbines/${entry.id}/block`,
+      {
+        headers,
+      },
+    );
     expect([200, 404]).toContain(blocked.status());
   }
-  for (const entry of (await listUnallocated(request, token, 'blocked')).filter(match)) {
-    const unblocked = await request.post(`${API_URL}/unallocated-turbines/${entry.id}/unblock`, {
-      headers,
-    });
+  for (const entry of (await listUnallocated(request, token, "blocked")).filter(
+    match,
+  )) {
+    const unblocked = await request.post(
+      `${API_URL}/unallocated-turbines/${entry.id}/unblock`,
+      {
+        headers,
+      },
+    );
     expect([204, 404]).toContain(unblocked.status());
   }
 }

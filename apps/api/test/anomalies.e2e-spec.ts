@@ -1,4 +1,9 @@
-import { listAnomalies, seedFromCsv } from '@nextera/shared';
+import {
+  anomaliesInRange,
+  listAnomalies,
+  runAnomalyRollup,
+  seedFromCsv,
+} from '@nextera/shared';
 import { SEED_DATA_DIR } from '@nextera/testing/seed-data';
 import { createTestApp, type TestApp } from './helpers.js';
 
@@ -24,7 +29,11 @@ interface Body {
 const BASE = Date.parse('2026-02-01T00:00:00Z');
 const at = (minutes: number) => new Date(BASE + minutes * 60_000);
 
-/** GET /api/anomalies and the shared query on the CSV fixture, then on constructed fleets. */
+/**
+ * GET /api/anomalies on the CSV fixture, then on constructed fleets. The route reads the stored
+ * episodes, so each fleet is rolled up (`runAnomalyRollup`, the hourly job's code) after its
+ * readings are inserted; the rules themselves are the same SQL as the on-read `listAnomalies`.
+ */
 describe('Anomalies API (e2e)', () => {
   let t: TestApp;
   const get = (query: string, role: 'viewer' | 'owner' = 'viewer') =>
@@ -67,9 +76,12 @@ describe('Anomalies API (e2e)', () => {
       wind: bin + (i % 50) / 100,
       power,
     }));
+  /** Rolls up everything from `day` as of `now`, like the hourly job after a backfill. */
+  const rollup = (day: string, now: Date) =>
+    runAnomalyRollup(t.prisma, { mode: { kind: 'from', day }, now });
   const reset = async () => {
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
+      .$executeRaw`TRUNCATE TABLE turbine_latest, farm_live_summary, anomaly_episodes, telemetry_alerts, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
     await seedFromCsv(t.prisma, SEED_DATA_DIR);
     await t.prisma.$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry`;
     await t.prisma.turbine.createMany({
@@ -87,15 +99,16 @@ describe('Anomalies API (e2e)', () => {
   });
   afterAll(async () => {
     await t.prisma
-      .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
+      .$executeRaw`TRUNCATE TABLE turbine_latest, farm_live_summary, anomaly_episodes, telemetry_alerts, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
     await t.app.close();
   });
 
   describe('the CSV fixture', () => {
     beforeAll(async () => {
       await t.prisma
-        .$executeRaw`TRUNCATE TABLE telemetry_alerts, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
+        .$executeRaw`TRUNCATE TABLE turbine_latest, farm_live_summary, anomaly_episodes, telemetry_alerts, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms`;
       await seedFromCsv(t.prisma, SEED_DATA_DIR);
+      await rollup('2026-01-01', new Date('2026-01-03T00:00:00Z'));
     });
 
     it('finds the TURB001 stop (the short TURB002 gearbox fault is not a stuck sensor)', async () => {
@@ -134,11 +147,27 @@ describe('Anomalies API (e2e)', () => {
       expect(ends).toEqual([...ends].sort().reverse());
     });
 
-    it('matches the shared query', async () => {
+    it('matches the shared query, and finds what the on-read computation finds', async () => {
       const q = { from: '2026-01-01T00:00:00Z', to: '2026-01-03T00:00:00Z' };
-      const direct = await listAnomalies(t.prisma, q);
       const res = await get(`?from=${q.from}&to=${q.to}`);
-      expect(await res.json()).toEqual(direct);
+      const body = (await res.json()) as Body;
+      expect(body).toEqual(await anomaliesInRange(t.prisma, q));
+      const onRead = await listAnomalies(t.prisma, q);
+      const key = (a: Episode) =>
+        [a.turbineId, a.kind, a.metric, a.start, a.end, a.readings].join('|');
+      expect(body.anomalies.map(key)).toEqual(onRead.anomalies.map(key));
+    });
+
+    it('clips an episode that crosses the range and drops one left too short', async () => {
+      // the stop is 13:40, 13:45, 13:50: a range from 13:45 keeps 2 readings < 3 → none
+      const short = (await (
+        await get('?from=2026-01-01T13:45:00Z&to=2026-01-03T00:00:00Z')
+      ).json()) as Body;
+      expect(short.anomalies).toEqual([]);
+      const edge = (await (
+        await get('?from=2026-01-01T13:40:00Z&to=2026-01-01T13:55:00Z')
+      ).json()) as Body;
+      expect(edge.anomalies).toHaveLength(1);
     });
   });
 
@@ -219,6 +248,7 @@ describe('Anomalies API (e2e)', () => {
       // XG: power 10 % of expected is not below the limit (2000 -> 200): 200 passes, 199.9 fails.
       await insert('XG', windIn(12, 3, 0, 200));
       await insert('XH', windIn(12, 3, 0, 199.9));
+      await rollup('2026-02-01', at(400));
     });
 
     it('needs 3 consecutive readings, with no gap and no normal reading between', async () => {
@@ -261,6 +291,7 @@ describe('Anomalies API (e2e)', () => {
       // 3 readings: no bin has 20, so the ratio can't be judged and < 100 kW counts as low.
       await insert('XA', windIn(15, 3, 0, 50));
       await insert('XB', windIn(15, 3, 0, 150));
+      await rollup('2026-02-01', at(400));
     });
 
     it('treats power < 100 kW as low, with no estimate', async () => {
@@ -311,6 +342,7 @@ describe('Anomalies API (e2e)', () => {
       // XH: a plateau, not a sensor fault: everything flat, power too (at 0 and at rated).
       await insert('XH', run(0, 12, { power: 0, gearbox: 70 }));
       await insert('XI', run(0, 12, { power: 3500, gearbox: 70 }));
+      await rollup('2026-02-01', at(400));
     });
 
     it('needs 12 consecutive equal readings of gearbox, wind or rotor, with no gap, while power moves by >= 50 kW', async () => {

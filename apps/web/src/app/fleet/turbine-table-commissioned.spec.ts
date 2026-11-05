@@ -9,8 +9,8 @@ import { Role } from '../core/auth/roles';
 import { RowGlide } from '../ui/row-glide';
 import { TurbineResponse } from './fleet.model';
 import { FLASH_MS } from './fleet.store';
-import { largeFleetFixture, mixedFleetFixture, openFleet } from './testing';
-import { ORDER_MAX_HOLD_MS } from './turbine-table';
+import { FarmOverview, largeFleetFixture, mixedFleetFixture, openFleet } from './testing';
+import { LIVE_BATCH_MS } from './turbine-page.store';
 
 /**
  * Changing a turbine's commissioned state in the turbines table (the mixed fleet at
@@ -22,8 +22,10 @@ describe('TurbineTable commissioned control', () => {
   let app: Awaited<ReturnType<typeof openFleet>>;
   let reorder: Mock<RowGlide['reorder']>;
   let patch: Subject<TurbineResponse>;
+  let farms: FarmOverview[];
 
-  async function open(url = '/turbines', role: Role = 'owner', farms = mixedFleetFixture()) {
+  async function open(url = '/turbines', role: Role = 'owner', fleet = mixedFleetFixture()) {
+    farms = fleet;
     app = await openFleet(url, () => CLOCK, farms, undefined, role);
     await app.stable();
     patch = new Subject<TurbineResponse>();
@@ -60,27 +62,40 @@ describe('TurbineTable commissioned control', () => {
     longitude: -100,
     commissioned,
   });
-  function click(id: string) {
-    control(id).click();
+  /** Runs the change detection and the microtasks a page request and its answer need. */
+  async function flush() {
+    TestBed.tick();
+    await vi.advanceTimersByTimeAsync(0);
     TestBed.tick();
   }
-  function settle(run: () => void) {
+  async function click(id: string) {
+    control(id).click();
+    await flush();
+  }
+  async function settle(run: () => void) {
     run();
-    TestBed.tick();
+    await flush();
+  }
+  /** The server saved the change: later page requests see it (the fake API reads `farms`). */
+  function commit(id: string, commissioned: boolean) {
+    for (const farm of farms) {
+      for (const t of farm.turbines) if (t.id === id) t.commissioned = commissioned;
+    }
+    return answer(id, commissioned);
   }
   async function wait(ms: number) {
     await vi.advanceTimersByTimeAsync(ms);
     TestBed.tick();
   }
-  function choose(testId: string, value: string) {
+  async function choose(testId: string, value: string) {
     const select = app.root().querySelector<HTMLSelectElement>(`[data-testid=${testId}]`)!;
     select.value = value;
     select.dispatchEvent(new Event('change'));
-    TestBed.tick();
+    await flush();
   }
-  function sortByCommissioned() {
+  async function sortByCommissioned() {
     app.root().querySelector<HTMLElement>('[data-testid=sort-commissioned]')!.click();
-    TestBed.tick();
+    await flush();
   }
 
   describe('by role', () => {
@@ -113,7 +128,7 @@ describe('TurbineTable commissioned control', () => {
         expect(app.text(cell('TURB001'))).toBe('');
         expect(cell('TURB001').getAttribute('data-commissioned')).toBe('true');
 
-        patch.next(answer('TURB007', true));
+        patch.next(commit('TURB007', true));
         patch.complete();
         await (await toggle('TURB007')).toggle();
         expect(app.api.setCommissioned).toHaveBeenCalledWith('TURB007', true);
@@ -124,7 +139,7 @@ describe('TurbineTable commissioned control', () => {
     it('is on the farm page too', async () => {
       await open('/farms/FARM02');
 
-      click('TURB007');
+      await click('TURB007');
 
       expect(app.api.setCommissioned).toHaveBeenCalledWith('TURB007', true);
     });
@@ -133,7 +148,7 @@ describe('TurbineTable commissioned control', () => {
   it('updates the cell at once and waits, disabled, until the answer', async () => {
     await open();
 
-    click('TURB007');
+    await click('TURB007');
 
     expect(app.api.setCommissioned).toHaveBeenCalledWith('TURB007', true);
     expect(isOn('TURB007')).toBe(true);
@@ -142,7 +157,7 @@ describe('TurbineTable commissioned control', () => {
     expect(cell('TURB007').getAttribute('data-commissioned')).toBe('true');
     expect(isSaving('TURB001')).toBe(false);
 
-    settle(() => patch.next(answer('TURB007', true)));
+    await settle(() => patch.next(commit('TURB007', true)));
 
     expect(isOn('TURB007')).toBe(true);
     expect(isSaving('TURB007')).toBe(false);
@@ -153,8 +168,8 @@ describe('TurbineTable commissioned control', () => {
     await open();
     expect(error()).toBeNull();
 
-    click('TURB007');
-    settle(() => patch.error(new HttpErrorResponse({ status: 500 })));
+    await click('TURB007');
+    await settle(() => patch.error(new HttpErrorResponse({ status: 500 })));
 
     expect(isOn('TURB007')).toBe(false);
     expect(isSaving('TURB007')).toBe(false);
@@ -165,7 +180,7 @@ describe('TurbineTable commissioned control', () => {
     );
 
     app.api.setCommissioned.mockReturnValue(of(answer('TURB007', true)));
-    click('TURB007');
+    await click('TURB007');
 
     expect(error()).toBeNull();
     expect(isOn('TURB007')).toBe(true);
@@ -179,15 +194,15 @@ describe('TurbineTable commissioned control', () => {
       return failed;
     });
 
-    click('TURB007');
+    await click('TURB007');
 
     expect(isOn('TURB007')).toBe(false);
   });
 
   it('forgets the error when the table goes away', async () => {
     await open();
-    click('TURB007');
-    settle(() => patch.error(new HttpErrorResponse({ status: 500 })));
+    await click('TURB007');
+    await settle(() => patch.error(new HttpErrorResponse({ status: 500 })));
     expect(error()).not.toBeNull();
 
     await TestBed.inject(Router).navigateByUrl('/settings');
@@ -200,11 +215,11 @@ describe('TurbineTable commissioned control', () => {
 
   it('is not flipped back by a fleet.changed reload while saving', async () => {
     await open();
-    click('TURB007');
+    await click('TURB007');
 
-    settle(() => app.sse.pushEvent('fleet.changed', { turbineId: 'TURB007' }));
+    await settle(() => app.sse.pushEvent('fleet.changed', { turbineId: 'TURB007' }));
 
-    expect(app.api.farms).toHaveBeenCalledTimes(2);
+    expect(app.api.farmSummaries).toHaveBeenCalledTimes(2);
     expect(isOn('TURB007')).toBe(true);
     expect(isSaving('TURB007')).toBe(true);
   });
@@ -215,55 +230,65 @@ describe('TurbineTable commissioned control', () => {
     const rowClick = vi.fn();
     row('TURB007').addEventListener('click', rowClick);
 
-    click('TURB007');
+    await click('TURB007');
 
     expect(rowClick).not.toHaveBeenCalled();
     expect(TestBed.inject(Router).url).toBe(url);
   });
 
   describe('filter', () => {
-    it('follows the new value at once, also on a rollback, without a glide', async () => {
+    it('keeps the row until the save is confirmed, then loads the page without it', async () => {
       await open();
-      choose('commissioned-filter', 'no');
+      await choose('commissioned-filter', 'no');
       expect(ids()).toEqual(['TURB007']);
 
-      click('TURB007');
+      await click('TURB007');
+      expect(ids()).toEqual(['TURB007']); // shown as saving, not yet gone
+      expect(isOn('TURB007')).toBe(true);
+
+      await settle(() => patch.next(commit('TURB007', true)));
       expect(ids()).toEqual([]);
-      expect(app.text(app.root().querySelector('[data-testid=turbine-count]'))).toContain('0 of');
+      expect(app.text(count())).toContain('0 of');
+    });
 
-      settle(() => patch.error(new HttpErrorResponse({ status: 500 })));
+    it('keeps the row, switched back, when the save fails', async () => {
+      await open();
+      await choose('commissioned-filter', 'no');
+
+      await click('TURB007');
+      await settle(() => patch.error(new HttpErrorResponse({ status: 500 })));
+
       expect(ids()).toEqual(['TURB007']);
+      expect(isOn('TURB007')).toBe(false);
 
-      await wait(ORDER_MAX_HOLD_MS);
+      await wait(LIVE_BATCH_MS);
       expect(reorder).not.toHaveBeenCalled();
     });
 
-    it('ends a glide in flight, like any filter change', async () => {
+    it('asks the server for the commissioning filter', async () => {
       await open();
-      choose('commissioned-filter', 'yes');
-      const cancel = vi.spyOn(RowGlide.prototype, 'cancel');
+      await choose('commissioned-filter', 'yes');
 
-      click('TURB001');
-
-      expect(ids()).not.toContain('TURB001');
-      expect(cancel).toHaveBeenCalledOnce();
+      expect(app.api.turbines).toHaveBeenLastCalledWith(
+        expect.objectContaining({ commissioned: true }),
+      );
+      expect(ids()).not.toContain('TURB007');
     });
   });
 
   describe('order', () => {
-    it('moves the row at once when sorted by Commissioned: no glide, no flash', async () => {
+    it('moves the row when sorted by Commissioned once the save is confirmed: no glide, no flash', async () => {
       await open();
-      sortByCommissioned();
+      await sortByCommissioned();
       expect(ids()).toEqual(['TURB001', 'TURB002', 'TURB003', 'TURB005', 'TURB006', 'TURB007']);
 
-      click('TURB001');
+      await click('TURB001');
+      expect(ids()).toEqual(['TURB001', 'TURB002', 'TURB003', 'TURB005', 'TURB006', 'TURB007']);
+
+      await settle(() => patch.next(commit('TURB001', false)));
+      await wait(LIVE_BATCH_MS);
+
       expect(ids()).toEqual(['TURB002', 'TURB003', 'TURB005', 'TURB006', 'TURB001', 'TURB007']);
-      const moved = ids();
-
-      settle(() => patch.next(answer('TURB001', false)));
-      await wait(ORDER_MAX_HOLD_MS);
-
-      expect(ids()).toEqual(moved);
       expect(reorder).not.toHaveBeenCalled();
       expect(flashing()).toEqual([]);
     });
@@ -272,56 +297,90 @@ describe('TurbineTable commissioned control', () => {
       await open();
       const before = ids();
 
-      click('TURB007');
+      await click('TURB007');
       expect(flashing()).toEqual([]);
-      settle(() => patch.next(answer('TURB007', true)));
-      await wait(Math.max(ORDER_MAX_HOLD_MS, FLASH_MS));
+      await settle(() => patch.next(commit('TURB007', true)));
+      await wait(Math.max(LIVE_BATCH_MS, FLASH_MS));
 
       expect(ids()).toEqual(before);
       expect(reorder).not.toHaveBeenCalled();
       expect(flashing()).toEqual([]);
     });
+
+    it('loads the page again after a save only when a filter or the sort looks at the value', async () => {
+      await open();
+      const loads = app.api.turbines.mock.calls.length;
+
+      await click('TURB007');
+      await settle(() => patch.next(commit('TURB007', true)));
+
+      expect(app.api.turbines.mock.calls.length).toBe(loads);
+    });
+
+    it('loads the page again when a page request overlapped the save', async () => {
+      await open();
+      await click('TURB007');
+      const loads = app.api.turbines.mock.calls.length;
+      await settle(() => app.sse.status('open')); // a refetch while the PATCH is out
+      expect(app.api.turbines.mock.calls.length).toBe(loads + 1);
+
+      await settle(() => patch.next(commit('TURB007', true)));
+
+      expect(app.api.turbines.mock.calls.length).toBe(loads + 2);
+      expect(isOn('TURB007')).toBe(true);
+    });
   });
 
   describe('focus', () => {
-    function focusAndClick(id: string) {
+    async function focusAndClick(id: string) {
       control(id).focus();
-      click(id);
+      await click(id);
     }
     const active = () => document.activeElement;
 
     it('stays on the switch while saving, and a second click is ignored', async () => {
       await open();
 
-      focusAndClick('TURB007');
+      await focusAndClick('TURB007');
       expect(control('TURB007').disabled).toBe(false);
       expect(active()).toBe(control('TURB007'));
 
-      click('TURB007');
+      await click('TURB007');
       expect(app.api.setCommissioned).toHaveBeenCalledOnce();
 
-      settle(() => patch.next(answer('TURB007', true)));
+      await settle(() => patch.next(commit('TURB007', true)));
       expect(active()).toBe(control('TURB007'));
     });
 
-    it('follows the row when a Commissioned sort moves it, also on a rollback', async () => {
+    it('follows the row when a Commissioned sort moves it after the save', async () => {
       await open();
-      sortByCommissioned();
+      await sortByCommissioned();
 
-      focusAndClick('TURB001');
+      await focusAndClick('TURB001');
+      expect(ids().indexOf('TURB001')).toBe(0);
+
+      await settle(() => patch.next(commit('TURB001', false)));
       expect(ids().indexOf('TURB001')).toBe(4);
       expect(active()).toBe(control('TURB001'));
+    });
 
-      settle(() => patch.error(new HttpErrorResponse({ status: 500 })));
+    it('stays on the switch through a rollback', async () => {
+      await open();
+      await sortByCommissioned();
+
+      await focusAndClick('TURB001');
+      await settle(() => patch.error(new HttpErrorResponse({ status: 500 })));
+
       expect(ids().indexOf('TURB001')).toBe(0);
       expect(active()).toBe(control('TURB001'));
     });
 
     it('goes to the match count when a commissioning filter removes the row', async () => {
       await open();
-      choose('commissioned-filter', 'no');
+      await choose('commissioned-filter', 'no');
 
-      focusAndClick('TURB007');
+      await focusAndClick('TURB007');
+      await settle(() => patch.next(commit('TURB007', true)));
 
       expect(ids()).toEqual([]);
       expect(active()).toBe(count());
@@ -330,10 +389,11 @@ describe('TurbineTable commissioned control', () => {
 
     it('goes to the match count when the row sorts onto another page', async () => {
       await open('/turbines', 'owner', largeFleetFixture(30));
-      sortByCommissioned();
+      await sortByCommissioned();
       const first = ids()[0];
 
-      focusAndClick(first);
+      await focusAndClick(first);
+      await settle(() => patch.next(commit(first, false)));
 
       expect(ids()).not.toContain(first);
       expect(active()).toBe(count());
@@ -341,11 +401,12 @@ describe('TurbineTable commissioned control', () => {
 
     it('leaves focus alone when it is not on a switch, or has moved on', async () => {
       await open();
-      sortByCommissioned();
+      await sortByCommissioned();
       const search = app.root().querySelector<HTMLElement>('[data-testid=turbine-filter]')!;
 
       search.focus();
-      click('TURB001');
+      await click('TURB001');
+      await settle(() => patch.next(commit('TURB001', false)));
 
       expect(ids().indexOf('TURB001')).toBe(4);
       expect(active()).toBe(search);

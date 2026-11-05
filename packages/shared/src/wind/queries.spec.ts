@@ -5,7 +5,10 @@ import {
   QueryError,
   QueryInputError,
   QueryNotFoundError,
-  alertsInRange,
+  MAX_REPORT_ROWS,
+  QueryTooLargeError,
+  anomaliesInRange,
+  listFarms,
   checkTimeZone,
   farmWeather,
   getTurbine,
@@ -29,21 +32,6 @@ const rule = (id: string, alertLevel: 'info' | 'warn' | 'error') => ({
   valueMetric: 120,
   alertLevel,
   enabled: alertLevel !== 'info',
-});
-
-const reading = (alerts: { alert: ReturnType<typeof rule> }[] = []) => ({
-  id: 'r1',
-  turbineId: 'TURB002',
-  farmId: 'FARM02',
-  timestamp: new Date('2026-01-02T03:25:00Z'),
-  receivedAt: new Date('2026-01-02T03:26:00Z'),
-  createdAt: new Date('2026-01-02T03:26:01Z'),
-  powerOutputKw: 2200,
-  windSpeedMs: 8.5,
-  rotorRpm: 13,
-  bladePitchDeg: 4,
-  gearboxTempC: 126.5,
-  alerts,
 });
 
 /** SQL text (whitespace collapsed) and bound values of the n-th $queryRaw call. */
@@ -152,20 +140,35 @@ describe('read queries', () => {
           longitude: new Prisma.Decimal('-96'),
         },
       } as never);
-      prisma.telemetry.findFirst.mockResolvedValue(
-        reading([
-          { alert: rule('w', 'warn') },
-          { alert: rule('e', 'error') },
-        ]) as never,
-      );
+      // turbine_latest row, then the (reading id, timestamp) → rule links
+      prisma.$queryRaw
+        .mockResolvedValueOnce([
+          {
+            turbine_id: 'TURB002',
+            farm_id: 'FARM02',
+            reading_id: 'r1',
+            l_timestamp: new Date('2026-01-02T03:25:00Z'),
+            received_at: new Date('2026-01-02T03:26:00Z'),
+            power_output_kw: 2200,
+            wind_speed_ms: 8.5,
+            rotor_rpm: 13,
+            blade_pitch_deg: 4,
+            gearbox_temp_c: 126.5,
+          },
+        ])
+        .mockResolvedValueOnce([
+          { telemetry_id: 'r1', alert_id: 'w' },
+          { telemetry_id: 'r1', alert_id: 'e' },
+        ]);
+      prisma.alertConfig.findMany.mockResolvedValue([
+        rule('w', 'warn'),
+        rule('e', 'error'),
+      ] as never);
 
       const turbine = await getTurbine(prisma, 'TURB002');
 
-      expect(prisma.telemetry.findFirst).toHaveBeenCalledWith({
-        where: { turbineId: 'TURB002' },
-        orderBy: { timestamp: 'desc' }, // measurement time, not arrival
-        include: { alerts: { include: { alert: true } } },
-      });
+      expect(rawQuery(prisma, 0).text).toContain('FROM turbine_latest l');
+      expect(rawQuery(prisma, 1).text).toContain('telemetry_alerts ta');
       expect(turbine).toMatchObject({
         id: 'TURB002',
         farmId: 'FARM02',
@@ -196,7 +199,7 @@ describe('read queries', () => {
           longitude: new Prisma.Decimal('2'),
         },
       } as never);
-      prisma.telemetry.findFirst.mockResolvedValue(null);
+      prisma.$queryRaw.mockResolvedValue([]);
 
       expect((await getTurbine(prisma, 'TURB003')).latest).toBeNull();
     });
@@ -207,7 +210,7 @@ describe('read queries', () => {
       await expect(getTurbine(prisma, 'TURB999')).rejects.toThrow(
         new QueryNotFoundError('Turbine TURB999 not found'),
       );
-      expect(prisma.telemetry.findFirst).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
     });
   });
 
@@ -228,17 +231,173 @@ describe('read queries', () => {
     });
   });
 
-  describe('alertsInRange', () => {
-    it('rejects a range over 31 days without querying', async () => {
-      await expect(
-        alertsInRange(prisma, {
-          from: '2026-01-01T00:00:00Z',
-          to: '2026-02-01T00:00:01Z',
-        }),
-      ).rejects.toThrow(
-        new QueryInputError('The range may span at most 31 days'),
+  describe('listFarms (deprecated)', () => {
+    it('throws QueryTooLargeError above 5,000 turbines before loading anything', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ n: 5001 }]);
+
+      await expect(listFarms(prisma)).rejects.toBeInstanceOf(
+        QueryTooLargeError,
       );
+      expect(prisma.farm.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('anomaliesInRange', () => {
+    const MIN = 60_000;
+    const episode = (over: Record<string, unknown>) => ({
+      id: 'e',
+      kind: 'low_power_in_wind',
+      metric: null,
+      turbineId: 'TURB001',
+      farmId: 'FARM01',
+      episodeStart: new Date('2026-01-01T13:40:00Z'),
+      episodeEnd: new Date('2026-01-01T13:50:00Z'),
+      readings: 3,
+      value: null,
+      windSpeedMs: 15.8,
+      lostKwh: 9,
+      computedAt: new Date(),
+      ...over,
+    });
+
+    it.each([
+      ['to', RANGE.from, RANGE.from, 'to must be after from'],
+      [
+        'long',
+        '2026-01-01T00:00:00Z',
+        '2026-02-01T00:00:01Z',
+        'The range may span at most 31 days',
+      ],
+    ])('rejects a bad range (%s) without querying', async (_, from, to, m) => {
+      await expect(anomaliesInRange(prisma, { from, to })).rejects.toThrow(
+        new QueryInputError(m),
+      );
+      expect(prisma.anomalyEpisode.findMany).not.toHaveBeenCalled();
+    });
+
+    it('selects the episodes overlapping the range, newest end first', async () => {
+      prisma.anomalyEpisode.findMany.mockResolvedValue([]);
+
+      await anomaliesInRange(prisma, RANGE);
+
+      expect(prisma.anomalyEpisode.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            episodeEnd: { gte: new Date(RANGE.from) },
+            episodeStart: { lt: new Date(RANGE.to) },
+          },
+        }),
+      );
+    });
+
+    it('returns an episode inside the range whole', async () => {
+      prisma.anomalyEpisode.findMany.mockResolvedValue([episode({})] as never);
+
+      const result = await anomaliesInRange(prisma, RANGE);
+
+      expect(result.anomalies).toEqual([
+        expect.objectContaining({
+          start: '2026-01-01T13:40:00.000Z',
+          end: '2026-01-01T13:50:00.000Z',
+          readings: 3,
+          estimatedLostKwh: 9,
+        }),
+      ]);
+      expect(result.estimatedLostKwh).toBe(9);
+    });
+
+    it('clips an episode crossing the range start: readings, start and lost kWh pro rata', async () => {
+      // 12 readings 13:00-13:55, 120 kWh; the range starts at 13:30 → 13:30..13:55 = 6 readings
+      prisma.anomalyEpisode.findMany.mockResolvedValue([
+        episode({
+          episodeStart: new Date('2026-01-01T13:00:00Z'),
+          episodeEnd: new Date('2026-01-01T13:55:00Z'),
+          readings: 12,
+          lostKwh: 120,
+        }),
+      ] as never);
+
+      const result = await anomaliesInRange(prisma, {
+        from: '2026-01-01T13:30:00Z',
+        to: '2026-01-02T00:00:00Z',
+      });
+
+      expect(result.anomalies[0]).toMatchObject({
+        start: '2026-01-01T13:30:00.000Z',
+        end: '2026-01-01T13:55:00.000Z',
+        readings: 6,
+        estimatedLostKwh: 60,
+      });
+    });
+
+    it('clips the end to the last reading before `to` (exclusive)', async () => {
+      prisma.anomalyEpisode.findMany.mockResolvedValue([
+        episode({
+          kind: 'stuck_sensor',
+          metric: 'gearboxTempC',
+          episodeStart: new Date('2026-01-01T13:00:00Z'),
+          episodeEnd: new Date('2026-01-01T14:55:00Z'), // 24 readings
+          readings: 24,
+          value: 126.5,
+          windSpeedMs: null,
+          lostKwh: null,
+        }),
+      ] as never);
+
+      const result = await anomaliesInRange(prisma, {
+        from: '2026-01-01T00:00:00Z',
+        to: '2026-01-01T14:00:00Z',
+      });
+
+      // 13:00..13:55 = 12 readings (14:00 is excluded), exactly the stuck minimum
+      expect(result.anomalies[0]).toMatchObject({
+        end: '2026-01-01T13:55:00.000Z',
+        readings: 12,
+        estimatedLostKwh: null,
+      });
+    });
+
+    it('drops an episode whose part in the range is shorter than its rule needs', async () => {
+      prisma.anomalyEpisode.findMany.mockResolvedValue([
+        episode({
+          episodeStart: new Date(Date.parse('2026-01-01T00:00:00Z') - 10 * MIN),
+          episodeEnd: new Date(Date.parse('2026-01-01T00:00:00Z') + 5 * MIN),
+          readings: 4,
+        }), // 00:00 and 00:05 are in the range: 2 < 3
+      ] as never);
+
+      const result = await anomaliesInRange(prisma, RANGE);
+
+      expect(result.anomalies).toEqual([]);
+      expect(result.estimatedLostKwh).toBe(0);
+    });
+
+    it('flags truncation past the cap', async () => {
+      prisma.anomalyEpisode.findMany.mockResolvedValue(
+        Array.from({ length: 5001 }, () => episode({})) as never,
+      );
+
+      const result = await anomaliesInRange(prisma, RANGE);
+
+      expect(result.anomalies).toHaveLength(5000);
+      expect(result.truncated).toBe(true);
+    });
+  });
+
+  describe('reportTelemetry row cap', () => {
+    it('refuses a report over MAX_REPORT_ROWS before loading rows', async () => {
+      prisma.farm.findUnique.mockResolvedValue({
+        id: 'FARM02',
+        name: 'x',
+      } as never);
+      prisma.$queryRaw.mockResolvedValue([{ n: MAX_REPORT_ROWS + 1 }]);
+
+      await expect(
+        reportTelemetry(prisma, { farmId: 'FARM02', ...RANGE }),
+      ).rejects.toThrow(/more than 100,000 readings/);
       expect(prisma.telemetry.findMany).not.toHaveBeenCalled();
+      expect(rawQuery(prisma, 0).text).toContain('LIMIT ?');
+      expect(rawQuery(prisma, 0).values).toContain(MAX_REPORT_ROWS + 1);
     });
   });
 
@@ -386,6 +545,10 @@ describe('read queries', () => {
       ]);
       expect(rawQuery(prisma, 1).text).toContain(
         'GROUP BY ROLLUP (c.alert_level)',
+      );
+      // the alerts join carries the partition key, so both tables prune
+      expect(rawQuery(prisma, 1).text).toContain(
+        'ta.reading_timestamp = r.timestamp AND ta.reading_timestamp >= ? AND ta.reading_timestamp < ?',
       );
     });
 

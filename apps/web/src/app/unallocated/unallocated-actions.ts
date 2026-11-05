@@ -87,7 +87,7 @@ export class UnallocatedActions {
       // The new turbine's own farm name may not be loaded yet: the entry knows the reported one.
       if (entry.reportedFarm) farmNames.set(entry.reportedFarm.id, entry.reportedFarm.name);
       if (entry.currentFarm) farmNames.set(entry.currentFarm.id, entry.currentFarm.name);
-      this.fleet.reloadFleet(entry.turbineId);
+      this.fleet.reloadFleet();
     }
     this.notice.set(outcomeNotice(entry, outcome, (id) => farmNames.get(id) ?? null));
     this.store.reload();

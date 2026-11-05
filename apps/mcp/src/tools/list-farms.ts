@@ -1,44 +1,64 @@
-import { listFarms } from '@nextera/shared';
-import { freshness, type TurbineStatus } from '../staleness.js';
-import { compactReading, defineTool } from './tool.js';
+import { listFarmSummaries } from '@nextera/shared';
+import { defineTool } from './tool.js';
+
+/** Farms listed (by id); the fleet totals always cover every farm. */
+export const MAX_FARMS_LISTED = 200;
 
 export const listFarmsTool = defineTool({
   name: 'list_farms',
-  title: 'List farms and turbines',
+  title: 'List farms with live totals',
   description:
-    'The whole fleet: every wind farm with its turbines and each turbine’s latest reading ' +
-    '(power kW, wind m/s, rotor rpm, blade pitch °, gearbox °C, triggered alert rules). ' +
-    'Each turbine has a status from the time since its latest measurement: ok, stale-15, ' +
-    'stale-30, stale-60 (no data for more than 15/30/60 minutes) or no-data (never reported), ' +
-    'and minutesSinceLatest. Use it for fleet health and "which turbines stopped reporting?". ' +
-    'Turbine ids that report but are not in the fleet are not here: see list_unallocated.',
+    'The fleet at a glance: fleet totals and every wind farm (up to the first ' +
+    `${MAX_FARMS_LISTED} by id; farmCount and the totals cover all) with its live totals: ` +
+    'turbineCount, commissioned, reporting (newest reading at most 15 minutes old), stale ' +
+    '(a reading, but older), noData (never reported), alerting (reporting turbines whose newest ' +
+    'reading triggered an alert rule), total powerOutputKw and mean windSpeedMs of the ' +
+    'reporting turbines. Totals are rebuilt about once a minute (asOf). It does not list ' +
+    'turbines: use get_turbine for one (its latest reading and status), get_telemetry for its ' +
+    'history, list_alerts and list_anomalies for what is wrong. Turbine ids that report but are ' +
+    'not in the fleet are not counted: see list_unallocated.',
   inputSchema: {},
   async run({ db, now }) {
-    const farms = await listFarms(db);
-    const asOf = now();
-    const statusCounts: Partial<Record<TurbineStatus, number>> = {};
-    const result = farms.map((farm) => ({
-      id: farm.id,
-      name: farm.name,
-      latitude: farm.latitude,
-      longitude: farm.longitude,
-      turbines: farm.turbines.map((turbine) => {
-        const fresh = freshness(turbine.latest?.timestamp ?? null, asOf);
-        statusCounts[fresh.status] = (statusCounts[fresh.status] ?? 0) + 1;
-        return {
-          id: turbine.id,
-          commissioned: turbine.commissioned,
-          ...fresh,
-          latest: turbine.latest && compactReading(turbine.latest),
-        };
-      }),
-    }));
+    const farms = await listFarmSummaries(db, { now: new Date(now()) });
+    const totals = {
+      turbines: 0,
+      commissioned: 0,
+      reporting: 0,
+      stale: 0,
+      noData: 0,
+      alerting: 0,
+      powerOutputKw: 0,
+    };
+    let asOf: string | null = null;
+    for (const farm of farms) {
+      totals.turbines += farm.turbineCount;
+      totals.commissioned += farm.commissioned;
+      totals.reporting += farm.reporting;
+      totals.stale += farm.stale;
+      totals.noData += farm.turbineCount - farm.reporting - farm.stale;
+      totals.alerting += farm.alerting;
+      totals.powerOutputKw += farm.powerOutputKw;
+      if (farm.asOf && (asOf === null || farm.asOf < asOf)) asOf = farm.asOf;
+    }
     return {
-      asOf: new Date(asOf).toISOString(),
+      asOf,
       farmCount: farms.length,
-      turbineCount: farms.reduce((n, f) => n + f.turbines.length, 0),
-      statusCounts,
-      farms: result,
+      ...totals,
+      omittedFarms: Math.max(0, farms.length - MAX_FARMS_LISTED),
+      farms: farms.slice(0, MAX_FARMS_LISTED).map((farm) => ({
+        id: farm.id,
+        name: farm.name,
+        latitude: farm.latitude,
+        longitude: farm.longitude,
+        turbineCount: farm.turbineCount,
+        commissioned: farm.commissioned,
+        reporting: farm.reporting,
+        stale: farm.stale,
+        noData: farm.turbineCount - farm.reporting - farm.stale,
+        alerting: farm.alerting,
+        powerOutputKw: farm.powerOutputKw,
+        windSpeedMs: farm.windSpeedMs,
+      })),
     };
   },
 });

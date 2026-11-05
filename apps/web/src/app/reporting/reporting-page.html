@@ -21,6 +21,9 @@
       [formField]="reportForm.scope"
       [matAutocomplete]="scopes"
     />
+    @if (turbineSearching()) {
+      <mat-spinner matSuffix class="mr-3" mode="indeterminate" [diameter]="18" aria-hidden="true" />
+    }
     <mat-autocomplete #scopes="matAutocomplete" [displayWith]="displayOption">
       @if (filtered().farms.length) {
         <mat-optgroup label="Farms">
@@ -36,12 +39,27 @@
           }
         </mat-optgroup>
       }
+      <!-- Turbines are searched on the server; say what the search is doing in the list itself. -->
+      @if (searchText()) {
+        @if (turbineSearching()) {
+          <mat-option disabled data-testid="turbine-searching">Searching turbines…</mat-option>
+        } @else if (turbineSearchFailed()) {
+          <mat-option disabled data-testid="turbine-search-failed">
+            The turbine search failed. Change the text to try again.
+          </mat-option>
+        } @else if (turbineSearched() && !filtered().turbines.length) {
+          <mat-option disabled data-testid="turbine-search-empty">No turbines match.</mat-option>
+        }
+      }
     </mat-autocomplete>
     @if (reportForm.scope().getError('chooseOption')) {
       <mat-error>Choose a farm or turbine from the list.</mat-error>
     } @else {
       <mat-error>Choose a farm or turbine.</mat-error>
     }
+    <mat-hint data-testid="scope-hint"
+      >Pick a farm, or type a turbine id to search the turbines.</mat-hint
+    >
   </mat-form-field>
 
   <mat-form-field appearance="outline" subscriptSizing="dynamic" data-testid="report-range">
@@ -89,6 +107,19 @@
   </p>
 }
 
+<!-- Announces the turbine search for screen readers (the list shows it too). -->
+<p class="sr-only" role="status" data-testid="turbine-search-status">
+  @if (searchText()) {
+    @if (turbineSearching()) {
+      Searching turbines…
+    } @else if (turbineSearchFailed()) {
+      The turbine search failed.
+    } @else if (turbineSearched()) {
+      {{ filtered().turbines.length }} turbines found.
+    }
+  }
+</p>
+
 <p class="mt-3 min-h-5 text-sm text-muted" role="status" data-testid="report-status">
   @if (loading()) {
     Loading report…
@@ -107,10 +138,15 @@
     role="alert"
     data-testid="report-error"
   >
-    The report could not be loaded.
-    <button matButton="outlined" type="button" data-testid="report-retry" (click)="retry()">
-      Retry
-    </button>
+    @if (rejection(); as message) {
+      <!-- A 400 from the API (a range or size it refuses): its words, no Retry. -->
+      <span data-testid="report-rejection">{{ message }}</span>
+    } @else {
+      The report could not be loaded.
+      <button matButton="outlined" type="button" data-testid="report-retry" (click)="retry()">
+        Retry
+      </button>
+    }
   </p>
 }
 

@@ -24,10 +24,87 @@ describe('FleetApi', () => {
 
   afterEach(() => http.verify());
 
-  it('loads the fleet overview', async () => {
-    const result = firstValueFrom(api.farms());
-    http.expectOne({ method: 'GET', url: 'https://api.example.com/api/farms' }).flush([]);
+  it('loads the fleet totals', async () => {
+    const result = firstValueFrom(api.fleetSummary());
+    http
+      .expectOne({ method: 'GET', url: 'https://api.example.com/api/fleet/summary' })
+      .flush({ farms: 1 });
+    expect(await result).toEqual({ farms: 1 });
+  });
+
+  it('loads the farm summaries, not the whole fleet', async () => {
+    const result = firstValueFrom(api.farmSummaries());
+    http.expectOne({ method: 'GET', url: 'https://api.example.com/api/farm-summaries' }).flush([]);
     expect(await result).toEqual([]);
+  });
+
+  it('asks for a page of turbines with only the query parts that are set', async () => {
+    const result = firstValueFrom(
+      api.turbines({
+        farmId: 'FARM01',
+        q: 'TURB',
+        status: 'stale',
+        commissioned: false,
+        hasData: true,
+        sort: 'power',
+        dir: 'desc',
+        limit: 25,
+        cursor: 'abc',
+      }),
+    );
+    const req = http.expectOne((r) => r.url === 'https://api.example.com/api/turbines');
+    expect(
+      Object.fromEntries(req.request.params.keys().map((k) => [k, req.request.params.get(k)])),
+    ).toEqual({
+      farmId: 'FARM01',
+      q: 'TURB',
+      status: 'stale',
+      commissioned: 'false',
+      hasData: 'true',
+      sort: 'power',
+      dir: 'desc',
+      limit: '25',
+      cursor: 'abc',
+    });
+    req.flush({ items: [], nextCursor: null, prevCursor: null, total: 0, totalCapped: false });
+    expect((await result).items).toEqual([]);
+  });
+
+  it('leaves out empty, null and undefined query parts', () => {
+    firstValueFrom(api.turbines({ q: '', cursor: null, farmId: undefined, limit: 25 }));
+    const req = http.expectOne((r) => r.url === 'https://api.example.com/api/turbines');
+    expect(req.request.params.keys()).toEqual(['limit']);
+    req.flush(null);
+  });
+
+  it('searches turbines by id and returns just the items', async () => {
+    const result = firstValueFrom(api.searchTurbines('T1', 5));
+    const req = http.expectOne((r) => r.url === 'https://api.example.com/api/turbines');
+    expect(req.request.params.get('q')).toBe('T1');
+    expect(req.request.params.get('limit')).toBe('5');
+    expect(req.request.params.get('sort')).toBe('id');
+    req.flush({
+      items: [{ id: 'TURB001' }],
+      nextCursor: null,
+      prevCursor: null,
+      total: 1,
+      totalCapped: false,
+    });
+    expect(await result).toEqual([{ id: 'TURB001' }]);
+  });
+
+  it('loads one turbine by id, encoded', async () => {
+    const result = firstValueFrom(api.turbine('TURB 1'));
+    http.expectOne('https://api.example.com/api/turbines/TURB%201').flush({ id: 'TURB 1' });
+    expect(await result).toEqual({ id: 'TURB 1' });
+  });
+
+  it("loads a farm's turbine markers", async () => {
+    const result = firstValueFrom(api.turbineMarkers('FARM01'));
+    http
+      .expectOne('https://api.example.com/api/farms/FARM01/turbine-markers')
+      .flush([{ id: 'TURB001' }]);
+    expect(await result).toEqual([{ id: 'TURB001' }]);
   });
 
   it("loads a turbine's telemetry for a time window", async () => {
@@ -98,22 +175,23 @@ describe('FleetApi', () => {
     expect(await result).toEqual(turbine);
   });
 
-  it('exposes the SSE endpoint on the same base URL', () => {
-    expect(api.eventsUrl).toBe('https://api.example.com/api/events');
+  it('exposes the SSE endpoint on the same base URL, without a turbine list when none are given', () => {
+    expect(api.eventsUrl()).toBe('https://api.example.com/api/events');
+    expect(api.eventsUrl([])).toBe('https://api.example.com/api/events');
   });
 
-  it('passes the access token to the SSE endpoint as access_token (EventSource sends no headers)', () => {
-    TestBed.resetTestingModule();
-    localStorage.setItem(
-      SESSION_STORAGE_KEY,
-      JSON.stringify({
-        accessToken: 'a.b+c',
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
-        signedInAt: new Date().toISOString(),
-        user: { email: 'viewer@nextera.local', role: 'viewer' },
-      }),
-    );
-    try {
+  describe('eventsUrl with a session', () => {
+    beforeEach(() => {
+      TestBed.resetTestingModule();
+      localStorage.setItem(
+        SESSION_STORAGE_KEY,
+        JSON.stringify({
+          accessToken: 'a.b+c',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          signedInAt: new Date().toISOString(),
+          user: { email: 'viewer@nextera.local', role: 'viewer' },
+        }),
+      );
       TestBed.configureTestingModule({
         providers: [
           provideHttpClient(),
@@ -121,11 +199,38 @@ describe('FleetApi', () => {
           { provide: API_BASE_URL, useValue: 'https://api.example.com/api' },
         ],
       });
-      expect(TestBed.inject(FleetApi).eventsUrl).toBe(
+      api = TestBed.inject(FleetApi);
+    });
+
+    afterEach(() => localStorage.removeItem(SESSION_STORAGE_KEY));
+
+    it('passes the access token as access_token (EventSource sends no headers)', () => {
+      expect(api.eventsUrl()).toBe('https://api.example.com/api/events?access_token=a.b%2Bc');
+    });
+
+    it('adds the watched turbines after the token', () => {
+      expect(api.eventsUrl(['TURB001', 'TURB002'])).toBe(
+        'https://api.example.com/api/events?access_token=a.b%2Bc&turbines=TURB001,TURB002',
+      );
+    });
+
+    it('sends each id once and drops ids the API would refuse', () => {
+      const url = api.eventsUrl(['TURB001', 'TURB001', 'bad id', 'a,b', '', 'x'.repeat(65)]);
+      expect(url).toContain('&turbines=TURB001');
+      expect(url.endsWith('turbines=TURB001')).toBe(true);
+    });
+
+    it('sends at most 100 ids', () => {
+      const ids = Array.from({ length: 150 }, (_, i) => `T${i}`);
+      const sent = new URL(api.eventsUrl(ids)).searchParams.get('turbines')!.split(',');
+      expect(sent).toHaveLength(100);
+      expect(sent[99]).toBe('T99');
+    });
+
+    it('sends no turbines parameter when every id is invalid', () => {
+      expect(api.eventsUrl(['bad id'])).toBe(
         'https://api.example.com/api/events?access_token=a.b%2Bc',
       );
-    } finally {
-      localStorage.removeItem(SESSION_STORAGE_KEY);
-    }
+    });
   });
 });

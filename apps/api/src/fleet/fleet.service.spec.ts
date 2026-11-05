@@ -1,4 +1,9 @@
-import { BadRequestException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Logger,
+  NotFoundException,
+  PayloadTooLargeException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import {
   EventStore,
@@ -25,20 +30,6 @@ const farm = (id: string, turbineIds: string[]) => ({
     longitude: new Prisma.Decimal('-96.518'),
     commissioned: i === 0,
   })),
-});
-
-const row = (turbineId: string, farmId: string) => ({
-  id: 'r1',
-  turbine_id: turbineId,
-  farm_id: farmId,
-  timestamp: new Date('2026-01-02T23:55:00Z'),
-  received_at: new Date('2026-01-03T00:13:00Z'),
-  created_at: new Date('2026-01-03T00:13:01Z'), // never in the response
-  power_output_kw: 1960.5,
-  wind_speed_ms: 6.7,
-  rotor_rpm: 11.6,
-  blade_pitch_deg: 4.6,
-  gearbox_temp_c: 79.3,
 });
 
 describe('FleetService', () => {
@@ -186,12 +177,24 @@ describe('FleetService', () => {
   });
 
   describe('overview', () => {
-    it('attaches each turbine’s latest reading (mapped to camelCase) and null when none exists', async () => {
+    const latestRow = (turbineId: string, farmId: string) => ({
+      turbine_id: turbineId,
+      farm_id: farmId,
+      reading_id: 'r1',
+      l_timestamp: new Date('2026-01-02T23:55:00Z'),
+      received_at: new Date('2026-01-03T00:13:00Z'),
+      power_output_kw: 1960.5,
+      wind_speed_ms: 6.7,
+      rotor_rpm: 11.6,
+      blade_pitch_deg: 4.6,
+      gearbox_temp_c: 79.3,
+    });
+
+    it('attaches each turbine’s latest reading from turbine_latest and null when none exists', async () => {
       prisma.farm.findMany.mockResolvedValue([
         farm('FARM01', ['TURB001', 'TURB003']),
         farm('FARM03', []),
       ] as never);
-      prisma.$queryRaw.mockResolvedValue([row('TURB001', 'FARM01')]);
       const rule = {
         id: 'rule-1',
         measurementMetric: 'gearboxTempC',
@@ -200,17 +203,13 @@ describe('FleetService', () => {
         alertLevel: 'warn',
         enabled: true,
       } as const;
-      prisma.telemetryAlert.findMany.mockResolvedValue([
-        { telemetryId: 'r1', alertId: 'rule-1', alert: rule },
-      ] as never);
+      prisma.$queryRaw
+        .mockResolvedValueOnce([{ n: 2 }]) // the size guard
+        .mockResolvedValueOnce([latestRow('TURB001', 'FARM01')]) // turbine_latest
+        .mockResolvedValueOnce([{ telemetry_id: 'r1', alert_id: 'rule-1' }]);
+      prisma.alertConfig.findMany.mockResolvedValue([rule] as never);
 
       const overview = await service.overview();
-
-      // One query joins the triggered rules of every latest reading.
-      expect(prisma.telemetryAlert.findMany).toHaveBeenCalledWith({
-        where: { telemetryId: { in: ['r1'] } },
-        include: { alert: true },
-      });
 
       expect(overview).toEqual([
         {
@@ -250,9 +249,9 @@ describe('FleetService', () => {
       ]);
     });
 
-    it('orders turbines and joins their latest reading by the business key turbine_id', async () => {
+    it('orders turbines by the business key', async () => {
       prisma.farm.findMany.mockResolvedValue([]);
-      prisma.$queryRaw.mockResolvedValue([]);
+      prisma.$queryRaw.mockResolvedValue([{ n: 0 }]);
 
       await service.overview();
 
@@ -260,11 +259,56 @@ describe('FleetService', () => {
         orderBy: { id: 'asc' },
         include: { turbines: { orderBy: { turbineId: 'asc' } } },
       });
-      const [strings] = prisma.$queryRaw.mock.calls[0] as unknown as [
-        TemplateStringsArray,
-      ];
-      expect(strings.join('?').replace(/\s+/g, ' ')).toContain(
-        'WHERE r.turbine_id = t.turbine_id',
+    });
+
+    it('answers 413 above 5,000 turbines before loading any farm', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ n: 5001 }]);
+
+      await expect(service.overview()).rejects.toThrow(
+        PayloadTooLargeException,
+      );
+      await expect(service.overview()).rejects.toThrow(
+        /more than 5000 turbines.*deprecated/,
+      );
+      expect(prisma.farm.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('new fleet reads', () => {
+    it('serves the farm summaries and the fleet summary through the cache under their own keys', async () => {
+      farmsCache.getKeyed.mockResolvedValue({
+        body: Buffer.from('[]'),
+        etag: 'W/"x"',
+      });
+
+      await service.cachedFarmSummaries();
+      await service.cachedFleetSummary();
+
+      expect(farmsCache.getKeyed.mock.calls.map(([key]) => key)).toEqual([
+        'farm-summaries',
+        'fleet-summary',
+      ]);
+    });
+
+    it('maps the list errors: a metric sort without a farm and a bad cursor are 400', async () => {
+      await expect(
+        service.turbines({ sort: 'power', limit: 25 }),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.turbines({ cursor: 'junk', limit: 25 }),
+      ).rejects.toThrow(new BadRequestException('Invalid cursor'));
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('answers 404 for an unknown turbine or farm', async () => {
+      prisma.$queryRaw.mockResolvedValue([]);
+      prisma.farm.findUnique.mockResolvedValue(null);
+
+      await expect(service.turbine('TURB999')).rejects.toThrow(
+        NotFoundException,
+      );
+      await expect(service.markers('FARM99')).rejects.toThrow(
+        NotFoundException,
       );
     });
   });

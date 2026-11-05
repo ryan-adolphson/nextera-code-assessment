@@ -2,6 +2,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import {
   PrismaClient,
   enabledAlertRules,
+  runAnomalyRollup,
   runFarmRollup,
   seedFromCsv,
   storeAlerts,
@@ -63,7 +64,7 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     writer = new PrismaClient({
       adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
     });
-    await writer.$executeRaw`TRUNCATE TABLE telemetry_alerts, alerts_config, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms, unallocated_turbines, held_telemetry`;
+    await writer.$executeRaw`TRUNCATE TABLE turbine_latest, farm_live_summary, anomaly_episodes, telemetry_alerts, alerts_config, telemetry, turbines, farm_weather, farm_telemetry_rollups, farms, unallocated_turbines, held_telemetry`;
     await seedFromCsv(writer, SEED_DATA_DIR);
     await writer.alertConfig.createMany({
       data: [
@@ -91,6 +92,11 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     await writer.$executeRaw`TRUNCATE TABLE farm_rollup_state, farm_rollup_dirty`;
     await runFarmRollup(writer, {
       mode: { kind: 'full' },
+      now: new Date('2026-01-03T00:00:00Z'),
+    });
+    await writer.$executeRaw`TRUNCATE TABLE anomaly_rollup_state, anomaly_expected_power`;
+    await runAnomalyRollup(writer, {
+      mode: { kind: 'from', day: '2026-01-01' },
       now: new Date('2026-01-03T00:00:00Z'),
     });
     // Pending: TURB099 isn't in the fleet; TURB001 (on FARM01) reports FARM05. Blocked: TURB097,
@@ -183,29 +189,26 @@ describe('Nextera MCP server (e2e, CSV fixture)', () => {
     expect(result.text).toContain('Unrecognized key: "form"');
   });
 
-  it('list_farms: the fixture fleet with each turbine’s status', async () => {
+  it('list_farms: the fleet totals and each farm’s live summary (computed here: no job has run)', async () => {
     const result = (await mcp.call('list_farms')).json();
 
-    expect(result.farmCount).toBe(10);
-    expect(result.turbineCount).toBe(2);
-    const turbines = result.farms.flatMap(
-      (f: { turbines: unknown[] }) => f.turbines,
-    );
-    expect(turbines).toEqual([
-      expect.objectContaining({
-        id: 'TURB001',
-        status: expect.any(String),
-        latest: expect.objectContaining({ timestamp: expect.any(String) }),
-      }),
-      expect.objectContaining({
-        id: 'TURB002',
-        status: 'stale-15',
-        minutesSinceLatest: 25,
-        latest: expect.objectContaining({
-          timestamp: '2026-01-02T23:55:00.000Z',
-        }),
-      }),
-    ]);
+    // both fixture turbines last reported on 2026-01-02, long before the clock of this test
+    expect(result).toMatchObject({
+      farmCount: 10,
+      turbines: 2,
+      reporting: 0,
+      stale: 2,
+      noData: 0,
+      omittedFarms: 0,
+    });
+    expect(result.farms).toHaveLength(10);
+    expect(
+      result.farms.find((f: { id: string }) => f.id === 'FARM02'),
+    ).toMatchObject({
+      turbineCount: 1,
+      stale: 1,
+    });
+    expect(JSON.stringify(result)).not.toContain('TURB00');
   });
 
   it('get_turbine: farm, status and latest reading', async () => {

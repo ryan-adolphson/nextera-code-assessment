@@ -6,6 +6,7 @@ import { PubSubPushEnvelope } from '../apps/ingestion/src/pubsub/pubsub-push.dto
 import {
   LOAD_FARM_ID,
   buildEnvelope,
+  fleetSize,
   loadTurbineId,
   workerAnchorMs,
 } from './processor.js';
@@ -70,5 +71,19 @@ describe('buildEnvelope', () => {
   it('starts each worker at a different place in the fleet', () => {
     expect(decode(build(0, 1, 200)).turbine_id).toBe('LOAD00042');
     expect(decode(build(0, 2, 200)).turbine_id).toBe('LOAD00083');
+  });
+});
+
+describe('fleetSize', () => {
+  it('defaults to 200 and allows a million turbines', () => {
+    expect(fleetSize({})).toBe(200);
+    expect(fleetSize({ LOAD_FLEET_SIZE: '1000000' })).toBe(1_000_000);
+    expect(loadTurbineId(999_999)).toBe('LOAD1000000');
+  });
+
+  it.each(['0', '1000001', '1.5', 'many'])('rejects %s', (value) => {
+    expect(() => fleetSize({ LOAD_FLEET_SIZE: value })).toThrow(
+      'LOAD_FLEET_SIZE must be an integer from 1 to 1000000',
+    );
   });
 });

@@ -6,7 +6,9 @@ import argon2 from 'argon2';
 import { PrismaClient } from '../src/generated/prisma/client.js';
 import { PASSWORD_HASH_OPTIONS } from '../src/auth/passwords.js';
 import { SEED_USERS, seedUsers } from '../src/seed/seed-users.js';
+import { runAnomalyRollup } from '../src/wind/anomaly-rollup.js';
 import { runFarmRollup } from '../src/wind/farm-rollup.js';
+import { runLiveSummary } from '../src/wind/live-summary.js';
 
 /** Shared by `npm run db:seed` (seed.ts) and `npm run db:seed:demo` (seed-demo.ts). */
 
@@ -24,16 +26,36 @@ export function seedTestUsers(prisma: PrismaClient): Promise<number> {
 }
 
 /**
- * One farm rollup run after a seed, so the farms' daily history (the web app's History tab, the
- * Playwright fixture) is there at once: incremental (the first run on a database is full). Skipped
- * if another run (the compose farm-rollup service) holds the lock: that one, or its next, covers it.
+ * What is derived from the readings, brought up to date after a seed, so the web app and the
+ * Playwright fixture have it at once:
+ *   - one farm rollup run (the farms' daily history): incremental, the first run on a database is
+ *     full; skipped if another run (the compose farm-rollup service) holds the lock;
+ *   - the live summaries (`farm_live_summary`, as of now), which the live-summary job keeps fresh;
+ *   - one anomaly rollup run (`anomaly_episodes`) as of the end of the data (the fixture ends in
+ *     January 2026, the demo at now); the first run looks 7 days back.
+ * turbine_latest needs no step: the seeds write it with the readings.
  */
 export async function rollupAfterSeed(prisma: PrismaClient): Promise<string> {
   const started = Date.now();
   const r = await runFarmRollup(prisma);
-  return r.skipped
+  const farmRollup = r.skipped
     ? 'farm rollup skipped (another run holds the lock),'
     : `farm rollup: ${r.written} rows for ${r.farms} farms in ${Date.now() - started} ms,`;
+
+  const live = await runLiveSummary(prisma);
+  const [{ newest }] = await prisma.$queryRaw<{ newest: Date | null }[]>`
+    SELECT max("timestamp") AS newest FROM turbine_latest`;
+  const anomalies = newest
+    ? await runAnomalyRollup(prisma, {
+        now: new Date(Math.min(Date.now(), newest.getTime() + 5 * 60_000)),
+      })
+    : undefined;
+  return (
+    `${farmRollup} ${live.farms} live summaries,` +
+    (anomalies && !anomalies.skipped
+      ? ` anomaly rollup: ${anomalies.written} episodes,`
+      : '')
+  );
 }
 
 /**

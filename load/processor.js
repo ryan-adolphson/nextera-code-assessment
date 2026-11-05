@@ -14,8 +14,8 @@ export const loadTurbineId = (index) =>
 /** LOAD_FLEET_SIZE, default 200. Must match what `load:setup` created. */
 export function fleetSize(env = process.env) {
   const size = Number(env.LOAD_FLEET_SIZE ?? 200);
-  if (!Number.isInteger(size) || size < 1 || size > 100_000) {
-    throw new Error('LOAD_FLEET_SIZE must be an integer from 1 to 100000');
+  if (!Number.isInteger(size) || size < 1 || size > 1_000_000) {
+    throw new Error('LOAD_FLEET_SIZE must be an integer from 1 to 1000000');
   }
   return size;
 }

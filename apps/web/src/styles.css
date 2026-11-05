@@ -373,3 +373,51 @@ tr.mat-mdc-row:not(.history-detail-row):not(.detail-row):hover {
   --mat-button-filled-container-color: var(--danger);
   --mat-button-filled-label-text-color: var(--on-danger);
 }
+
+/*
+ * Map clusters (leaflet.markercluster, map/map-view.ts): a ring in the most severe status inside
+ * (the same tokens as the markers) around a disc in the page colour, so the count keeps full
+ * text contrast in both themes whatever the ring colour.
+ */
+.map-cluster {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  border: 5px solid var(--muted);
+  border-radius: 9999px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.map-cluster-ok {
+  border-color: var(--ok);
+}
+.map-cluster-stale-15 {
+  border-color: var(--caution);
+}
+.map-cluster-stale-30 {
+  border-color: var(--warn);
+}
+.map-cluster-stale-60 {
+  border-color: var(--danger);
+}
+.map-cluster:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Clusters slide into place when zooming (markercluster's own rule, without its default colours). */
+.leaflet-cluster-anim .leaflet-marker-icon,
+.leaflet-cluster-anim .leaflet-marker-shadow {
+  transition:
+    transform 0.3s ease-out,
+    opacity 0.3s ease-in;
+}
+@media (prefers-reduced-motion: reduce) {
+  .leaflet-cluster-anim .leaflet-marker-icon,
+  .leaflet-cluster-anim .leaflet-marker-shadow {
+    transition: none;
+  }
+}

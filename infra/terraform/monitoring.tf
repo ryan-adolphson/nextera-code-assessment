@@ -17,7 +17,14 @@ locals {
   redis_memory_ratio_threshold = 0.8  # Memorystore used / max memory (0-1)
 
   # The apps' connection budget: every API and worker instance opens at most db_pool_max connections.
-  sql_connection_budget  = (var.api_max_instances + var.ingestion_max_instances) * var.db_pool_max
+  # Each scheduled job opens a pool of 2 (job-runner.ts) and runs one execution at a time; a
+  # deploy-time execute overlapping a scheduled run is covered by the alert ratio's headroom.
+  job_db_pool_max = 2
+  db_jobs_enabled = (
+    (var.farm_rollup_enabled ? 1 : 0) + (var.weather_sync_enabled ? 1 : 0) + (var.partition_maintenance_enabled ? 1 : 0)
+    + (var.live_summary_enabled ? 1 : 0) + (var.anomaly_rollup_enabled ? 1 : 0)
+  )
+  sql_connection_budget  = (var.api_max_instances + var.ingestion_max_instances) * var.db_pool_max + local.db_jobs_enabled * local.job_db_pool_max
   sql_backends_threshold = floor(local.sql_connection_budget * local.sql_connection_budget_ratio)
 
   alert_channels = [for channel in google_monitoring_notification_channel.email : channel.name]
@@ -29,9 +36,13 @@ locals {
   ])
   sql_database_id = "${var.project_id}:${google_sql_database_instance.main.name}" # Cloud SQL's database_id label
 
-  # The scheduled Cloud Run Jobs that exist (farm-rollup.tf, weather-sync.tf, demo-feed.tf).
+  # The scheduled Cloud Run Jobs that exist (farm-rollup.tf, weather-sync.tf, demo-feed.tf,
+  # partition-maintenance.tf, live-summary.tf, anomaly-rollup.tf).
   scheduled_jobs = merge(
     var.farm_rollup_enabled ? { farm_rollup = google_cloud_run_v2_job.farm_rollup[0].name } : {},
+    var.partition_maintenance_enabled ? { partition_maintenance = google_cloud_run_v2_job.partition_maintenance[0].name } : {},
+    var.live_summary_enabled ? { live_summary = google_cloud_run_v2_job.live_summary[0].name } : {},
+    var.anomaly_rollup_enabled ? { anomaly_rollup = google_cloud_run_v2_job.anomaly_rollup[0].name } : {},
     var.weather_sync_enabled ? { weather_sync = google_cloud_run_v2_job.weather_sync[0].name } : {},
     var.demo_feed_enabled ? { demo_feed = google_cloud_run_v2_job.demo_feed[0].name } : {},
   )
@@ -299,6 +310,9 @@ resource "google_monitoring_alert_policy" "job_failures" {
       2. On a fresh project the job may still run Terraform's placeholder image: the next deploy (deploy.yml) sets the ingestion image.
       3. Per job:
          - **nextera-farm-rollup** (every 15 min): the farm History tab stops updating. Usually Cloud SQL (connections, the database-url secret) or a migration that hasn't run. The next successful run catches up from its watermark; rebuild with `--full` if needed.
+         - **nextera-partition-maintenance** (daily, URGENT): the migration created partitions only through today + 3 days. If it stays down past that, new readings fall into the DEFAULT partition (stored, but not pruned by day, and it keeps growing), and retention stops (disk grows). Fix the cause (logs; Cloud SQL; a long transaction holding a lock past the 10 s lock_timeout), run it by hand, and a successful run creates the missing days and moves the strays out of DEFAULT.
+         - **nextera-live-summary** (every minute): the live fleet summary goes stale; the next minute replaces a failed one. Usually Redis (Direct VPC egress, redis-url) or Cloud SQL.
+         - **nextera-anomaly-rollup** (hourly): the anomalies list lags. It is idempotent and takes an advisory lock; the next run catches up, or rebuild with `--from YYYY-MM-DD`.
          - **nextera-weather-sync** (daily): Open-Meteo errors or quota (open_meteo_api_key_enabled), or Cloud SQL. Backfill missing days with `--from … --to …`.
          - **nextera-demo-feed** (every 5 min): a publish to the telemetry topic failed; a missed tick is only a gap.
       4. Run it by hand once fixed: `gcloud run jobs execute <job> --region ${var.region}`.
@@ -354,7 +368,7 @@ resource "google_monitoring_alert_policy" "cloud_sql" {
       Cloud SQL ${google_sql_database_instance.main.name} (${var.db_tier}) is close to its limits.
 
       - **CPU:** look for slow queries in Query Insights (wide /api/reports or /api/alerts ranges, a full telemetry scan). If the load is legitimate, raise db_tier.
-      - **Connections:** the apps may open (api_max_instances ${var.api_max_instances} + ingestion_max_instances ${var.ingestion_max_instances}) x db_pool_max ${var.db_pool_max} = ${local.sql_connection_budget}. Running out shows up as Prisma pool timeouts and 5xx. Either lower the instance caps or db_pool_max, or raise db_tier (max_connections) and the budget together. Migrations, the Auth Proxy and the MCP server count too.
+      - **Connections:** the apps may open (api_max_instances ${var.api_max_instances} + ingestion_max_instances ${var.ingestion_max_instances}) x db_pool_max ${var.db_pool_max} + ${local.db_jobs_enabled} scheduled jobs x ${local.job_db_pool_max} = ${local.sql_connection_budget}. Running out shows up as Prisma pool timeouts and 5xx. Either lower the instance caps or db_pool_max, or raise db_tier (max_connections) and the budget together. The budget includes 2 per enabled scheduled job. Migrations, the Auth Proxy and the MCP server count too.
     EOT
   }
 

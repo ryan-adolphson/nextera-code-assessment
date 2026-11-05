@@ -253,7 +253,7 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
     - expect: 'Loading fleet…' then heading 'Fleet overview'
     - expect: Tiles Fleet output, Turbines reporting 'n / n', Wind farms 10, Data as of '<date>, hh:mm UTC'
     - expect: Leaflet map renders with zoom +/- and legend (Reporting, No data in 15/30/60 min, No turbines or readings)
-    - expect: Farm table (testid farms) with columns Farm, Location, Turbines, Reporting, Output (kW), Avg wind; 10 farms; farms without turbines show '–'; no paginator
+    - expect: Farm table (testid farms) with columns Farm, Location, Turbines, Reporting, Output (kW), Avg wind, As of; 10 farms; farms without turbines show '–'; no paginator
 
 #### 3.2. Click a farm row navigates to farm page
 
@@ -442,6 +442,19 @@ Shared helpers: `tests/support/session.ts` (sign-in, SEED_NOW, API token), `cloc
     - expect: no horizontal page overflow
 
 ### 4. 4. Turbines table
+
+> **Server paging (million-turbine redesign).** Where a scenario below says otherwise, this wins:
+> the table is served by `GET /api/turbines` (the web app no longer calls `GET /api/farms`); the
+> paginator has next/previous only (no page size, no first/last); the count reads "N of total
+> turbines" (N = rows on the page, "10,000+" when capped), with no "· M with no data hidden";
+> status filter options are Reporting / No recent data / No readings yet (the server judges them on
+> its clock); power, wind and gearbox sort only on a farm's page (disabled across the fleet, with a
+> hint); only the visible page updates live, in one update a second, and is fetched again when the
+> stream opens; an empty table with the switch on says "Turbines with no readings yet are hidden".
+> Fleet tiles and farm rows come from `GET /api/fleet/summary` and `GET /api/farm-summaries`
+> (refreshed on `fleet.tick`), with "As of" times, a farm filter and a refresh note. Reporting's
+> turbine picker searches on the server. 4.17-4.20 (calm live updates) became: one batch a second,
+> no 3 s cap, a sort or filter loads the server's page.
 
 **Seed:** `tests/seed.spec.ts`
 

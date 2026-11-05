@@ -145,4 +145,45 @@ describe('FarmsCacheService', () => {
 
     expect(load).toHaveBeenCalledTimes(3);
   });
+
+  describe('keyed entries', () => {
+    it('caches each key separately, and invalidate() drops them all', async () => {
+      const cache = cacheWith(5000);
+      const farms = vi.fn().mockResolvedValue([1]);
+      const summaries = vi.fn().mockResolvedValue([2]);
+
+      await cache.get(farms);
+      await cache.getKeyed('farm-summaries', summaries);
+      await cache.get(farms);
+      await cache.getKeyed('farm-summaries', summaries);
+      expect([farms.mock.calls.length, summaries.mock.calls.length]).toEqual([
+        1, 1,
+      ]);
+
+      cache.invalidate();
+      await cache.get(farms);
+      await cache.getKeyed('farm-summaries', summaries);
+      expect([farms.mock.calls.length, summaries.mock.calls.length]).toEqual([
+        2, 2,
+      ]);
+    });
+
+    it('never stores a keyed load that started before an invalidation', async () => {
+      const cache = cacheWith(5000);
+      const slow = gate([1]);
+      const load = vi
+        .fn()
+        .mockImplementationOnce(() => slow.promise)
+        .mockResolvedValueOnce([2]);
+
+      const first = cache.getKeyed('fleet-summary', load);
+      cache.invalidate();
+      slow.release();
+      await first;
+      const second = await cache.getKeyed('fleet-summary', load);
+
+      expect(load).toHaveBeenCalledTimes(2);
+      expect(second.body.toString()).toBe('[2]');
+    });
+  });
 });

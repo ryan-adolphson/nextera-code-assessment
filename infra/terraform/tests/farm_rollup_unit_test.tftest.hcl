@@ -21,8 +21,12 @@ override_data {
 }
 
 variables {
-  project_id        = "nextera-test"
-  github_repository = "example-org/nextera"
+  # The scale jobs are on by default; their own test file covers them.
+  partition_maintenance_enabled = false
+  live_summary_enabled          = false
+  anomaly_rollup_enabled        = false
+  project_id                    = "nextera-test"
+  github_repository             = "example-org/nextera"
 }
 
 run "enabled_by_default_creates_job_identities_and_schedule" {

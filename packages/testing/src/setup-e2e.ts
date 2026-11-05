@@ -11,3 +11,6 @@ process.env.CORS_ORIGINS = 'http://localhost:4200';
 process.env.JWT_SECRET = 'e2e-only-jwt-secret-not-used-anywhere-else-0123456789';
 process.env.JWT_ISSUER = 'nextera-api';
 process.env.JWT_AUDIENCE = 'nextera-web';
+// The worker caches the enabled alert rules for 30 s by default; tests create rules and expect
+// the next reading to see them. A spec that tests the cache sets its own TTL before importing the app.
+process.env.ALERT_RULES_CACHE_TTL_MS = '0';

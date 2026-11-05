@@ -5,7 +5,6 @@ import { seedFromCsv } from '../src/seed/seed-from-csv.js';
 import {
   QueryInputError,
   QueryNotFoundError,
-  alertsInRange,
   getTurbine,
   listAlertRules,
   listFarms,
@@ -14,6 +13,7 @@ import {
   telemetryStats,
   turbineTelemetry,
 } from '../src/wind/queries.js';
+import { alertsPage } from '../src/wind/fleet-queries.js';
 import { storeAlerts } from '../src/wind/store-telemetry.js';
 import { openMigrationDb, type MigrationDb } from './migration-db.js';
 
@@ -119,11 +119,12 @@ describe('read queries (e2e, CSV fixture)', () => {
     ).toEqual(['error', 'error', 'error']);
   });
 
-  it('alertsInRange: the fixture anomalies the enabled rules flag, by turbine, newest first', async () => {
-    const alerts = await alertsInRange(prisma, DAYS);
+  it('alertsPage: the fixture anomalies the enabled rules flag, newest first, in pages', async () => {
+    const { items, nextCursor } = await alertsPage(prisma, DAYS);
 
+    expect(nextCursor).toBeNull();
     expect(
-      alerts.map((r) => [
+      items.map((r) => [
         r.turbineId,
         r.timestamp,
         r.alerts.map((a) => a.alertLevel),
@@ -134,8 +135,17 @@ describe('read queries (e2e, CSV fixture)', () => {
       ['TURB002', '2026-01-02T03:20:00.000Z', ['error']],
       ['TURB002', '2026-01-01T18:10:00.000Z', ['info']], // the 44° pitch spike
     ]);
+    const first = await alertsPage(prisma, { ...DAYS, limit: 3 });
+    expect(first.items).toHaveLength(3);
+    const second = await alertsPage(prisma, {
+      ...DAYS,
+      limit: 3,
+      cursor: first.nextCursor!,
+    });
+    expect([...first.items, ...second.items]).toEqual(items);
+    expect(second.nextCursor).toBeNull();
     await expect(
-      alertsInRange(prisma, { from: DAYS.to, to: DAYS.from }),
+      alertsPage(prisma, { from: DAYS.to, to: DAYS.from }),
     ).rejects.toBeInstanceOf(QueryInputError);
   });
 

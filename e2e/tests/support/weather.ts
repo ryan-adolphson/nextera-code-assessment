@@ -1,4 +1,4 @@
-import type { Page, Request, Route } from '@playwright/test';
+import type { Page, Request, Route } from "@playwright/test";
 
 /**
  * Weather mocks for the browser tests: response bodies in the API's shape (GET /api/farms/:id/weather,
@@ -68,17 +68,18 @@ export function slotAt(t: number): WeatherSlot {
 /** The buckets in [from, to) (the API answers whole :00/:30 UTC buckets). */
 export function slotsBetween(from: string, to: string): WeatherSlot[] {
   const slots: WeatherSlot[] = [];
-  for (let t = Date.parse(from); t < Date.parse(to); t += SLOT_MS) slots.push(slotAt(t));
+  for (let t = Date.parse(from); t < Date.parse(to); t += SLOT_MS)
+    slots.push(slotAt(t));
   return slots;
 }
 
 /** "2026-01-02": the calendar day of `t` in `zone`. */
 export function dayIn(t: number, zone: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
+  return new Intl.DateTimeFormat("en-CA", {
     timeZone: zone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
   }).format(new Date(t));
 }
 
@@ -110,16 +111,16 @@ export function daysBetween(
   }));
 }
 
-export type Interval = '30min' | 'daily';
+export type Interval = "30min" | "daily";
 
 /** The query of a weather request. */
 export function weatherQuery(request: Request) {
   const params = new URL(request.url()).searchParams;
   return {
-    from: params.get('from')!,
-    to: params.get('to')!,
-    interval: (params.get('interval') ?? '30min') as Interval,
-    timeZone: params.get('timeZone'),
+    from: params.get("from")!,
+    to: params.get("to")!,
+    interval: (params.get("interval") ?? "30min") as Interval,
+    timeZone: params.get("timeZone"),
   };
 }
 
@@ -128,7 +129,10 @@ const FARM_WEATHER = /\/api\/farms\/([^/]+)\/weather$/;
 export const isFarmWeather = (url: URL) => FARM_WEATHER.test(url.pathname);
 
 /** True for a farm weather request of `interval`. */
-export function isWeatherRequest(request: Request, interval?: Interval): boolean {
+export function isWeatherRequest(
+  request: Request,
+  interval?: Interval,
+): boolean {
   const url = new URL(request.url());
   if (!isFarmWeather(url)) return false;
   return !interval || weatherQuery(request).interval === interval;
@@ -145,24 +149,28 @@ export interface WeatherMockOptions {
 }
 
 /** A 200 in the API's shape for the request: 30-minute buckets or days, with the echoed query. */
-export async function fulfillWeather(route: Route, options: WeatherMockOptions = {}): Promise<void> {
+export async function fulfillWeather(
+  route: Route,
+  options: WeatherMockOptions = {},
+): Promise<void> {
   const request = route.request();
   const url = new URL(request.url());
   const { from, to, interval, timeZone } = weatherQuery(request);
-  const zone = timeZone ?? 'UTC';
+  const zone = timeZone ?? "UTC";
   const farm = FARM_WEATHER.exec(url.pathname);
   const body = {
-    farmId: farm ? decodeURIComponent(farm[1]) : 'FARM01',
+    farmId: farm ? decodeURIComponent(farm[1]) : "FARM01",
     from,
     to,
     interval,
     timeZone: zone,
     points:
-      interval === 'daily'
+      interval === "daily"
         ? daysBetween(from, to, zone, options.partialLastDay ?? null)
         : slotsBetween(from, to).filter(
             (slot) =>
-              (options.until === undefined || Date.parse(slot.time) <= options.until) &&
+              (options.until === undefined ||
+                Date.parse(slot.time) <= options.until) &&
               !options.missing?.includes(slot.time),
           ),
   };
@@ -173,7 +181,7 @@ export async function fulfillWeather(route: Route, options: WeatherMockOptions =
 export async function failWeather(route: Route): Promise<void> {
   await route.fulfill({
     status: 500,
-    json: { statusCode: 500, message: 'Internal server error' },
+    json: { statusCode: 500, message: "Internal server error" },
   });
 }
 
@@ -199,4 +207,7 @@ export async function mockWeather(
 
 /** One decimal, as the UI shows values (en-US). */
 export const oneDecimal = (v: number) =>
-  v.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  v.toLocaleString("en-US", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });

@@ -27,6 +27,16 @@
       Loading anomalies…
     </p>
   } @else if (report(); as r) {
+    @if (r.truncated) {
+      <p
+        class="mt-4 rounded-lg border border-l-4 border-line border-l-warn bg-surface px-4 py-3 text-sm text-ink"
+        role="status"
+        data-testid="anomalies-truncated"
+      >
+        More than 5,000 episodes overlap these 7 days. Only the newest 5,000 are listed, and the
+        lost output below counts those.
+      </p>
+    }
     @if (r.anomalies.length === 0) {
       <p class="mt-4 text-muted" role="status" data-testid="anomalies-empty">
         No anomalies in the last 7 days.

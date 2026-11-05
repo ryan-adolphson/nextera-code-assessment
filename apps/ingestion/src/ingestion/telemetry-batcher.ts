@@ -11,16 +11,16 @@ import {
   TELEMETRY_RECEIVED,
   UnallocatedCapError,
   classifyReadings,
-  enabledAlertRules,
   holdReadings,
   insertTelemetryWithAlerts,
-  storeAlerts,
   toTelemetryResponse,
+  turbineChannel,
   type HeldEntry,
   type HoldableReading,
   type TelemetryRowInput,
   type TelemetryWithAlerts,
 } from '@nextera/shared';
+import { AlertRulesCache } from './alert-rules-cache.js';
 import { publishHeld } from './held-events.js';
 import { QueueFullException } from './queue-full.exception.js';
 
@@ -78,6 +78,7 @@ export class TelemetryBatcher implements OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly events: EventStore,
     config: ConfigService,
+    private readonly rules: AlertRulesCache,
   ) {
     this.batchMax = config.get<number>('INGEST_BATCH_MAX', 100);
     this.maxQueued = config.get<number>('INGEST_MAX_QUEUED', 500);
@@ -143,6 +144,8 @@ export class TelemetryBatcher implements OnModuleDestroy {
       this.logger.warn(
         `Batch of ${batch.length} failed (${(error as Error).message}); retrying one by one`,
       );
+      // Maybe a rule deleted since it was cached (foreign key): the retries read the current ones.
+      this.rules.invalidate();
       for (const p of batch) {
         try {
           p.resolve(await this.ingestOne(p.row));
@@ -154,15 +157,11 @@ export class TelemetryBatcher implements OnModuleDestroy {
     }
 
     // After the commit; best-effort: Redis never fails a committed reading (a retry would only
-    // find duplicates), dashboards catch up on their next load.
+    // find duplicates), dashboards catch up on their next load. Readings are live events only:
+    // PUBLISHed to their turbine's channel, never added to the stream.
     try {
       if (committed.stored.length) {
-        await this.events.publishMany(
-          committed.stored.map((reading) => ({
-            type: TELEMETRY_RECEIVED,
-            data: toTelemetryResponse(reading),
-          })),
-        );
+        await this.events.publishLive(committed.stored.map(liveReading));
       }
     } catch (error) {
       this.logger.warn(
@@ -174,7 +173,9 @@ export class TelemetryBatcher implements OnModuleDestroy {
   }
 
   /** One transaction for the whole batch (the flow of `ingestBatch`), results in input order. */
-  private commitBatch(rows: TelemetryRowInput[]): Promise<BatchOutcome> {
+  private async commitBatch(rows: TelemetryRowInput[]): Promise<BatchOutcome> {
+    // Outside the transaction: a cached read holds no connection.
+    const rules = await this.rules.get();
     return this.prisma.$transaction(
       async (tx) => {
         const kinds = await classifyReadings(tx, rows);
@@ -204,11 +205,7 @@ export class TelemetryBatcher implements OnModuleDestroy {
         const entries = holdable.length ? await holdReadings(tx, holdable) : [];
         let stored: TelemetryWithAlerts[] = [];
         if (known.length) {
-          stored = await insertTelemetryWithAlerts(
-            tx,
-            known,
-            await enabledAlertRules(tx),
-          );
+          stored = await insertTelemetryWithAlerts(tx, known, rules);
         }
         const storedKeys = new Set(stored.map(readingKey));
         known.forEach((row, j) => {
@@ -224,6 +221,7 @@ export class TelemetryBatcher implements OnModuleDestroy {
 
   /** The single-reading path (own transaction, own events); the fallback of a failed batch. */
   private async ingestOne(row: TelemetryRowInput): Promise<IngestResult> {
+    const rules = await this.rules.get();
     const outcome = await this.prisma
       .$transaction(async (tx) => {
         const [kind] = await classifyReadings(tx, [row]);
@@ -233,17 +231,10 @@ export class TelemetryBatcher implements OnModuleDestroy {
           return { result: 'held' as const, entries };
         }
 
-        const [inserted] = await tx.telemetry.createManyAndReturn({
-          data: [row],
-          skipDuplicates: true,
-        });
-        // A duplicate: no rules to read, no alerts to write.
-        if (!inserted) return { result: 'duplicate' as const };
-        const [reading] = await storeAlerts(
-          tx,
-          [inserted],
-          await enabledAlertRules(tx),
-        );
+        // The same insert as the batch path (alerts and turbine_latest included); a duplicate
+        // comes back empty.
+        const [reading] = await insertTelemetryWithAlerts(tx, [row], rules);
+        if (!reading) return { result: 'duplicate' as const };
         return { result: 'stored' as const, reading };
       })
       .catch(rejectOverCap);
@@ -260,10 +251,7 @@ export class TelemetryBatcher implements OnModuleDestroy {
 
     const { reading } = outcome;
     try {
-      await this.events.publish(
-        TELEMETRY_RECEIVED,
-        toTelemetryResponse(reading),
-      );
+      await this.events.publishLive([liveReading(reading)]);
     } catch (error) {
       this.logger.warn(
         `Reading ${reading.turbineId} at ${reading.timestamp.toISOString()} stored, but live update failed: ${(error as Error).message}`,
@@ -272,6 +260,13 @@ export class TelemetryBatcher implements OnModuleDestroy {
     return 'stored';
   }
 }
+
+/** A stored reading as a live event on its turbine's channel. */
+const liveReading = (reading: TelemetryWithAlerts) => ({
+  channel: turbineChannel(reading.turbineId),
+  type: TELEMETRY_RECEIVED,
+  data: toTelemetryResponse(reading),
+});
 
 interface BatchOutcome {
   results: IngestResult[];

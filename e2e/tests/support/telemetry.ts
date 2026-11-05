@@ -1,5 +1,5 @@
-import { expect, type APIRequestContext, type Page } from '@playwright/test';
-import { API_URL, INGESTION_URL } from './session.js';
+import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import { API_URL, INGESTION_URL } from "./session.js";
 
 /** One telemetry.csv row (received_at empty: ingestion uses the upload time). */
 export interface CsvReading {
@@ -24,7 +24,7 @@ export interface BatchResult {
 }
 
 const HEADER =
-  'turbine_id,farm_id,timestamp,received_at,power_output_kw,wind_speed_ms,rotor_rpm,blade_pitch_deg,gearbox_temp_c';
+  "turbine_id,farm_id,timestamp,received_at,power_output_kw,wind_speed_ms,rotor_rpm,blade_pitch_deg,gearbox_temp_c";
 
 export function telemetryCsv(readings: CsvReading[]): string {
   const rows = readings.map((r) =>
@@ -32,15 +32,15 @@ export function telemetryCsv(readings: CsvReading[]): string {
       r.turbineId,
       r.farmId,
       r.timestamp,
-      '',
+      "",
       r.powerOutputKw ?? 1500,
       r.windSpeedMs ?? 7.5,
       r.rotorRpm ?? 13,
       r.bladePitchDeg ?? 4,
       r.gearboxTempC ?? 70,
-    ].join(','),
+    ].join(","),
   );
-  return [HEADER, ...rows].join('\n') + '\n';
+  return [HEADER, ...rows].join("\n") + "\n";
 }
 
 /** POSTs readings as a telemetry.csv upload to the ingestion worker (expects 201). */
@@ -51,8 +51,8 @@ export async function uploadTelemetry(
   const response = await request.post(`${INGESTION_URL}/ingest/telemetry`, {
     multipart: {
       file: {
-        name: 'e2e-readings.csv',
-        mimeType: 'text/csv',
+        name: "e2e-readings.csv",
+        mimeType: "text/csv",
         buffer: Buffer.from(telemetryCsv(readings)),
       },
     },
@@ -90,7 +90,8 @@ export async function boundTelemetryAt(page: Page, at: Date): Promise<void> {
     (url) => /\/api\/turbines\/[^/]+\/telemetry(\/stats)?$/.test(url.pathname),
     async (route) => {
       const url = new URL(route.request().url());
-      if (!url.searchParams.has('to')) url.searchParams.set('to', at.toISOString());
+      if (!url.searchParams.has("to"))
+        url.searchParams.set("to", at.toISOString());
       await route.continue({ url: url.toString() });
     },
   );

@@ -30,6 +30,16 @@ github_repository = "my-org/nextera-code-assessment"
 # farm_rollup_enabled     = false   # on by default: the farm History tab's rollups (Cloud Run Job + Scheduler)
 # farm_rollup_paused      = true    # keep the farm rollup, stop its schedule (History goes stale)
 # farm_rollup_schedule    = "*/15 * * * *"   # cron, UTC
+# partition_maintenance_enabled = false      # on by default: daily partitions + retention (do not pause > 3 days)
+# partition_maintenance_paused  = true
+# partition_maintenance_schedule = "17 3 * * *"   # cron, UTC, off-peak
+# telemetry_retention_days = 31              # raw readings kept; whole-day partitions are dropped
+# live_summary_enabled    = false            # on by default: runs EVERY MINUTE (~43,200 executions/month, see live-summary.tf)
+# live_summary_paused     = true
+# live_summary_schedule   = "*/5 * * * *"    # cheaper: a fifth of the executions
+# anomaly_rollup_enabled  = false            # on by default: hourly anomaly episodes
+# anomaly_rollup_paused   = true
+# anomaly_rollup_schedule = "7 * * * *"      # cron, UTC
 
 # Monitoring (monitoring.tf): every alert policy exists regardless; these add email notifications
 # alert_emails            = ["wind-ops@example.com"]

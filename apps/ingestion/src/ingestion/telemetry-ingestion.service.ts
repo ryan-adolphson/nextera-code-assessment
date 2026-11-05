@@ -9,6 +9,7 @@ import {
   holdReadings,
   insertTelemetryWithAlerts,
   toTelemetryResponse,
+  turbineChannel,
   type HeldEntry,
   type HoldableReading,
   type TelemetryRowInput,
@@ -73,8 +74,8 @@ export class TelemetryIngestionService {
    * (existing readings skipped: idempotent re-uploads) with the enabled alert rules they trigger,
    * rows of unknown turbines or farm mismatches are held, and rows of blocked pairs are dropped.
    * New pairs over MAX_PENDING_UNALLOCATED reject the file too (their lines are reported).
-   * Publishes one telemetry.received per turbine (its newest new reading) rather than one per row,
-   * so a large backfill doesn't flood dashboards.
+   * Publishes one live telemetry.received per turbine (its newest new reading, on the turbine's
+   * channel) rather than one per row, so a large backfill doesn't flood dashboards.
    */
   async ingestBatch(
     { rows, rowErrors }: ParsedTelemetryCsv,
@@ -170,12 +171,13 @@ export class TelemetryIngestionService {
       }
     }
     try {
-      for (const reading of newest.values()) {
-        await this.events.publish(
-          TELEMETRY_RECEIVED,
-          toTelemetryResponse(reading),
-        );
-      }
+      await this.events.publishLive(
+        [...newest.values()].map((reading) => ({
+          channel: turbineChannel(reading.turbineId),
+          type: TELEMETRY_RECEIVED,
+          data: toTelemetryResponse(reading),
+        })),
+      );
     } catch (error) {
       this.logger.warn(
         `CSV upload stored, but live update failed: ${(error as Error).message}`,

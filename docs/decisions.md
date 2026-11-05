@@ -43,7 +43,8 @@ These decisions were made to keep the proof of concept reasonably simple, with a
 - **Storage:** 30-minute buckets, grouped into days when read. That lets one table answer for UTC or local days, including days when the clocks change.
 - **Business effect:** six months of history stays fast without slowing the path that matters most.
 
-### Anomaly checks calculated when read, not stored
+### Anomaly checks stored hourly, not calculated when read
+- **Changed for scale:** they were first calculated on read, but the 7-day query would scan about 2 billion rows at a million turbines. An hourly job now stores episodes, so they can be up to an hour late.
 - **Why:** static thresholds miss faults that depend on context. Two checks cover that: low power in strong wind, and a sensor stuck on one value for at least an hour while the turbine's power keeps changing. Each low-power episode gets an estimated lost output, so faults can be ranked by cost.
 - **Cost:** the 7-day query takes about 2 seconds on 400,000 readings, measured on a laptop. The limits were tuned on generated data.
 - **Noise was the main risk:** the first version of the stuck-sensor rule produced about 15,000 false alarms in 7 days on demo data. Requiring an hour and changing power brought that to zero on that data.
@@ -60,20 +61,22 @@ These decisions were made to keep the proof of concept reasonably simple, with a
 
 ## Scaling
 
-**I have no capacity numbers yet.** The [load test harness](load-test.md) has only had a low-rate smoke run on a laptop, which proves the harness works and says nothing about limits. Everything below is reasoning, to be tested.
+The app is built for up to 1,000,000 turbines, about 10,000 farms and 1,000 concurrent viewers. **That target is not proven.** [Load tests](load-test.md) measured one instance on a laptop before this design: about 940 readings/s per worker and no API crash at 10,000 turbines. Those numbers predate the `turbine_latest` upsert, so the worker figure may now be lower. Single queries were timed against a seeded million (mostly under 100 ms at p95), but with no concurrent load. Million-turbine load, real Cloud SQL and Pub/Sub retries remain untested. Sizing estimates are in [scaling-gcp.md](scaling-gcp.md).
 
-| Turbines | Readings per second, on average | Rows per year |
+| Turbines | Readings per second, on average | Rows per day |
 |---|---|---|
-| 200 | 0.67 | about 21 million |
-| 2,000 | 6.7 | about 210 million |
-| 10,000 | 33 | about 1.05 billion |
+| 200 | 0.67 | about 58,000 |
+| 10,000 | 33 | about 2.9 million |
+| 1,000,000 | 3,333 | about 288 million |
 
-What I'd expect to hit first, in order, and what I'd do:
+What changed to reach it:
 
-1. **Bursts of per-reading transactions.** Turbines report on the same 5-minute boundary, so the average understates the peak. Production limits today are 5 ingestion instances × 20 concurrent requests, with 4 database connections each. Fix: batched inserts through a pull subscriber.
-2. **Live events to every browser.** Each reading goes to each connected client, and the 1,000-event replay history would cover well under one tick at 10,000 turbines. Fix: send clients batched summaries per tick, and let them fetch details as needed.
-3. **Table size.** `telemetry` isn't partitioned. Fix: monthly partitions and a retention policy, with raw readings kept for a set period and rollups kept longer. This needs a migration, because the partition key has to be part of the primary key.
-4. **Database size.** The default `db-g1-small` tier is a demo choice, and the first thing I'd raise.
+1. **Bursts of per-reading transactions:** group commit in the worker, with a queue limit that answers 503.
+2. **The browser held the whole fleet:** server keyset paging and per-farm summaries, so a page holds at most 100 turbines.
+3. **Live events to every browser:** only the visible turbines' readings go to each client (per-turbine Redis channels), and tiles refresh once a minute.
+4. **Table size:** daily partitions with 31 days of raw readings, and rollups kept for 190 days.
+5. **Reads over raw data:** `turbine_latest`, farm summaries and stored anomaly episodes replace scans.
+6. **Database size:** the default `db-g1-small` tier stays a demo choice, and is the first thing to raise.
 
 ## Accepted shortcuts
 

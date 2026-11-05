@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Page } from "@playwright/test";
 
 /**
  * Fixes the page's `Date` at `at` (like `page.clock.setFixedTime`) in a way that keeps Date
@@ -30,7 +30,8 @@ export async function fixBrowserDate(page: Page, at: Date): Promise<void> {
       },
       // Date() without `new`: a string, as natively.
       apply: () => new NativeDate(fixed).toString(),
-      get: (target, prop) => (prop === 'now' ? () => fixed : Reflect.get(target, prop)),
+      get: (target, prop) =>
+        prop === "now" ? () => fixed : Reflect.get(target, prop),
     });
     globalThis.Date = FixedDate;
   }, at.getTime());
@@ -41,14 +42,15 @@ export async function fixBrowserDate(page: Page, at: Date): Promise<void> {
  * independent oracle (Node's Intl) for times the app formats in UTC or the browser's zone.
  */
 export function shortTimeIn(iso: string, zone: string): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
+  const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: zone,
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
   }).formatToParts(new Date(iso));
-  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)!.value;
-  return `${part('month')} ${part('day')}, ${part('hour')}:${part('minute')}`;
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)!.value;
+  return `${part("month")} ${part("day")}, ${part("hour")}:${part("minute")}`;
 }

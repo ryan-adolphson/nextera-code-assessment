@@ -39,6 +39,7 @@ import { parseDemoSeedEnv, seedDemo } from '../src/seed/seed-demo.js';
 import { SEED_PASSWORD_MIN_LENGTH } from '../src/seed/seed-users.js';
 import { floorToTelemetryStep } from '../src/seed/generate-telemetry.js';
 import { utcDay } from '../src/weather/open-meteo.js';
+import { ensureTelemetryPartitions } from '../src/wind/partitions.js';
 import { syncFarmWeather } from '../src/weather/sync-weather.js';
 import { DATA_DIR, rollupAfterSeed, seedTestUsers } from './seed-support.js';
 
@@ -154,7 +155,8 @@ async function main(): Promise<number> {
     console.log(
       `  Deleted ${cleared.telemetry} telemetry rows, ${cleared.telemetryAlerts} telemetry_alerts, ` +
         `${cleared.heldTelemetry} held readings, ${cleared.unallocatedTurbines} unallocated entries, ` +
-        `${cleared.farmWeather} weather rows, ${cleared.farmRollups} farm rollup rows. ` +
+        `${cleared.farmWeather} weather rows, ${cleared.farmRollups} farm rollup rows, ` +
+        `${cleared.turbineLatest} latest readings, ${cleared.farmLiveSummary} live summaries, ${cleared.anomalyEpisodes} anomaly episodes. ` +
         'Farms, turbines, users and alert rules kept.',
     );
 
@@ -164,6 +166,12 @@ async function main(): Promise<number> {
       `Seeding ${DEMO_RESET_HOURS} h of demo data up to ${end.toISOString()}`,
     );
     const users = await seedTestUsers(prisma);
+    // Daily partitions for the window first, so the readings don't pile up in DEFAULT.
+    await ensureTelemetryPartitions(
+      prisma,
+      new Date(end.getTime() - DEMO_RESET_HOURS * 3_600_000),
+      end,
+    );
     const seedStarted = Date.now();
     const seeded = await seedDemo(prisma, {
       dataDir: DATA_DIR,

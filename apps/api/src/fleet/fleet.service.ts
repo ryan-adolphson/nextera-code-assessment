@@ -5,7 +5,12 @@ import {
   PrismaService,
   farmDailyHistory,
   farmWeather,
+  fleetSummary,
+  listFarmSummaries,
   listFarms,
+  listTurbines,
+  turbineItem,
+  turbineMarkers,
   telemetryStats,
   toTurbineResponse,
   turbineTelemetry,
@@ -14,6 +19,9 @@ import {
   type FarmOverview,
   type FarmWeatherResponse,
   type FleetChangedEvent,
+  type TurbineListResponse,
+  type TurbineListItem,
+  type TurbineMarker,
   type TelemetryResponse,
   type TelemetryStatsResponse,
   type TurbineResponse,
@@ -27,6 +35,7 @@ import { httpQuery } from '../common/query-errors.js';
 import { FarmDailyQueryDto } from './dto/farm-daily-query.dto.js';
 import { WeatherQueryDto } from './dto/weather-query.dto.js';
 import { TelemetryQueryDto } from './dto/telemetry-query.dto.js';
+import { TurbineListQueryDto } from './dto/turbine-list-query.dto.js';
 
 export type { FarmOverview, TurbineOverview } from '@nextera/shared';
 
@@ -44,14 +53,46 @@ export class FleetService {
     private readonly farmsCache: FarmsCacheService,
   ) {}
 
-  /** Every farm with its turbines and each turbine's latest reading: the fleet overview. */
+  /**
+   * Every farm with its turbines and each turbine's latest reading: the fleet overview.
+   * DEPRECATED: 413 above 5,000 turbines (checked before anything is loaded).
+   */
   overview(): Promise<FarmOverview[]> {
-    return listFarms(this.prisma);
+    return httpQuery(listFarms(this.prisma));
   }
 
   /** `overview()` as cached JSON bytes + ETag (see FarmsCacheService); what GET /api/farms sends. */
   cachedOverview(): Promise<CachedBody> {
     return this.farmsCache.get(() => this.overview());
+  }
+
+  /** GET /api/farm-summaries as cached JSON bytes + ETag: every farm with live totals. */
+  cachedFarmSummaries(): Promise<CachedBody> {
+    return this.farmsCache.getKeyed('farm-summaries', () =>
+      listFarmSummaries(this.prisma),
+    );
+  }
+
+  /** GET /api/fleet/summary as cached JSON bytes + ETag: the fleet's live totals. */
+  cachedFleetSummary(): Promise<CachedBody> {
+    return this.farmsCache.getKeyed('fleet-summary', () =>
+      fleetSummary(this.prisma),
+    );
+  }
+
+  /** One page of turbines with their latest readings; 400 for a bad cursor or an unsupported sort. */
+  turbines(query: TurbineListQueryDto): Promise<TurbineListResponse> {
+    return httpQuery(listTurbines(this.prisma, query));
+  }
+
+  /** One turbine in the list's shape; 404 if unknown. */
+  turbine(turbineId: string): Promise<TurbineListItem> {
+    return httpQuery(turbineItem(this.prisma, turbineId));
+  }
+
+  /** A farm's turbines for its map (at most 2,000); 404 for an unknown farm. */
+  markers(farmId: string): Promise<TurbineMarker[]> {
+    return httpQuery(turbineMarkers(this.prisma, farmId));
   }
 
   /** A turbine's readings, newest first, within an optional time range. */

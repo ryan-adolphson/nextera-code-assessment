@@ -44,7 +44,7 @@ describe('Fleet overview: estimated lost output tile', () => {
 
   it('shows a dash when the request fails, and the rest of the page is unaffected', async () => {
     const { app, text } = await open(() => throwError(() => new Error('500')));
-    expect(text).toBe('–');
+    expect(text).toBe('– Retry');
     expect(app.root().querySelector('[data-testid=fleet-lost-output] mat-spinner')).toBeNull();
     expect(app.root().querySelector('[data-testid=fleet-power]')).not.toBeNull();
     expect(app.root().querySelector('[data-testid=farms]')).not.toBeNull();
@@ -72,5 +72,37 @@ describe('Fleet overview: estimated lost output tile', () => {
     expect(tile().querySelector('mat-spinner')).toBeNull();
     expect(app.text(tile())).toBe('12.3 MWh');
     expect(tile().querySelector('a')).not.toBeNull();
+  });
+
+  it('a failed load shows the dash with Retry, and Retry goes back to the spinner', async () => {
+    let call = 0;
+    const answer = new Subject<AnomalyReport>();
+    const app = await openFleet(
+      '/farms',
+      () => CLOCK,
+      undefined,
+      ({ anomalies }) =>
+        anomalies.list.mockImplementation((() =>
+          ++call === 1 ? throwError(() => new Error('500')) : answer) as never),
+    );
+    await app.stable();
+    const tile = () => app.root().querySelector<HTMLElement>('[data-testid=fleet-lost-output]')!;
+    expect(tile().querySelector('mat-spinner')).toBeNull();
+    expect(app.text(tile())).toContain('–');
+
+    tile().querySelector<HTMLButtonElement>('[data-testid=fleet-lost-output-retry]')!.click();
+    await new Promise((r) => setTimeout(r));
+    expect(tile().querySelector('mat-spinner')).not.toBeNull();
+    expect(tile().querySelector('[data-testid=fleet-lost-output-retry]')).toBeNull();
+    answer.next(report(2000));
+    answer.complete();
+    await app.stable();
+    expect(app.text(tile())).toBe('2.0 MWh');
+  });
+
+  it('marks a truncated sum as a lower bound', async () => {
+    const { tile, text } = await open(() => of({ ...report(12_345), truncated: true as const }));
+    expect(text).toBe('≥ 12.3 MWh');
+    expect(tile.querySelector('a')!.getAttribute('aria-label')).toContain('at least 12.3 MWh');
   });
 });

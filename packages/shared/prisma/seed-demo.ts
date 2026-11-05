@@ -1,4 +1,5 @@
 import { parseDemoSeedEnv, seedDemo } from '../src/seed/seed-demo.js';
+import { ensureTelemetryPartitions } from '../src/wind/partitions.js';
 import { DATA_DIR, rollupAfterSeed, runSeed } from './seed-support.js';
 
 // npm run db:seed:demo: the fixture farms, 200 demo turbines, default alert rules and generated
@@ -7,6 +8,12 @@ import { DATA_DIR, rollupAfterSeed, runSeed } from './seed-support.js';
 // Then one farm rollup run. Idempotent: a re-run tops up to now.
 await runSeed(async (prisma) => {
   const { end, hours } = parseDemoSeedEnv(process.env);
+  // Daily partitions for the window first, so the readings don't pile up in DEFAULT.
+  await ensureTelemetryPartitions(
+    prisma,
+    new Date(end.getTime() - hours * 3_600_000),
+    end,
+  );
   const r = await seedDemo(prisma, { dataDir: DATA_DIR, end, hours });
   const unallocated = r.unallocated
     .map(

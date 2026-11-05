@@ -325,6 +325,11 @@ describe('Auth (e2e)', () => {
     const ROUTES: Route[] = [
       ['GET', '/api/auth/me', 'viewer'],
       ['GET', '/api/farms', 'viewer'],
+      ['GET', '/api/farm-summaries', 'viewer'],
+      ['GET', '/api/fleet/summary', 'viewer'],
+      ['GET', '/api/turbines', 'viewer'],
+      ['GET', '/api/turbines/TURB001', 'viewer'],
+      ['GET', '/api/farms/FARM01/turbine-markers', 'viewer'],
       ['GET', `/api/farms/FARM01/weather?${DAY}`, 'viewer'],
       ['GET', `/api/farms/FARM01/telemetry/daily?${DAY}`, 'viewer'],
       ['GET', `/api/turbines/TURB001/weather?${DAY}`, 'viewer'],

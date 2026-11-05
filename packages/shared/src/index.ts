@@ -3,11 +3,15 @@ export { Prisma, PrismaClient } from './generated/prisma/client.js';
 export type {
   AlertConfig,
   Farm,
+  AnomalyEpisode,
+  AnomalyExpectedPower,
+  FarmLiveSummary,
   FarmWeather,
   Telemetry,
   HeldTelemetry,
   TelemetryAlert,
   Turbine,
+  TurbineLatest,
   UnallocatedTurbine,
   User,
 } from './generated/prisma/client.js';
@@ -33,6 +37,7 @@ export {
   EVENT_ID_PATTERN,
   EVENT_STREAM_KEY,
   compareEventIds,
+  turbineChannel,
 } from './events/event-store.js';
 export type { AppEvent } from './events/event-store.js';
 
@@ -88,6 +93,59 @@ export {
   storeAlerts,
 } from './wind/store-telemetry.js';
 
+// Latest reading per turbine (turbine_latest): upserted with every stored reading
+export {
+  refreshTurbineLatest,
+  upsertTurbineLatest,
+  worstAlertLevel,
+} from './wind/turbine-latest.js';
+export type { LatestCandidate } from './wind/turbine-latest.js';
+
+// Telemetry partitions (daily, plus DEFAULT) and their maintenance job
+// (`node dist/partition-maintenance/main.js` in the ingestion image)
+export {
+  PARTITION_CARVE_DAYS,
+  PARTITION_DAYS_AHEAD,
+  ensureTelemetryPartition,
+  ensureTelemetryPartitions,
+  runPartitionMaintenance,
+} from './wind/partitions.js';
+export type {
+  PartitionClient,
+  PartitionMaintenanceOptions,
+  PartitionMaintenanceResult,
+} from './wind/partitions.js';
+
+// Farm live summaries (farm_live_summary, rebuilt every minute; `fleet.tick` after each run)
+export {
+  FLEET_TICK,
+  LIVE_REPORTING_MINUTES,
+  runLiveSummary,
+} from './wind/live-summary.js';
+export type {
+  FleetTickEvent,
+  LiveSummaryClient,
+  LiveSummaryResult,
+} from './wind/live-summary.js';
+
+// Anomaly episodes (anomaly_episodes, hourly: `node dist/anomaly-rollup/main.js`)
+export {
+  ANOMALY_BACKFILL_DAYS,
+  ANOMALY_CALIBRATION_HOURS,
+  ANOMALY_CALIBRATION_TURBINES,
+  ANOMALY_CHUNK_TURBINES,
+  ANOMALY_EPISODE_RETENTION_DAYS,
+  ANOMALY_LOOKBACK_MINUTES,
+  runAnomalyRollup,
+} from './wind/anomaly-rollup.js';
+export type {
+  AnomalyRollupClient,
+  AnomalyRollupMode,
+  AnomalyRollupOptions,
+  AnomalyRollupResult,
+} from './wind/anomaly-rollup.js';
+export { anomalyEpisodesSql } from './wind/anomaly-sql.js';
+
 // Anomaly detection rules (listAnomalies)
 export {
   ANOMALY_MIN_READINGS,
@@ -112,7 +170,11 @@ export {
   QueryError,
   QueryInputError,
   QueryNotFoundError,
-  alertsInRange,
+  QueryTooLargeError,
+  MAX_ANOMALY_EPISODES,
+  MAX_FARMS_OVERVIEW_TURBINES,
+  MAX_REPORT_ROWS,
+  anomaliesInRange,
   checkTimeZone,
   farmDailyHistory,
   farmWeather,
@@ -130,6 +192,35 @@ export {
   turbineTelemetry,
   turbineWeather,
 } from './wind/queries.js';
+export {
+  DEFAULT_ALERT_PAGE,
+  DEFAULT_TURBINE_PAGE,
+  MAX_ALERT_PAGE,
+  MAX_TURBINE_MARKERS,
+  MAX_TURBINE_PAGE,
+  TURBINE_SORTS,
+  TURBINE_STATUSES,
+  TURBINE_TOTAL_CAP,
+  alertsPage,
+  fleetSummary,
+  latestReadings,
+  listFarmSummaries,
+  listTurbines,
+  turbineItem,
+  turbineMarkers,
+} from './wind/fleet-queries.js';
+export type {
+  AlertsPage,
+  AlertsPageQuery,
+  FarmSummary,
+  FleetSummary,
+  TurbineListItem,
+  TurbineListQuery,
+  TurbineListResponse,
+  TurbineMarker,
+  TurbineSort,
+  TurbineStatus,
+} from './wind/fleet-queries.js';
 export type {
   FarmDailyQuery,
   FarmOverview,

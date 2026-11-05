@@ -10,6 +10,9 @@ describe('seedFromCsv', () => {
       farm: { upsert: vi.fn() },
       turbine: { upsert: vi.fn() },
       telemetry: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      $transaction: vi.fn((run: (tx: unknown) => unknown) =>
+        run({ $executeRaw: vi.fn().mockResolvedValue(0) }),
+      ),
     };
 
     await seedFromCsv(prisma as unknown as PrismaClient, DATA_DIR);

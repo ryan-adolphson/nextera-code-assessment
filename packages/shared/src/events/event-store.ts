@@ -12,6 +12,14 @@ export interface AppEvent {
 export const EVENT_STREAM_KEY = 'events:stream'; // durable history for replay
 export const EVENT_CHANNEL = 'events:live'; // pub/sub fan-out to every API instance
 export const EVENT_HISTORY_LENGTH = 1000;
+
+/**
+ * The pub/sub channel of one turbine's live readings (`telemetry.received`, published by ingestion
+ * with `publishLive`, not stored in the stream). The scoped SSE endpoint subscribes to the
+ * channels of the turbines a client is looking at.
+ */
+export const turbineChannel = (turbineId: string): string =>
+  `telemetry:${turbineId}`;
 export const EVENT_ID_PATTERN = /^\d+-\d+$/;
 
 /** Orders Redis stream IDs ("<ms>-<seq>") numerically. */
@@ -23,7 +31,7 @@ export function compareEventIds(a: string, b: string): number {
   return 0;
 }
 
-/** Some events of `publishMany` were not stored or published; the others went out. */
+/** Some events of `publishLive` were not published; the others went out. */
 export class PublishManyError extends Error {
   override readonly name = 'PublishManyError';
 
@@ -74,58 +82,30 @@ export class EventStore implements OnModuleDestroy {
   }
 
   /**
-   * Publishes several events with two round trips instead of 2n: all XADDs pipelined, then the
-   * PUBLISHes of the events that made it into the stream, in order. Event IDs behave as in
-   * `publish` (the stream ID of each). Call only after the database write has committed. A partial
-   * failure throws `PublishManyError` (the events that did go out are still delivered).
+   * Publishes live events to their own channels in ONE pipelined round trip: a plain PUBLISH of
+   * `{ type, data }` to `channel`, with no stream entry and no stream id. For high-volume events
+   * (readings, `turbineChannel`) that would flood the capped stream and its replay history; a
+   * subscriber that isn't listening just misses them. Call only after the database write has
+   * committed. A partial failure throws `PublishManyError` (the others still went out).
    */
-  async publishMany(
-    items: readonly { type: string; data: unknown }[],
-  ): Promise<AppEvent[]> {
-    if (!items.length) return [];
-    const added = this.redis.pipeline();
-    for (const { type, data } of items) {
-      added.xadd(
-        EVENT_STREAM_KEY,
-        'MAXLEN',
-        '~',
-        EVENT_HISTORY_LENGTH,
-        '*',
-        'event',
-        JSON.stringify({ type, data }),
-      );
+  async publishLive(
+    items: readonly { channel: string; type: string; data: unknown }[],
+  ): Promise<void> {
+    if (!items.length) return;
+    const pipeline = this.redis.pipeline();
+    for (const { channel, type, data } of items) {
+      pipeline.publish(channel, JSON.stringify({ type, data }));
     }
-    const addResults = (await added.exec()) ?? [];
-
-    const events: AppEvent[] = [];
-    let failed = 0;
-    let firstError: Error | undefined;
-    items.forEach(({ type, data }, i) => {
-      const [error, id] = addResults[i] ?? [new Error('no pipeline result')];
-      if (error || typeof id !== 'string') {
-        failed++;
-        firstError ??= error ?? new Error('XADD returned no id');
-      } else {
-        events.push({ id, type, data });
-      }
+    const results = (await pipeline.exec()) ?? [];
+    const errors: Error[] = [];
+    items.forEach((_, i) => {
+      const result = results[i];
+      if (!result) errors.push(new Error('no pipeline result'));
+      else if (result[0]) errors.push(result[0]);
     });
-
-    if (events.length) {
-      const published = this.redis.pipeline();
-      for (const event of events) {
-        published.publish(EVENT_CHANNEL, JSON.stringify(event));
-      }
-      const publishResults = (await published.exec()) ?? [];
-      const publishFailed =
-        events.length - publishResults.filter(([e]) => !e).length;
-      if (publishFailed) {
-        failed += publishFailed;
-        firstError ??= publishResults.find(([e]) => e)?.[0] ?? undefined;
-      }
+    if (errors.length) {
+      throw new PublishManyError(errors.length, items.length, errors[0]);
     }
-
-    if (failed) throw new PublishManyError(failed, items.length, firstError);
-    return events;
   }
 
   /** Events after `lastEventId` (exclusive), oldest first. */

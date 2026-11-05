@@ -16,6 +16,9 @@ import { ChartPoint } from '../charts/scales';
 import { AppTimePipe } from '../core/app-time.pipe';
 import { TimeZoneSettings } from '../core/time-zone';
 import { DELAYED_AFTER_MS, HISTORY_RANGES, READING_INTERVAL_MS, Telemetry } from './fleet.model';
+import { FleetApi } from './fleet-api.service';
+import { latestLoad } from '../ui/latest-load';
+import { stalenessOf } from './staleness';
 import { paginate } from '../ui/paging';
 import { TABLE_IMPORTS } from '../ui/table';
 import { FleetStore } from './fleet.store';
@@ -67,11 +70,29 @@ export class TurbinePage implements OnDestroy {
   protected readonly historyPaging = paginate(this.store.history, 50, [25, 50, 100, 250]);
   protected readonly trackById = (_: number, r: Telemetry) => r.id;
 
-  protected readonly turbine = computed(
+  private readonly api = inject(FleetApi);
+  /** This turbine as the API has it (its latest reading when loaded); the page fetches its own. */
+  private readonly turbineLoad = latestLoad((id: string) => this.api.turbine(id));
+  /** No answer for this turbine yet (the first request, or another turbine's after a route change). */
+  protected readonly turbinePending = computed(
     () =>
-      this.store.turbines().find((t) => t.id === this.turbineId() && t.farmId === this.farmId()) ??
-      null,
+      this.turbineLoad.loading() ||
+      (!this.turbineLoad.failed() && this.turbineLoad.value()?.id !== this.turbineId()),
   );
+  /**
+   * The turbine with its newest known reading (the loaded one, or a newer one from the history the
+   * live stream feeds) and its staleness; null while loading, when it is unknown or on another farm.
+   */
+  protected readonly turbine = computed(() => {
+    const loaded = this.turbineLoad.value();
+    if (!loaded || loaded.id !== this.turbineId() || loaded.farmId !== this.farmId()) return null;
+    const newest = this.store.history()[0];
+    const latest =
+      newest && (!loaded.latest || newest.timestamp > loaded.latest.timestamp)
+        ? newest
+        : loaded.latest;
+    return { ...loaded, latest, staleness: stalenessOf(latest, this.store.now()) };
+  });
 
   /** The readings in time order (the store keeps them newest first), for every chart. */
   private readonly ascending = computed(() => [...this.store.history()].reverse());
@@ -129,7 +150,18 @@ export class TurbinePage implements OnDestroy {
     // Load this turbine's readings; reloads if the route switches to another turbine.
     effect(() => {
       const id = this.turbineId();
-      untracked(() => this.store.select(id));
+      untracked(() => {
+        this.store.select(id);
+        this.turbineLoad.run(id);
+      });
+    });
+    // A turbine assigned, moved or commissioned elsewhere: read it again.
+    let seen = this.store.fleetVersion();
+    effect(() => {
+      const version = this.store.fleetVersion();
+      if (version === seen) return;
+      seen = version;
+      untracked(() => this.turbineLoad.run(this.turbineId()));
     });
   }
 
